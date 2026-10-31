@@ -5,7 +5,7 @@ export class FakeSearchProvider implements SearchProvider {
   private readonly results: Map<string, SearchResult[]>;
 
   constructor(results: Record<string, SearchResult[]> = {}) {
-    this.results = new Map(Object.entries(results));
+    this.results = new Map(Object.entries(results).map(([query, list]) => [query, list.map(r => ({ ...r }))]));
   }
 
   set(query: string, results: SearchResult[]): void {

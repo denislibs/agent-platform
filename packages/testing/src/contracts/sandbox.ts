@@ -12,7 +12,7 @@ async function expectSandboxError(promise: Promise<unknown>, code: SandboxErrorC
   expect((caught as SandboxError).code).toBe(code);
 }
 
-async function expectNotFound(promise: Promise<unknown>, entity: string): Promise<void> {
+async function expectNotFound(promise: Promise<unknown>, entity: string, key: string): Promise<void> {
   let caught: unknown;
   try {
     await promise;
@@ -21,6 +21,7 @@ async function expectNotFound(promise: Promise<unknown>, entity: string): Promis
   }
   expect(caught).toBeInstanceOf(NotFoundError);
   expect((caught as NotFoundError).entity).toBe(entity);
+  expect((caught as NotFoundError).key).toBe(key);
 }
 
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
@@ -82,7 +83,7 @@ export function sandboxContract(
 
     test('reading a missing file throws NotFoundError(file)', async () => {
       const s = await fresh();
-      await expectNotFound(s.readFile('missing.txt'), 'file');
+      await expectNotFound(s.readFile('missing.txt'), 'file', 'missing.txt');
     });
 
     test('paths outside /workspace are rejected', async () => {
@@ -91,6 +92,25 @@ export function sandboxContract(
       await expectSandboxError(s.writeFile('../escape.txt', 'x'), 'path_outside_workspace');
       await expectSandboxError(s.list('/', 1), 'path_outside_workspace');
       await expectSandboxError(s.exec('pwd', { timeoutMs: 5_000, cwd: '/tmp' }), 'path_outside_workspace');
+      await expectSandboxError(s.readFile('/workspace-evil/x'), 'path_outside_workspace');
+      await expectSandboxError(s.writeFile('a/../../x', 'x'), 'path_outside_workspace');
+    });
+
+    test('path errors win over sandbox state', async () => {
+      const s = await fresh();
+      await s.stop();
+      await expectSandboxError(s.readFile('/etc/passwd'), 'path_outside_workspace');
+    });
+
+    test('a fresh sandbox lists as empty', async () => {
+      const s = await fresh();
+      expect(await s.list('', 1)).toEqual([]);
+    });
+
+    test('listing a path that is a file returns an empty list', async () => {
+      const s = await fresh();
+      await s.writeFile('only.txt', 'x');
+      expect(await s.list('only.txt', 1)).toEqual([]);
     });
 
     test('list returns workspace-relative entries up to depth, sorted by path', async () => {
@@ -117,7 +137,7 @@ export function sandboxContract(
 
     test('listing a missing folder throws NotFoundError(file)', async () => {
       const s = await fresh();
-      await expectNotFound(s.list('nope', 1), 'file');
+      await expectNotFound(s.list('nope', 1), 'file', 'nope');
     });
 
     test('files survive stop/start; a stopped sandbox rejects operations', async () => {
@@ -130,6 +150,35 @@ export function sandboxContract(
       expect(text(await s.readFile('keep.txt'))).toBe('kept');
       const again = await provider.create(s.taskId);
       expect(again.id).toBe(s.id);
+    });
+
+    test('a stopped sandbox rejects every operation with not_running', async () => {
+      const s = await fresh();
+      await s.stop();
+      await expectSandboxError(s.exec('true', { timeoutMs: 5_000 }), 'not_running');
+      await expectSandboxError(s.readFile('x'), 'not_running');
+      await expectSandboxError(s.writeFile('x', 'y'), 'not_running');
+      await expectSandboxError(s.list('', 1), 'not_running');
+    });
+
+    test('a destroyed sandbox rejects every operation with NotFoundError(sandbox)', async () => {
+      const s = await fresh();
+      await s.destroy();
+      await expectNotFound(s.exec('true', { timeoutMs: 5_000 }), 'sandbox', s.id);
+      await expectNotFound(s.readFile('x'), 'sandbox', s.id);
+      await expectNotFound(s.writeFile('x', 'y'), 'sandbox', s.id);
+      await expectNotFound(s.list('', 1), 'sandbox', s.id);
+    });
+
+    test('destroying a stale handle does not touch a reborn sandbox', async () => {
+      const taskId = crypto.randomUUID();
+      const old = await fresh(taskId);
+      await old.destroy();
+      const reborn = await fresh(taskId);
+      await old.destroy();
+      expect((await provider.get(reborn.id))?.taskId).toBe(taskId);
+      await reborn.writeFile('alive.txt', 'yes');
+      expect(text(await reborn.readFile('alive.txt'))).toBe('yes');
     });
 
     test('create starts a stopped sandbox of the same task', async () => {
@@ -148,16 +197,16 @@ export function sandboxContract(
       await s.destroy();
       expect(await provider.get(s.id)).toBeUndefined();
       expect((await provider.list()).some(i => i.id === s.id)).toBe(false);
-      await expectNotFound(s.readFile('gone.txt'), 'sandbox');
+      await expectNotFound(s.readFile('gone.txt'), 'sandbox', s.id);
       const reborn = await fresh(taskId);
-      await expectNotFound(reborn.readFile('gone.txt'), 'file');
+      await expectNotFound(reborn.readFile('gone.txt'), 'file', 'gone.txt');
     });
 
     test('sandboxes are isolated from each other', async () => {
       const a = await fresh();
       const b = await fresh();
       await a.writeFile('secret.txt', 'a-only');
-      await expectNotFound(b.readFile('secret.txt'), 'file');
+      await expectNotFound(b.readFile('secret.txt'), 'file', 'secret.txt');
     });
   });
 }

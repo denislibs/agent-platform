@@ -27,7 +27,7 @@ export function searchContract(
       await close();
     });
 
-    test('returns results with title, url and plain-text snippet', async () => {
+    test('returns seeded results with title, url and snippet unchanged', async () => {
       await seed('agent frameworks', results(3, 'agent frameworks'));
       expect(await provider.search('agent frameworks')).toEqual(results(3, 'agent frameworks'));
     });
@@ -36,6 +36,12 @@ export function searchContract(
       await seed('many', results(12, 'many'));
       expect(await provider.search('many', { count: 5 })).toHaveLength(5);
       expect(await provider.search('many')).toHaveLength(8);
+    });
+
+    test('clamps count to 1..20', async () => {
+      await seed('lots', results(25, 'lots'));
+      expect(await provider.search('lots', { count: 100 })).toHaveLength(20);
+      expect(await provider.search('lots', { count: 0 })).toHaveLength(1);
     });
 
     test('unknown query returns an empty list', async () => {

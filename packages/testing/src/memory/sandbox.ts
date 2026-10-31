@@ -107,6 +107,7 @@ export class InMemorySandbox implements Sandbox {
   }
 
   async destroy(): Promise<void> {
+    if (this.destroyed) return;
     this.destroyed = true;
     this.running = false;
     this.files.clear();
