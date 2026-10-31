@@ -28,6 +28,7 @@ export type ExpectedFrom<S extends string> = S | readonly S[];
  * transition атомарен: с opts.expectedFrom переход разрешён только из (допустимые по машине статусов ∩ expectedFrom),
  * иначе InvalidTransitionError и ничего не меняется. Так из двух параллельных переходов из одного статуса
  * побеждает ровно один.
+ * Ключи патча со значением undefined игнорируются (поле не меняется); null явно очищает поле.
  */
 export interface TaskRepository {
   /** Неизвестный userId — NotFoundError('user'). */

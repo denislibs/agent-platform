@@ -32,6 +32,9 @@ import type { InMemoryState } from './state';
 
 type Deps = { memory: InMemoryState };
 const copy = <T>(v: T): T => structuredClone(v);
+/** Как Drizzle .set(): ключи со значением undefined не трогают поле (null — очищает). */
+const definedOnly = <T extends object>(patch: T): Partial<T> =>
+  Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) as Partial<T>;
 
 export class InMemoryTaskRepository implements TaskRepository {
   constructor(private readonly deps: Deps) {}
@@ -79,14 +82,14 @@ export class InMemoryTaskRepository implements TaskRepository {
     if (!canTransitionTask(t.status, to) || !isExpectedStatus(t.status, opts.expectedFrom)) {
       throw new InvalidTransitionError('task', id, to);
     }
-    Object.assign(t, patch, { status: to, updatedAt: this.m.clock.now() });
+    Object.assign(t, definedOnly(patch), { status: to, updatedAt: this.m.clock.now() });
     return copy(t);
   }
 
   async update(id: string, patch: TaskPatch): Promise<Task> {
     const t = this.m.tasks.get(id);
     if (!t) throw new NotFoundError('task', id);
-    Object.assign(t, patch, { updatedAt: this.m.clock.now() });
+    Object.assign(t, definedOnly(patch), { updatedAt: this.m.clock.now() });
     return copy(t);
   }
 

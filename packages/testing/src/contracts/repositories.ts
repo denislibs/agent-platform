@@ -153,6 +153,24 @@ export function repositoryContract(
         expect(updated).toMatchObject({ activeMs: 1500, result: 'partial text', status: 'queued' });
       });
 
+      test('undefined patch keys are ignored, null clears the field', async () => {
+        const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
+        await h.tasks.update(task.id, { sandboxId: 'sbx_1' });
+        expect(await h.tasks.update(task.id, { sandboxId: undefined, activeMs: 5 })).toMatchObject({
+          sandboxId: 'sbx_1',
+          activeMs: 5,
+        });
+        expect(
+          await h.tasks.transition(task.id, 'planning', { sandboxId: undefined, currentKind: 'plan' }),
+        ).toMatchObject({
+          sandboxId: 'sbx_1',
+          currentKind: 'plan',
+        });
+        expect((await h.tasks.get(task.id))?.sandboxId).toBe('sbx_1');
+        expect(await h.tasks.update(task.id, { sandboxId: null })).toMatchObject({ sandboxId: null, activeMs: 5 });
+        expect((await h.tasks.get(task.id))?.sandboxId).toBeNull();
+      });
+
       test('countActive ignores terminal tasks and other users', async () => {
         const userId = await h.seedUser();
         const otherId = await h.seedUser();
