@@ -18,3 +18,29 @@ export class NotFoundError extends Error {
     this.name = 'NotFoundError';
   }
 }
+
+export type SandboxErrorCode =
+  'path_outside_workspace' | 'element_not_found' | 'browser_failed' | 'not_running' | 'file_too_large';
+
+export class SandboxError extends Error {
+  constructor(
+    readonly code: SandboxErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'SandboxError';
+  }
+}
+
+export type SearchErrorCode = 'invalid_query' | 'rate_limited' | 'unavailable';
+
+export class SearchError extends Error {
+  constructor(
+    readonly code: SearchErrorCode,
+    message: string,
+    readonly retryable = false,
+  ) {
+    super(message);
+    this.name = 'SearchError';
+  }
+}

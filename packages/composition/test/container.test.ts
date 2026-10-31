@@ -11,6 +11,8 @@ import {
   runMigrations,
   user,
 } from '@agent/db';
+import { DockerSandboxProvider } from '@agent/sandbox';
+import { BraveSearchProvider, UnavailableSearchProvider } from '@agent/search';
 import { S3FileStore } from '@agent/storage';
 import { loadConfig } from '@agent/shared';
 import { ScriptedLlm } from '@agent/testing';
@@ -39,6 +41,17 @@ test('registers a real adapter for every port', () => {
   expect(c.ids).toBeInstanceOf(CryptoIds);
   expect(typeof c.llm.chat).toBe('function');
   expect(c.config).toBe(config);
+});
+
+test('registers the docker sandbox provider and, without a key, unavailable search', () => {
+  container = buildContainer(config);
+  expect(container.cradle.sandboxes).toBeInstanceOf(DockerSandboxProvider);
+  expect(container.cradle.search).toBeInstanceOf(UnavailableSearchProvider);
+});
+
+test('uses Brave search when BRAVE_API_KEY is configured', () => {
+  container = buildContainer({ ...config, search: { ...config.search, braveApiKey: 'k' } });
+  expect(container.cradle.search).toBeInstanceOf(BraveSearchProvider);
 });
 
 test('wired adapters work together against real infrastructure', async () => {

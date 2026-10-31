@@ -1,6 +1,12 @@
 import { expect, test } from 'bun:test';
 import { asValue } from 'awilix';
-import { createTestContainer, InMemoryTaskRepository, ScriptedLlm } from '@agent/testing';
+import {
+  createTestContainer,
+  FakeSearchProvider,
+  InMemorySandboxProvider,
+  InMemoryTaskRepository,
+  ScriptedLlm,
+} from '@agent/testing';
 
 test('resolves every port with in-memory doubles sharing one state', async () => {
   const c = createTestContainer();
@@ -30,4 +36,12 @@ test('each container is isolated', () => {
   const b = createTestContainer();
   a.cradle.memory.seedUser();
   expect(b.cradle.memory.users.size).toBe(0);
+});
+
+test('registers in-memory sandboxes and fake search', async () => {
+  const c = createTestContainer();
+  expect(c.cradle.sandboxes).toBeInstanceOf(InMemorySandboxProvider);
+  expect(c.cradle.search).toBeInstanceOf(FakeSearchProvider);
+  const s = await c.cradle.sandboxes.create('task-1');
+  expect(s.id).toBe('agent-sbx-task-1');
 });
