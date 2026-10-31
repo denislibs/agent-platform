@@ -10,3 +10,4 @@ export * from './contracts/sandbox';
 export * from './memory/sandbox';
 export * from './contracts/search';
 export * from './memory/search';
+export * from './memory/unit-of-work';

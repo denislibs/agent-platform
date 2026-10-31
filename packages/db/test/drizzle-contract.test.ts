@@ -6,6 +6,7 @@ import {
   DrizzleStepLog,
   DrizzleSubtaskRepository,
   DrizzleTaskRepository,
+  DrizzleUnitOfWork,
   usageEvents,
 } from '../src';
 import { createTestUser, resetDb, setupTestDb } from './helpers';
@@ -20,6 +21,7 @@ repositoryContract('drizzle/postgres', async () => {
       subtasks: new DrizzleSubtaskRepository(deps),
       ledger: new DrizzleCreditLedger(deps),
       files: new DrizzleFileRepository(deps),
+      uow: new DrizzleUnitOfWork(deps),
       seedUser: async (p = {}) =>
         (
           await createTestUser(database.db, {

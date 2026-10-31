@@ -8,6 +8,7 @@ import {
   DrizzleStepLog,
   DrizzleSubtaskRepository,
   DrizzleTaskRepository,
+  DrizzleUnitOfWork,
   runMigrations,
   user,
 } from '@agent/db';
@@ -36,6 +37,7 @@ test('registers a real adapter for every port', () => {
   expect(c.subtasks).toBeInstanceOf(DrizzleSubtaskRepository);
   expect(c.ledger).toBeInstanceOf(DrizzleCreditLedger);
   expect(c.files).toBeInstanceOf(DrizzleFileRepository);
+  expect(c.uow).toBeInstanceOf(DrizzleUnitOfWork);
   expect(c.fileStore).toBeInstanceOf(S3FileStore);
   expect(c.clock).toBeInstanceOf(SystemClock);
   expect(c.ids).toBeInstanceOf(CryptoIds);

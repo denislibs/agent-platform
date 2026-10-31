@@ -5,6 +5,7 @@ import {
   FakeSearchProvider,
   InMemorySandboxProvider,
   InMemoryTaskRepository,
+  InMemoryUnitOfWork,
   ScriptedLlm,
 } from '@agent/testing';
 
@@ -12,6 +13,7 @@ test('resolves every port with in-memory doubles sharing one state', async () =>
   const c = createTestContainer();
   const { tasks, steps, memory, clock } = c.cradle;
   expect(tasks).toBeInstanceOf(InMemoryTaskRepository);
+  expect(c.cradle.uow).toBeInstanceOf(InMemoryUnitOfWork);
   const userId = memory.seedUser({ millicredits: 10 });
   const task = await tasks.create({ userId, prompt: 'x' });
   await steps.append({

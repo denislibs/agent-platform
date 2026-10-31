@@ -15,6 +15,7 @@ import {
   DrizzleStepLog,
   DrizzleSubtaskRepository,
   DrizzleTaskRepository,
+  DrizzleUnitOfWork,
   type DbHandle,
 } from '@agent/db';
 import { createLlm } from '@agent/llm';
@@ -46,6 +47,7 @@ export function buildContainer(appConfig: Config, overrides: Overrides = {}): Ap
     subtasks: asClass(DrizzleSubtaskRepository).singleton(),
     ledger: asClass(DrizzleCreditLedger).singleton(),
     files: asClass(DrizzleFileRepository).singleton(),
+    uow: asClass(DrizzleUnitOfWork).singleton(),
     fileStore: asFunction(({ config }: Cradle) => new S3FileStore(config.s3)).singleton(),
     llm: asFunction(({ config }: Cradle) => createLlm(config.llm)).singleton(),
     sandboxes: asFunction(({ config }: Cradle) => new DockerSandboxProvider(config.sandbox)).singleton(),

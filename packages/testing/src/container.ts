@@ -12,6 +12,7 @@ import {
 import { InMemorySandboxProvider } from './memory/sandbox';
 import { FakeSearchProvider } from './memory/search';
 import { InMemoryState } from './memory/state';
+import { InMemoryUnitOfWork } from './memory/unit-of-work';
 import { ScriptedLlm } from './scripted-llm';
 
 export interface TestCradle extends Ports {
@@ -41,6 +42,7 @@ export function createTestContainer(overrides: TestOverrides = {}): AwilixContai
     subtasks: asClass(InMemorySubtaskRepository).singleton(),
     ledger: asClass(InMemoryCreditLedger).singleton(),
     files: asClass(InMemoryFileRepository).singleton(),
+    uow: asClass(InMemoryUnitOfWork).singleton(),
     fileStore: asClass(InMemoryFileStore).singleton(),
     llm: asFunction(() => new ScriptedLlm()).singleton(),
     sandboxes: asFunction(() => new InMemorySandboxProvider()).singleton(),

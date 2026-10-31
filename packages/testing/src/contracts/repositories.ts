@@ -7,6 +7,7 @@ import {
   type StepLog,
   type SubtaskRepository,
   type TaskRepository,
+  type UnitOfWork,
 } from '@agent/core';
 
 export interface RepositoryHarness {
@@ -15,6 +16,7 @@ export interface RepositoryHarness {
   subtasks: SubtaskRepository;
   ledger: CreditLedger;
   files: FileRepository;
+  uow: UnitOfWork;
   seedUser(p?: { millicredits?: number; email?: string }): Promise<string>;
   /** Сколько событий расхода записано всего (для проверки, что неудачная запись ничего не оставила). */
   countUsageEvents(): Promise<number>;
@@ -600,6 +602,70 @@ export function repositoryContract(
         expect(await h.steps.list(task.id.toUpperCase())).toEqual([]);
         expect(await h.subtasks.get(s!.id.toUpperCase())).toBeUndefined();
         expect(await h.files.get(f.id.toUpperCase())).toBeUndefined();
+      });
+    });
+
+    describe('UnitOfWork', () => {
+      test('commits every write when fn resolves', async () => {
+        const userId = await h.seedUser();
+        const task = await h.uow.run(async tx => {
+          const t = await tx.tasks.create({ userId, prompt: 'x' });
+          await tx.steps.append({ taskId: t.id, agent: 'user', payload: msg('hi') });
+          return t;
+        });
+        expect((await h.tasks.get(task.id))?.lastSeq).toBe(1);
+        expect(await h.steps.list(task.id)).toHaveLength(1);
+      });
+
+      test('rolls back every write, including nested transactional ones, and rethrows the same error', async () => {
+        const userId = await h.seedUser({ millicredits: 1000 });
+        const boom = new Error('boom');
+        let taskId = '';
+        const p = h.uow.run(async tx => {
+          const t = await tx.tasks.create({ userId, prompt: 'x' });
+          taskId = t.id;
+          await tx.steps.append({ taskId: t.id, agent: 'user', payload: msg('hi') });
+          await tx.subtasks.insertMany(t.id, [contract('a')]);
+          await tx.ledger.record({ userId, taskId: t.id, model: 'q', tokensIn: 1, tokensOut: 1, millicredits: 300 });
+          throw boom;
+        });
+        await expect(p).rejects.toBe(boom);
+        expect(taskId).not.toBe('');
+        expect(await h.tasks.get(taskId)).toBeUndefined();
+        expect(await h.tasks.countActive(userId)).toBe(0);
+        expect(await h.ledger.balance(userId)).toBe(1000);
+        expect(await h.countUsageEvents()).toBe(0);
+      });
+
+      test('a repository error inside fn rolls back the writes before it', async () => {
+        const userId = await h.seedUser();
+        const p = h.uow.run(async tx => {
+          await tx.tasks.create({ userId, prompt: 'not kept' });
+          await tx.steps.append({ taskId: crypto.randomUUID(), agent: 'user', payload: msg('x') });
+        });
+        await expectNotFound(p, 'task');
+        expect(await h.tasks.countActive(userId)).toBe(0);
+      });
+
+      test('lockUser serialises concurrent check-then-create for the same user', async () => {
+        const userId = await h.seedUser();
+        const attempt = () =>
+          h.uow.run(async tx => {
+            await tx.lockUser(userId);
+            if ((await tx.tasks.countActive(userId)) >= 1) return 'rejected';
+            await tx.tasks.create({ userId, prompt: 'x' });
+            return 'created';
+          });
+        const results = await Promise.all([attempt(), attempt(), attempt()]);
+        expect(results.toSorted()).toEqual(['created', 'rejected', 'rejected']);
+        expect(await h.tasks.countActive(userId)).toBe(1);
+      });
+
+      test('lockUser on an unknown user throws NotFoundError', async () => {
+        await expectNotFound(
+          h.uow.run(tx => tx.lockUser('no-such-user')),
+          'user',
+        );
       });
     });
   });
