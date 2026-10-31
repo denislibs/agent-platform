@@ -63,19 +63,19 @@ export function repositoryContract(
 
       test('forbidden transition throws and changes nothing', async () => {
         const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
-        expect(h.tasks.transition(task.id, 'done')).rejects.toBeInstanceOf(InvalidTransitionError);
+        await expect(h.tasks.transition(task.id, 'done')).rejects.toBeInstanceOf(InvalidTransitionError);
         expect((await h.tasks.get(task.id))?.status).toBe('queued');
       });
 
       test('terminal status is final', async () => {
         const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
         await h.tasks.transition(task.id, 'cancelled');
-        expect(h.tasks.transition(task.id, 'planning')).rejects.toBeInstanceOf(InvalidTransitionError);
+        await expect(h.tasks.transition(task.id, 'planning')).rejects.toBeInstanceOf(InvalidTransitionError);
       });
 
       test('unknown task: transition and update throw NotFoundError', async () => {
-        expect(h.tasks.transition(crypto.randomUUID(), 'planning')).rejects.toBeInstanceOf(NotFoundError);
-        expect(h.tasks.update(crypto.randomUUID(), { activeMs: 1 })).rejects.toBeInstanceOf(NotFoundError);
+        await expect(h.tasks.transition(crypto.randomUUID(), 'planning')).rejects.toBeInstanceOf(NotFoundError);
+        await expect(h.tasks.update(crypto.randomUUID(), { activeMs: 1 })).rejects.toBeInstanceOf(NotFoundError);
       });
 
       test('update changes fields but not status', async () => {
@@ -133,7 +133,7 @@ export function repositoryContract(
 
       test('invalid payload is rejected before anything is written', async () => {
         const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
-        expect(
+        await expect(
           h.steps.append({ taskId: task.id, agent: 'user', payload: { type: 'oops' } as never }),
         ).rejects.toThrow();
         expect(await h.steps.list(task.id)).toHaveLength(0);
@@ -141,7 +141,7 @@ export function repositoryContract(
       });
 
       test('append to unknown task throws NotFoundError', async () => {
-        expect(
+        await expect(
           h.steps.append({ taskId: crypto.randomUUID(), agent: 'user', payload: msg('x') }),
         ).rejects.toBeInstanceOf(NotFoundError);
       });
@@ -194,8 +194,8 @@ export function repositoryContract(
       test('invalid transition and unknown subtask', async () => {
         const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
         const [s] = await h.subtasks.insertMany(task.id, [contract('a')]);
-        expect(h.subtasks.transition(s!.id, 'accepted')).rejects.toBeInstanceOf(InvalidTransitionError);
-        expect(h.subtasks.transition(crypto.randomUUID(), 'running')).rejects.toBeInstanceOf(NotFoundError);
+        await expect(h.subtasks.transition(s!.id, 'accepted')).rejects.toBeInstanceOf(InvalidTransitionError);
+        await expect(h.subtasks.transition(crypto.randomUUID(), 'running')).rejects.toBeInstanceOf(NotFoundError);
       });
     });
 
@@ -227,7 +227,7 @@ export function repositoryContract(
       });
 
       test('unknown user and email throw NotFoundError', async () => {
-        expect(
+        await expect(
           h.ledger.record({
             userId: crypto.randomUUID(),
             taskId: null,
@@ -237,7 +237,7 @@ export function repositoryContract(
             credits: 1,
           }),
         ).rejects.toBeInstanceOf(NotFoundError);
-        expect(h.ledger.grant('nobody@test.dev', 1)).rejects.toBeInstanceOf(NotFoundError);
+        await expect(h.ledger.grant('nobody@test.dev', 1)).rejects.toBeInstanceOf(NotFoundError);
       });
 
       test('grant by email', async () => {
