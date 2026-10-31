@@ -311,6 +311,18 @@ export function repositoryContract(
         expect((await h.steps.list(task.id, { afterSeq: 3 })).map(s => s.seq)).toEqual([4, 5]);
         expect((await h.steps.list(task.id, { subtaskId: sub!.id })).map(s => s.seq)).toEqual([5]);
       });
+
+      test('append rejects a subtask that belongs to another task and does not advance lastSeq', async () => {
+        const userId = await h.seedUser();
+        const mine = await h.tasks.create({ userId, prompt: 'mine' });
+        const other = await h.tasks.create({ userId, prompt: 'other' });
+        const [foreign] = await h.subtasks.insertMany(other.id, [contract('foreign')]);
+        await expectNotFound(
+          h.steps.append({ taskId: mine.id, subtaskId: foreign!.id, agent: 'executor', payload: msg('x') }),
+          'subtask',
+        );
+        expect((await h.tasks.get(mine.id))?.lastSeq).toBe(0);
+      });
     });
 
     describe('SubtaskRepository', () => {
@@ -396,6 +408,32 @@ export function repositoryContract(
         const [s] = await h.subtasks.insertMany(task.id, [contract('a')]);
         await expect(h.subtasks.transition(s!.id, 'accepted')).rejects.toBeInstanceOf(InvalidTransitionError);
         await expect(h.subtasks.transition(crypto.randomUUID(), 'running')).rejects.toBeInstanceOf(NotFoundError);
+      });
+
+      test('get returns a subtask by id; unknown and malformed ids give undefined', async () => {
+        const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
+        const [s] = await h.subtasks.insertMany(task.id, [contract('a')]);
+        expect(await h.subtasks.get(s!.id)).toMatchObject({ id: s!.id, goal: 'a', status: 'pending' });
+        expect(await h.subtasks.get(crypto.randomUUID())).toBeUndefined();
+        expect(await h.subtasks.get(MALFORMED_ID)).toBeUndefined();
+      });
+
+      test('updatePending edits only pending subtasks and keeps omitted fields', async () => {
+        const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
+        const [a, b] = await h.subtasks.insertMany(task.id, [contract('a'), contract('b')]);
+        const edited = await h.subtasks.updatePending(a!.id, { goal: 'a2', expectedOutputs: ['report.md'] });
+        expect(edited).toMatchObject({
+          goal: 'a2',
+          context: '',
+          doneCriteria: 'a done',
+          expectedOutputs: ['report.md'],
+          status: 'pending',
+        });
+        await h.subtasks.transition(b!.id, 'running');
+        await expect(h.subtasks.updatePending(b!.id, { goal: 'nope' })).rejects.toBeInstanceOf(InvalidTransitionError);
+        expect((await h.subtasks.get(b!.id))?.goal).toBe('b');
+        await expectNotFound(h.subtasks.updatePending(crypto.randomUUID(), { goal: 'x' }), 'subtask');
+        await expectNotFound(h.subtasks.updatePending(MALFORMED_ID, { goal: 'x' }), 'subtask');
       });
     });
 
@@ -540,6 +578,28 @@ export function repositoryContract(
         }
         const task = await h.tasks.create({ userId, prompt: 'x' });
         expect(await h.files.attachToTask([mine.id], userId, task.id)).toBe(1);
+      });
+
+      test('get returns a file by id; unknown and malformed ids give undefined', async () => {
+        const userId = await h.seedUser();
+        const f = await h.files.insert(upload(userId));
+        expect(await h.files.get(f.id)).toMatchObject({ id: f.id, userId, path: 'data.csv', taskId: null });
+        expect(await h.files.get(crypto.randomUUID())).toBeUndefined();
+        expect(await h.files.get(MALFORMED_ID)).toBeUndefined();
+      });
+    });
+
+    describe('ids', () => {
+      test('ids are canonical lower-case UUIDs: an upper-case id behaves like an unknown one', async () => {
+        const userId = await h.seedUser();
+        const task = await h.tasks.create({ userId, prompt: 'x' });
+        const [s] = await h.subtasks.insertMany(task.id, [contract('a')]);
+        const f = await h.files.insert(upload(userId, task.id));
+        expect(await h.tasks.get(task.id.toUpperCase())).toBeUndefined();
+        await expectNotFound(h.tasks.update(task.id.toUpperCase(), {}), 'task');
+        expect(await h.steps.list(task.id.toUpperCase())).toEqual([]);
+        expect(await h.subtasks.get(s!.id.toUpperCase())).toBeUndefined();
+        expect(await h.files.get(f.id.toUpperCase())).toBeUndefined();
       });
     });
   });

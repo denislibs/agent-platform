@@ -16,6 +16,7 @@ import type {
  * Общие правила для всех репозиториев:
  * - Кривой id (не UUID) ведёт себя ровно как неизвестный: чтение даёт undefined / [],
  *   запись — NotFoundError. Адаптер не пропускает наружу ошибки формата из хранилища.
+ * - Id — UUID в каноническом виде (строчные буквы); UUID в верхнем регистре ведёт себя как неизвестный.
  * - Ссылка на несуществующую сущность (внешний ключ) даёт NotFoundError(entity, id),
  *   и при этом ничего не записывается.
  * - updatedAt ставит хранилище: Postgres — now() базы, in-memory — порт Clock. Так сравнения «давно не
@@ -56,7 +57,10 @@ export interface TaskRepository {
 
 /** Лента шагов. seq растёт на 1 внутри задачи и не повторяется даже при параллельной записи. */
 export interface StepLog {
-  /** Неизвестная задача — NotFoundError('task'), неизвестный subtaskId — NotFoundError('subtask'); lastSeq не растёт. */
+  /**
+   * Неизвестная задача — NotFoundError('task'); неизвестная подзадача или подзадача другой задачи —
+   * NotFoundError('subtask'); lastSeq при этом не растёт.
+   */
   append(input: AppendStepInput): Promise<Step>;
   list(taskId: string, opts?: { afterSeq?: number; subtaskId?: string }): Promise<Step[]>;
 }
@@ -68,6 +72,12 @@ export interface SubtaskRepository {
    */
   insertMany(taskId: string, contracts: SubtaskContract[]): Promise<Subtask[]>;
   list(taskId: string): Promise<Subtask[]>;
+  get(id: string): Promise<Subtask | undefined>;
+  /**
+   * Правка контракта подзадачи при replan. Только для pending: иначе InvalidTransitionError('subtask', id, 'pending')
+   * и ничего не меняется. Ключи патча со значением undefined не трогают поле. Неизвестная — NotFoundError('subtask').
+   */
+  updatePending(id: string, patch: Partial<SubtaskContract>): Promise<Subtask>;
   nextPending(taskId: string): Promise<Subtask | undefined>;
   /** Как TaskRepository.transition: NotFoundError / InvalidTransitionError, атомарная проверка opts.expectedFrom. */
   transition(
@@ -94,6 +104,7 @@ export interface CreditLedger {
 export interface FileRepository {
   /** Неизвестный userId — NotFoundError('user'), неизвестный taskId — NotFoundError('task'). */
   insert(input: NewFile): Promise<FileRecord>;
+  get(id: string): Promise<FileRecord | undefined>;
   listForTask(taskId: string, kind?: FileKind): Promise<FileRecord[]>;
   /**
    * Привязывает только файлы этого пользователя, ещё не привязанные к задаче. Возвращает их число.

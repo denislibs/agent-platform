@@ -125,7 +125,8 @@ export class InMemoryStepLog implements StepLog {
     const payload = StepPayloadSchema.parse(input.payload);
     const task = this.m.tasks.get(input.taskId);
     if (!task) throw new NotFoundError('task', input.taskId);
-    if (input.subtaskId && !this.m.subtasks.has(input.subtaskId)) throw new NotFoundError('subtask', input.subtaskId);
+    const sub = input.subtaskId ? this.m.subtasks.get(input.subtaskId) : undefined;
+    if (input.subtaskId && sub?.taskId !== input.taskId) throw new NotFoundError('subtask', input.subtaskId);
     task.lastSeq += 1;
     task.updatedAt = this.m.clock.now();
     const step: Step = {
@@ -195,6 +196,24 @@ export class InMemorySubtaskRepository implements SubtaskRepository {
       .filter(s => s.taskId === taskId)
       .toSorted((a, b) => a.idx - b.idx)
       .map(copy);
+  }
+
+  async get(id: string): Promise<Subtask | undefined> {
+    const s = this.m.subtasks.get(id);
+    return s && copy(s);
+  }
+
+  async updatePending(id: string, patch: Partial<SubtaskContract>): Promise<Subtask> {
+    const s = this.m.subtasks.get(id);
+    if (!s) throw new NotFoundError('subtask', id);
+    if (s.status !== 'pending') throw new InvalidTransitionError('subtask', id, 'pending');
+    const { goal, context, doneCriteria, expectedOutputs } = patch;
+    Object.assign(
+      s,
+      definedOnly({ goal, context, doneCriteria, expectedOutputs: expectedOutputs && [...expectedOutputs] }),
+      { updatedAt: this.m.clock.now() },
+    );
+    return copy(s);
   }
 
   async nextPending(taskId: string): Promise<Subtask | undefined> {
@@ -268,6 +287,11 @@ export class InMemoryFileRepository implements FileRepository {
     };
     this.m.files.set(f.id, f);
     return copy(f);
+  }
+
+  async get(id: string): Promise<FileRecord | undefined> {
+    const f = this.m.files.get(id);
+    return f && copy(f);
   }
 
   async listForTask(taskId: string, kind?: FileKind): Promise<FileRecord[]> {

@@ -26,7 +26,10 @@ export class DrizzleStepLog implements StepLog {
       if (subtaskId) {
         // Исключение откатывает транзакцию вместе с увеличением lastSeq.
         const [sub] = isUuid(subtaskId)
-          ? await tx.select({ id: subtasks.id }).from(subtasks).where(eq(subtasks.id, subtaskId))
+          ? await tx
+              .select({ id: subtasks.id })
+              .from(subtasks)
+              .where(and(eq(subtasks.id, subtaskId), eq(subtasks.taskId, input.taskId)))
           : [];
         if (!sub) throw new NotFoundError('subtask', subtaskId);
       }
