@@ -18,6 +18,8 @@ import type {
  *   запись — NotFoundError. Адаптер не пропускает наружу ошибки формата из хранилища.
  * - Ссылка на несуществующую сущность (внешний ключ) даёт NotFoundError(entity, id),
  *   и при этом ничего не записывается.
+ * - updatedAt ставит хранилище: Postgres — now() базы, in-memory — порт Clock. Так сравнения «давно не
+ *   обновлялась» не зависят от часов отдельных воркеров.
  */
 
 /** Ожидаемый текущий статус (один или несколько) для защиты перехода от гонок. */
@@ -43,6 +45,13 @@ export interface TaskRepository {
   update(id: string, patch: TaskPatch): Promise<Task>;
   /** Задачи пользователя в нефинальных статусах. */
   countActive(userId: string): Promise<number>;
+  /** Задачи пользователя, новые первыми (при равном createdAt — по id по убыванию); limit по умолчанию 50. */
+  listForUser(userId: string, opts?: { limit?: number }): Promise<Task[]>;
+  /**
+   * Задачи в статусах statuses, не обновлявшиеся дольше staleForMs по часам хранилища, старые первыми;
+   * limit по умолчанию 100. Для сборщика зависших задач (спецификация 8). Запись шага тоже обновляет задачу.
+   */
+  findStale(opts: { statuses: readonly TaskStatus[]; staleForMs: number; limit?: number }): Promise<Task[]>;
 }
 
 /** Лента шагов. seq растёт на 1 внутри задачи и не повторяется даже при параллельной записи. */

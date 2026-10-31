@@ -19,7 +19,7 @@ export class DrizzleStepLog implements StepLog {
     return this.db.transaction(async tx => {
       const [counter] = await tx
         .update(tasks)
-        .set({ lastSeq: sql`${tasks.lastSeq} + 1`, updatedAt: new Date() })
+        .set({ lastSeq: sql`${tasks.lastSeq} + 1`, updatedAt: sql`now()` })
         .where(eq(tasks.id, input.taskId))
         .returning({ seq: tasks.lastSeq });
       if (!counter) throw new NotFoundError('task', input.taskId);

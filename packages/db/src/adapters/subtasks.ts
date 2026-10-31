@@ -86,7 +86,7 @@ export class DrizzleSubtaskRepository implements SubtaskRepository {
             .update(subtasks)
             .set({
               status: to,
-              updatedAt: new Date(),
+              updatedAt: sql`now()`,
               ...(patch.report ? { report: patch.report } : {}),
               ...(patch.incrementAttempts ? { attempts: sql`${subtasks.attempts} + 1` } : {}),
             })

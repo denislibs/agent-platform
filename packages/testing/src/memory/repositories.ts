@@ -96,6 +96,23 @@ export class InMemoryTaskRepository implements TaskRepository {
   async countActive(userId: string): Promise<number> {
     return [...this.m.tasks.values()].filter(t => t.userId === userId && !isTerminalTask(t.status)).length;
   }
+
+  async listForUser(userId: string, opts: { limit?: number } = {}): Promise<Task[]> {
+    return [...this.m.tasks.values()]
+      .filter(t => t.userId === userId)
+      .toSorted((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
+      .slice(0, opts.limit ?? 50)
+      .map(copy);
+  }
+
+  async findStale(opts: { statuses: readonly TaskStatus[]; staleForMs: number; limit?: number }): Promise<Task[]> {
+    const cutoff = this.m.clock.now().getTime() - opts.staleForMs;
+    return [...this.m.tasks.values()]
+      .filter(t => opts.statuses.includes(t.status) && t.updatedAt.getTime() < cutoff)
+      .toSorted((a, b) => a.updatedAt.getTime() - b.updatedAt.getTime())
+      .slice(0, opts.limit ?? 100)
+      .map(copy);
+  }
 }
 
 export class InMemoryStepLog implements StepLog {

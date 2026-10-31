@@ -11,7 +11,8 @@ import {
 } from '@agent/testing';
 
 repositoryContract('in-memory', async () => {
-  let memory = new InMemoryState({ clock: new FixedClock(), ids: new CryptoIds() });
+  let clock = new FixedClock();
+  let memory = new InMemoryState({ clock, ids: new CryptoIds() });
   const deps = {
     get memory() {
       return memory;
@@ -26,8 +27,10 @@ repositoryContract('in-memory', async () => {
       files: new InMemoryFileRepository(deps),
       seedUser: async (p = {}) => memory.seedUser(p),
       countUsageEvents: async () => memory.usage.length,
+      elapse: async ms => clock.advance(ms),
       reset: async () => {
-        memory = new InMemoryState({ clock: new FixedClock(), ids: new CryptoIds() });
+        clock = new FixedClock();
+        memory = new InMemoryState({ clock, ids: new CryptoIds() });
       },
     },
     close: async () => {},

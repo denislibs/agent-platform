@@ -18,11 +18,19 @@ export interface RepositoryHarness {
   seedUser(p?: { millicredits?: number; email?: string }): Promise<string>;
   /** Сколько событий расхода записано всего (для проверки, что неудачная запись ничего не оставила). */
   countUsageEvents(): Promise<number>;
+  /** Сдвинуть время хранилища вперёд: Postgres — реально подождать, in-memory — сдвинуть часы. */
+  elapse(ms: number): Promise<void>;
   reset(): Promise<void>;
 }
 
 const contract = (goal: string) => ({ goal, context: '', doneCriteria: `${goal} done`, expectedOutputs: [] });
 const msg = (text: string) => ({ type: 'message', role: 'assistant', text }) as const;
+/**
+ * В Postgres updated_at = now() = начало транзакции, а запись (BEGIN…COMMIT с fsync) в Docker на macOS
+ * иногда занимает 40+ мс. Поэтому порог зависания заметно больше худшей задержки записи.
+ */
+const STALE_MS = 200;
+const STALE_GAP_MS = 400;
 const MALFORMED_ID = 'abc';
 const upload = (userId: string, taskId?: string) => ({
   userId,
@@ -179,6 +187,45 @@ export function repositoryContract(
         await h.tasks.transition(b.id, 'failed');
         await h.tasks.create({ userId: otherId, prompt: 'c' });
         expect(await h.tasks.countActive(userId)).toBe(1);
+      });
+
+      test('listForUser returns the newest first, honours limit and ignores other users', async () => {
+        const a = await h.seedUser();
+        const b = await h.seedUser();
+        const first = await h.tasks.create({ userId: a, prompt: '1' });
+        await h.elapse(5);
+        const second = await h.tasks.create({ userId: a, prompt: '2' });
+        await h.tasks.create({ userId: b, prompt: 'other' });
+        expect((await h.tasks.listForUser(a)).map(t => t.id)).toEqual([second.id, first.id]);
+        expect((await h.tasks.listForUser(a, { limit: 1 })).map(t => t.id)).toEqual([second.id]);
+        expect(await h.tasks.listForUser('no-such-user')).toEqual([]);
+      });
+
+      test('findStale returns tasks in the given statuses untouched for longer than staleForMs, oldest first', async () => {
+        const userId = await h.seedUser();
+        const oldest = await h.tasks.create({ userId, prompt: 'oldest' });
+        await h.elapse(5);
+        const old = await h.tasks.create({ userId, prompt: 'old' });
+        const touched = await h.tasks.create({ userId, prompt: 'touched' });
+        const planning = await h.tasks.create({ userId, prompt: 'planning' });
+        await h.tasks.transition(planning.id, 'planning');
+        await h.elapse(STALE_GAP_MS);
+        await h.tasks.update(touched.id, {});
+
+        const queued = await h.tasks.findStale({ statuses: ['queued'], staleForMs: STALE_MS });
+        expect(queued.map(t => t.id)).toEqual([oldest.id, old.id]);
+        const both = await h.tasks.findStale({ statuses: ['queued', 'planning'], staleForMs: STALE_MS });
+        expect(both.map(t => t.id).toSorted()).toEqual([oldest.id, old.id, planning.id].toSorted());
+        expect(await h.tasks.findStale({ statuses: ['queued'], staleForMs: STALE_MS, limit: 1 })).toHaveLength(1);
+        expect(await h.tasks.findStale({ statuses: [], staleForMs: 0 })).toEqual([]);
+      });
+
+      test('appending a step counts as activity for findStale', async () => {
+        const userId = await h.seedUser();
+        const task = await h.tasks.create({ userId, prompt: 'x' });
+        await h.elapse(STALE_GAP_MS);
+        await h.steps.append({ taskId: task.id, agent: 'system', payload: msg('still alive') });
+        expect(await h.tasks.findStale({ statuses: ['queued'], staleForMs: STALE_MS })).toEqual([]);
       });
     });
 

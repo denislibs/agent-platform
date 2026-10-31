@@ -31,6 +31,7 @@ repositoryContract('drizzle/postgres', async () => {
         const [row] = await database.db.select({ n: count() }).from(usageEvents);
         return row?.n ?? 0;
       },
+      elapse: ms => Bun.sleep(ms),
       reset: () => resetDb(database.db),
     },
     close: () => database.close(),

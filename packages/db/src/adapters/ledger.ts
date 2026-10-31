@@ -38,7 +38,7 @@ export class DrizzleCreditLedger implements CreditLedger {
   async grant(email: string, millicredits: number): Promise<{ balance: number }> {
     const [u] = await this.db
       .update(user)
-      .set({ millicredits: sql`${user.millicredits} + ${millicredits}`, updatedAt: new Date() })
+      .set({ millicredits: sql`${user.millicredits} + ${millicredits}`, updatedAt: sql`now()` })
       .where(eq(user.email, email))
       .returning({ millicredits: user.millicredits });
     if (!u) throw new NotFoundError('user', email);
