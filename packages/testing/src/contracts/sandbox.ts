@@ -135,6 +135,19 @@ export function sandboxContract(
       ]);
     });
 
+    test('list handles names with tabs and newlines', async () => {
+      const s = await fresh();
+      await s.writeFile('dir/tab\there.txt', 'a');
+      await s.writeFile('dir/new\nline.txt', 'bb');
+      const expected = [
+        { path: 'dir/tab\there.txt', type: 'file' as const, size: 1 },
+        { path: 'dir/new\nline.txt', type: 'file' as const, size: 2 },
+      ].toSorted((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+      expect(await s.list('dir', 1)).toEqual(expected);
+      expect(text(await s.readFile('dir/tab\there.txt'))).toBe('a');
+      expect(text(await s.readFile('dir/new\nline.txt'))).toBe('bb');
+    });
+
     test('listing a missing folder throws NotFoundError(file)', async () => {
       const s = await fresh();
       await expectNotFound(s.list('nope', 1), 'file', 'nope');

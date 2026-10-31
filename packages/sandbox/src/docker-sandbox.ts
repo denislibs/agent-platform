@@ -29,6 +29,7 @@ const TASK_LABEL = 'agent.task';
 const BROWSERD_HEALTH = 'http://127.0.0.1:9230/health';
 const SAFE_TASK_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}$/;
 const DAEMON_ERROR = /^Error response from daemon/i;
+const NOT_RUNNING = /is not running|is paused|is restarting/i;
 const NO_SUCH_CONTAINER = /no such (object|container)/i;
 
 const containerName = (taskId: string) => `${NAME_PREFIX}${taskId}`;
@@ -63,7 +64,7 @@ export class DockerSandbox implements Sandbox {
     });
     if (r.exitCode !== 0 && DAEMON_ERROR.test(r.stderr)) {
       if (NO_SUCH_CONTAINER.test(r.stderr)) throw new NotFoundError('sandbox', this.id);
-      if (/is not running|is paused|is restarting/i.test(r.stderr)) {
+      if (NOT_RUNNING.test(r.stderr)) {
         throw new SandboxError('not_running', `sandbox ${this.id} is stopped`);
       }
       throw new DockerError(args, r.exitCode, r.stderr);
@@ -120,22 +121,23 @@ export class DockerSandbox implements Sandbox {
       'd',
       ')',
       '-printf',
-      '%y\\t%s\\t%p\\n',
+      '%y\\t%s\\t%p\\0',
     ]);
     if (r.exitCode !== 0) {
       if (/No such file or directory/i.test(r.stderr)) throw new NotFoundError('file', toWorkspaceRelative(abs));
       throw new Error(`list ${toWorkspaceRelative(abs)} failed: ${r.stderr.trim()}`);
     }
     return decode(r.stdout)
-      .split('\n')
+      .split('\0')
       .filter(Boolean)
       .map(line => {
-        const [kind = '', size = '0', p = ''] = line.split('\t');
-        const isDir = kind === 'd';
+        // Путь — всё после второго TAB: в самом имени файла могут быть и TAB, и перевод строки.
+        const sizeEnd = line.indexOf('\t', line.indexOf('\t') + 1);
+        const isDir = line.startsWith('d');
         return {
-          path: toWorkspaceRelative(p),
+          path: toWorkspaceRelative(line.slice(sizeEnd + 1)),
           type: isDir ? ('dir' as const) : ('file' as const),
-          size: isDir ? 0 : Number(size),
+          size: isDir ? 0 : Number(line.slice(2, sizeEnd)),
         };
       })
       .toSorted(byPath);
@@ -151,7 +153,7 @@ export class DockerSandbox implements Sandbox {
 
   async start(): Promise<void> {
     await this.lifecycle(['start', this.containerId]);
-    await waitForBrowserd(this.cli, this.containerId);
+    await waitForBrowserd(this.cli, this.containerId, this.id);
   }
 
   async destroy(): Promise<void> {
@@ -173,10 +175,14 @@ export class DockerSandbox implements Sandbox {
   }
 }
 
-async function waitForBrowserd(cli: DockerCli, containerId: string): Promise<void> {
-  for (let i = 0; i < 80; i++) {
-    const r = await cli.run(['exec', containerId, 'curl', '-sf', BROWSERD_HEALTH]);
+async function waitForBrowserd(cli: DockerCli, containerId: string, id: string): Promise<void> {
+  for (let i = 0; i < 40; i++) {
+    const r = await cli.run(['exec', containerId, 'curl', '-sf', '-m', '2', BROWSERD_HEALTH], { timeoutMs: 5_000 });
     if (r.exitCode === 0) return;
+    if (DAEMON_ERROR.test(r.stderr)) {
+      if (NO_SUCH_CONTAINER.test(r.stderr)) throw new NotFoundError('sandbox', id);
+      if (NOT_RUNNING.test(r.stderr)) throw new SandboxError('not_running', `sandbox ${id} is stopped`);
+    }
     await Bun.sleep(250);
   }
   throw new DockerError(['exec', containerId], 1, 'browserd did not become healthy in 20s');
@@ -184,7 +190,7 @@ async function waitForBrowserd(cli: DockerCli, containerId: string): Promise<voi
 
 interface ContainerInfo {
   containerId: string;
-  taskId: string;
+  labeled: boolean;
   running: boolean;
 }
 
@@ -231,7 +237,7 @@ export class DockerSandboxProvider implements SandboxProvider {
         this.cfg.image,
       ]);
       if (r.exitCode === 0) {
-        info = { containerId: decode(r.stdout).trim(), taskId, running: true };
+        info = { containerId: decode(r.stdout).trim(), labeled: true, running: true };
       } else if (/is already in use/i.test(r.stderr)) {
         // Параллельный create той же задачи: контейнер уже создан другим вызовом.
         info = await this.inspect(name);
@@ -240,47 +246,43 @@ export class DockerSandboxProvider implements SandboxProvider {
     }
     const sandbox = new DockerSandbox(name, taskId, info.containerId, this.cli);
     if (!info.running) await sandbox.start();
-    else await waitForBrowserd(this.cli, info.containerId);
+    else await waitForBrowserd(this.cli, info.containerId, name);
     return sandbox;
   }
 
   async get(sandboxId: string): Promise<Sandbox | undefined> {
     if (!sandboxId.startsWith(NAME_PREFIX)) return undefined;
     const info = await this.inspect(sandboxId);
-    return info ? new DockerSandbox(sandboxId, info.taskId, info.containerId, this.cli) : undefined;
+    if (!info?.labeled) return undefined;
+    return new DockerSandbox(sandboxId, sandboxId.slice(NAME_PREFIX.length), info.containerId, this.cli);
   }
 
   async list(): Promise<SandboxInfo[]> {
-    const out = await this.cli.ok([
-      'ps',
-      '-a',
-      '--filter',
-      `label=${LABEL}=1`,
-      '--format',
-      `{{.Names}}\t{{.Label "${TASK_LABEL}"}}\t{{.State}}`,
-    ]);
+    const out = await this.cli.ok(['ps', '-a', '--filter', `label=${LABEL}=1`, '--format', `{{.Names}}\t{{.State}}`]);
     return out
       .split('\n')
       .filter(Boolean)
       .map(line => {
-        const [id = '', taskId = '', state = ''] = line.split('\t');
-        return { id, taskId, running: state === 'running' };
+        const [id = '', state = ''] = line.split('\t');
+        return { id, taskId: id.slice(NAME_PREFIX.length), running: state === 'running' };
       });
   }
 
   private async inspect(name: string): Promise<ContainerInfo | undefined> {
     const r = await this.cli.run([
       'inspect',
+      '--type',
+      'container',
       '--format',
-      `{{.Id}}\t{{.State.Running}}\t{{index .Config.Labels "${TASK_LABEL}"}}`,
+      `{{.Id}}\t{{.State.Running}}\t{{index .Config.Labels "${LABEL}"}}`,
       name,
     ]);
     if (r.exitCode !== 0) {
       if (NO_SUCH_CONTAINER.test(r.stderr)) return undefined;
       throw new DockerError(['inspect', name], r.exitCode, r.stderr);
     }
-    const [containerId = '', running = '', taskId = ''] = decode(r.stdout).trim().split('\t');
-    return { containerId, taskId, running: running === 'true' };
+    const [containerId = '', running = '', label = ''] = decode(r.stdout).trim().split('\t');
+    return { containerId, labeled: label === '1', running: running === 'true' };
   }
 
   private ensureNetwork(): Promise<void> {
