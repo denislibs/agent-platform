@@ -18,6 +18,8 @@ import {
   type DbHandle,
 } from '@agent/db';
 import { createLlm } from '@agent/llm';
+import { DockerSandboxProvider } from '@agent/sandbox';
+import { BraveSearchProvider, UnavailableSearchProvider } from '@agent/search';
 import type { Config } from '@agent/shared';
 import { S3FileStore } from '@agent/storage';
 
@@ -46,6 +48,12 @@ export function buildContainer(appConfig: Config, overrides: Overrides = {}): Ap
     files: asClass(DrizzleFileRepository).singleton(),
     fileStore: asFunction(({ config }: Cradle) => new S3FileStore(config.s3)).singleton(),
     llm: asFunction(({ config }: Cradle) => createLlm(config.llm)).singleton(),
+    sandboxes: asFunction(({ config }: Cradle) => new DockerSandboxProvider(config.sandbox)).singleton(),
+    search: asFunction(({ config }: Cradle) =>
+      config.search.braveApiKey
+        ? new BraveSearchProvider({ apiKey: config.search.braveApiKey, baseUrl: config.search.braveBaseUrl })
+        : new UnavailableSearchProvider(),
+    ).singleton(),
     ...overrides,
   });
   return container;

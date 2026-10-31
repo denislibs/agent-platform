@@ -18,6 +18,8 @@
         "@agent/core": "workspace:*",
         "@agent/db": "workspace:*",
         "@agent/llm": "workspace:*",
+        "@agent/sandbox": "workspace:*",
+        "@agent/search": "workspace:*",
         "@agent/shared": "workspace:*",
         "@agent/storage": "workspace:*",
         "awilix": "^13",
