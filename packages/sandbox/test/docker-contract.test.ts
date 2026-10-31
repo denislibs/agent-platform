@@ -3,7 +3,7 @@ import { sandboxContract } from '@agent/testing';
 import { DockerSandboxProvider } from '../src';
 import { requireSandboxImage } from './helpers';
 
-sandboxContract('docker', async () => {
+sandboxContract('docker', async limits => {
   await requireSandboxImage();
-  return { provider: new DockerSandboxProvider(loadConfig().sandbox), close: async () => {} };
+  return { provider: new DockerSandboxProvider(loadConfig().sandbox, undefined, limits), close: async () => {} };
 });

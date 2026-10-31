@@ -13,7 +13,7 @@ import {
   type SandboxInfo,
   type SandboxProvider,
 } from '@agent/core';
-import { DockerCli, DockerError, type CliResult } from './docker-cli';
+import { DockerCli, DockerError, type CliResult, type RunOptions } from './docker-cli';
 import { BrowserdResponseSchema } from './page-snapshot';
 
 export interface DockerSandboxConfig {
@@ -102,16 +102,14 @@ export class DockerSandbox implements Sandbox {
   ) {}
 
   /** docker exec внутри песочницы; ошибки самого Docker превращаются в ошибки порта. */
-  private async execRaw(
-    argv: string[],
-    opts: { stdin?: string | Uint8Array; timeoutMs?: number; cwd?: string } = {},
-  ): Promise<CliResult> {
+  private async execRaw(argv: string[], opts: RunOptions & { cwd?: string } = {}): Promise<CliResult> {
     const args = ['exec', '-i'];
     if (opts.cwd) args.push('-w', opts.cwd);
     args.push(this.containerId, ...argv);
     const r = await this.cli.run(args, {
       stdin: opts.stdin ?? '',
       ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
+      ...(opts.maxOutputBytes ? { maxOutputBytes: opts.maxOutputBytes } : {}),
     });
     if (r.exitCode !== 0 && DAEMON_ERROR.test(r.stderr)) {
       if (NO_SUCH_CONTAINER.test(r.stderr)) throw new NotFoundError('sandbox', this.id);
@@ -125,24 +123,42 @@ export class DockerSandbox implements Sandbox {
 
   async exec(cmd: string, opts: ExecOptions): Promise<ExecResult> {
     const cwd = resolveWorkspacePath(opts.cwd ?? WORKSPACE_ROOT);
-    const seconds = Math.max(1, Math.ceil(opts.timeoutMs / 1000));
+    const timeoutMs = Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0 ? opts.timeoutMs : DEFAULT_EXEC_TIMEOUT_MS;
+    const seconds = Math.max(1, Math.ceil(timeoutMs / 1000));
+    const pidFile = `/tmp/.agent-exec-${crypto.randomUUID()}.pid`;
     const started = Date.now();
-    const r = await this.execRaw(['timeout', '--kill-after=2', String(seconds), 'bash', '-c', cmd], {
+    const r = await this.execRaw(['sh', '-c', EXEC_WRAPPER, 'sh', pidFile, String(seconds), 'bash', '-c', cmd], {
       cwd,
       stdin: opts.stdin ?? '',
-      timeoutMs: opts.timeoutMs + 15_000,
+      timeoutMs: timeoutMs + 15_000,
+      maxOutputBytes: this.settings.maxExecOutputBytes,
     });
+    // Убитый клиент docker не останавливает команду в контейнере: добиваем её группу процессов сами.
+    if (r.truncated) {
+      await this.cli.run(['exec', this.containerId, 'bash', '-c', EXEC_KILL, 'bash', pidFile], { timeoutMs: 10_000 });
+    }
     const elapsed = Date.now() - started;
-    const timedOut = r.exitCode === 124 || (r.exitCode === 137 && elapsed >= opts.timeoutMs);
-    return { stdout: decode(r.stdout), stderr: r.stderr, exitCode: r.exitCode, timedOut };
+    const timedOut = !r.truncated && (r.exitCode === 124 || (r.exitCode === 137 && elapsed >= timeoutMs));
+    return { stdout: decode(r.stdout), stderr: r.stderr, exitCode: r.exitCode, timedOut, truncated: r.truncated };
   }
 
   async readFile(path: string): Promise<Uint8Array> {
     const abs = resolveWorkspacePath(path);
-    const r = await this.execRaw(['cat', '--', abs]);
+    const rel = toWorkspaceRelative(abs);
+    const limit = this.settings.maxReadFileBytes;
+    // Размер проверяется до чтения, в том же exec: большой файл не идёт через docker вовсе.
+    const r = await this.execRaw(['sh', '-c', READ_FILE_SCRIPT, 'sh', abs, String(limit)], { maxOutputBytes: limit });
+    const tooLarge = (size: string | undefined) =>
+      new SandboxError(
+        'file_too_large',
+        `file ${rel} is ${size ? `${size} bytes` : 'larger than that'}, over the ${limit}-byte read limit; ` +
+          'read it in parts with exec (head -c, tail -c)',
+      );
+    if (r.exitCode === READ_FILE_TOO_LARGE) throw tooLarge(/too large: (\d+)/.exec(r.stderr)?.[1]);
+    if (r.truncated) throw tooLarge(undefined); // файл вырос между stat и cat
     if (r.exitCode !== 0) {
-      if (/No such file or directory/i.test(r.stderr)) throw new NotFoundError('file', toWorkspaceRelative(abs));
-      throw new Error(`readFile ${toWorkspaceRelative(abs)} failed: ${r.stderr.trim()}`);
+      if (/No such file or directory/i.test(r.stderr)) throw new NotFoundError('file', rel);
+      throw new Error(`readFile ${rel} failed: ${r.stderr.trim()}`);
     }
     return r.stdout;
   }
@@ -261,10 +277,56 @@ export class DockerSandbox implements Sandbox {
 }
 
 const DEFAULT_HEALTH_ATTEMPTS = 40;
+/** Подставляется вместо NaN, ±Infinity и timeoutMs ≤ 0 (спецификация 5.1: 120 с). */
+export const DEFAULT_EXEC_TIMEOUT_MS = 120_000;
+/** Лимит каждого потока вывода exec. */
+export const DEFAULT_MAX_EXEC_OUTPUT_BYTES = 1024 * 1024;
+/** Лимит readFile. */
+export const DEFAULT_MAX_READ_FILE_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Обёртка exec: `timeout` создаёт свою группу процессов (её id = его pid), обёртка записывает этот pid
+ * в файл, чтобы при обрезке вывода убить всю группу (EXEC_KILL). stdin передаётся через fd 3: фоновой
+ * команде неинтерактивный shell иначе подставил бы /dev/null. Код выхода — код `timeout`.
+ */
+const EXEC_WRAPPER = [
+  'f=$1; shift',
+  'exec 3<&0',
+  'timeout --kill-after=2 "$@" <&3 3<&- &',
+  'echo $! > "$f"',
+  'wait $!; rc=$?',
+  'rm -f "$f"',
+  'exit $rc',
+].join('\n');
+/** Убивает группу процессов команды по pid-файлу обёртки (подождав, если файл ещё не записан). */
+const EXEC_KILL = [
+  'for i in 1 2 3 4 5; do [ -s "$1" ] && break; sleep 0.1; done',
+  'p=$(cat "$1" 2>/dev/null) && [ -n "$p" ] && kill -KILL -- "-$p" 2>/dev/null',
+  'rm -f "$1"',
+  'exit 0',
+].join('\n');
+
+const READ_FILE_TOO_LARGE = 3;
+const READ_FILE_SCRIPT = [
+  'size=$(stat -c %s -- "$1") || exit 1',
+  `if [ "$size" -gt "$2" ]; then echo "too large: $size" >&2; exit ${READ_FILE_TOO_LARGE}; fi`,
+  'exec cat -- "$1"',
+].join('\n');
 
 /** Что DockerSandbox берёт у провайдера. */
 interface SandboxSettings {
   image: string;
+  maxExecOutputBytes: number;
+  maxReadFileBytes: number;
+}
+
+export interface DockerSandboxOptions {
+  /** Попыток дождаться browserd при создании (по 250 мс между ними). */
+  healthAttempts?: number;
+  /** Лимит каждого потока вывода exec, по умолчанию 1 MiB. */
+  maxExecOutputBytes?: number;
+  /** Лимит readFile, по умолчанию 50 MiB. */
+  maxReadFileBytes?: number;
 }
 
 /** Приоритет правил блокировки: после таблицы local (0), до main (32766). */
@@ -355,11 +417,15 @@ export class DockerSandboxProvider implements SandboxProvider {
   constructor(
     private readonly cfg: DockerSandboxConfig,
     private readonly cli: DockerCli = new DockerCli(),
-    private readonly opts: { healthAttempts?: number } = {},
+    private readonly opts: DockerSandboxOptions = {},
   ) {}
 
   private get settings(): SandboxSettings {
-    return { image: this.cfg.image };
+    return {
+      image: this.cfg.image,
+      maxExecOutputBytes: this.opts.maxExecOutputBytes ?? DEFAULT_MAX_EXEC_OUTPUT_BYTES,
+      maxReadFileBytes: this.opts.maxReadFileBytes ?? DEFAULT_MAX_READ_FILE_BYTES,
+    };
   }
 
   async create(taskId: string): Promise<Sandbox> {

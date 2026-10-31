@@ -1,15 +1,24 @@
 export interface ExecOptions {
+  /** Предел времени команды. NaN, ±Infinity и значения ≤ 0 заменяются значением по умолчанию — 120 с. */
   timeoutMs: number;
   /** Рабочая папка; по умолчанию /workspace. Разрешается через resolveWorkspacePath. */
   cwd?: string;
   stdin?: string;
 }
 
+/**
+ * Вывод ограничен: каждый поток (stdout и stderr) — не больше лимита адаптера, по умолчанию 1 MiB.
+ * Как только поток превышает лимит, сбор прекращается, команда останавливается досрочно, поток обрезается
+ * ровно до лимита (по байтам UTF-8) и `truncated = true`; exitCode тогда отражает остановку, а не обычное
+ * завершение команды. Полный вывод модели нужен редко: большие объёмы пишут в файл и читают по частям.
+ */
 export interface ExecResult {
   stdout: string;
   stderr: string;
   exitCode: number;
   timedOut: boolean;
+  /** stdout или stderr обрезан по лимиту вывода. */
+  truncated: boolean;
 }
 
 /** path — относительно /workspace; size у папок = 0. */
@@ -48,12 +57,17 @@ export interface PageSnapshot {
  * Изолированный компьютер задачи. Ошибки:
  * уничтоженная песочница → NotFoundError('sandbox'); нет файла/папки → NotFoundError('file', относительный путь);
  * песочница остановлена → SandboxError('not_running'); путь вне /workspace → SandboxError('path_outside_workspace');
- * неизвестный номер элемента → SandboxError('element_not_found'); прочие сбои браузера → SandboxError('browser_failed').
+ * неизвестный номер элемента → SandboxError('element_not_found'); прочие сбои браузера → SandboxError('browser_failed');
+ * файл больше лимита чтения → SandboxError('file_too_large').
  */
 export interface Sandbox {
   readonly id: string;
   readonly taskId: string;
   exec(cmd: string, opts: ExecOptions): Promise<ExecResult>;
+  /**
+   * Файл целиком. Файлы больше лимита адаптера (по умолчанию 50 MiB) не читаются:
+   * SandboxError('file_too_large') — большие файлы читают по частям через exec (head -c, tail -c, dd).
+   */
   readFile(path: string): Promise<Uint8Array>;
   /** Создаёт недостающие родительские папки, перезаписывает файл. */
   writeFile(path: string, data: string | Uint8Array): Promise<void>;

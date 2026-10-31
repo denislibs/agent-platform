@@ -14,11 +14,13 @@ import {
   type SandboxProvider,
 } from '@agent/core';
 
+/** Обработчик может не думать о лимите: двойник обрежет вывод сам (truncated — если обработчик обрезал сам). */
+export type ExecHandlerResult = Omit<ExecResult, 'truncated'> & { truncated?: boolean };
 export type ExecHandler = (
   cmd: string,
   opts: ExecOptions & { cwd: string },
   sandbox: InMemorySandbox,
-) => ExecResult | Promise<ExecResult>;
+) => ExecHandlerResult | Promise<ExecHandlerResult>;
 export type BrowserHandler = (action: BrowserAction, sandbox: InMemorySandbox) => PageSnapshot | Promise<PageSnapshot>;
 export interface SandboxHandlers {
   exec?: ExecHandler;
@@ -26,6 +28,23 @@ export interface SandboxHandlers {
 }
 
 const byPath = (a: FileEntry, b: FileEntry) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+
+/** Те же лимиты по умолчанию, что у Docker-адаптера. */
+export interface InMemorySandboxLimits {
+  maxExecOutputBytes: number;
+  maxReadFileBytes: number;
+}
+export const DEFAULT_IN_MEMORY_SANDBOX_LIMITS: InMemorySandboxLimits = {
+  maxExecOutputBytes: 1024 * 1024,
+  maxReadFileBytes: 50 * 1024 * 1024,
+};
+
+/** Обрезает строку до limit байт UTF-8. */
+function capBytes(text: string, limit: number): { text: string; cut: boolean } {
+  const bytes = new TextEncoder().encode(text);
+  if (bytes.length <= limit) return { text, cut: false };
+  return { text: new TextDecoder().decode(bytes.subarray(0, limit)), cut: true };
+}
 
 /** Файловая система в памяти; команды и браузер — подставляемые обработчики из провайдера. */
 export class InMemorySandbox implements Sandbox {
@@ -48,8 +67,26 @@ export class InMemorySandbox implements Sandbox {
     const cwd = resolveWorkspacePath(opts.cwd ?? WORKSPACE_ROOT);
     this.ensureRunning();
     const handler = this.provider.handlers.exec;
-    if (!handler) return { stdout: '', stderr: `no exec handler scripted for: ${cmd}`, exitCode: 127, timedOut: false };
-    return handler(cmd, { ...opts, cwd }, this);
+    if (!handler) {
+      return {
+        stdout: '',
+        stderr: `no exec handler scripted for: ${cmd}`,
+        exitCode: 127,
+        timedOut: false,
+        truncated: false,
+      };
+    }
+    const r = await handler(cmd, { ...opts, cwd }, this);
+    const limit = this.provider.limits.maxExecOutputBytes;
+    const stdout = capBytes(r.stdout, limit);
+    const stderr = capBytes(r.stderr, limit);
+    return {
+      stdout: stdout.text,
+      stderr: stderr.text,
+      exitCode: r.exitCode,
+      timedOut: r.timedOut,
+      truncated: Boolean(r.truncated) || stdout.cut || stderr.cut,
+    };
   }
 
   async readFile(path: string): Promise<Uint8Array> {
@@ -57,6 +94,13 @@ export class InMemorySandbox implements Sandbox {
     this.ensureRunning();
     const bytes = this.files.get(abs);
     if (!bytes) throw new NotFoundError('file', toWorkspaceRelative(abs));
+    const limit = this.provider.limits.maxReadFileBytes;
+    if (bytes.length > limit) {
+      throw new SandboxError(
+        'file_too_large',
+        `file ${toWorkspaceRelative(abs)} is ${bytes.length} bytes, over the ${limit}-byte read limit`,
+      );
+    }
     return new Uint8Array(bytes);
   }
 
@@ -117,8 +161,14 @@ export class InMemorySandbox implements Sandbox {
 
 export class InMemorySandboxProvider implements SandboxProvider {
   readonly sandboxes = new Map<string, InMemorySandbox>();
+  readonly limits: InMemorySandboxLimits;
 
-  constructor(public handlers: SandboxHandlers = {}) {}
+  constructor(
+    public handlers: SandboxHandlers = {},
+    limits: Partial<InMemorySandboxLimits> = {},
+  ) {
+    this.limits = { ...DEFAULT_IN_MEMORY_SANDBOX_LIMITS, ...limits };
+  }
 
   async create(taskId: string): Promise<Sandbox> {
     const id = `agent-sbx-${taskId}`;

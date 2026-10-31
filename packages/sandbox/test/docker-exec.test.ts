@@ -15,7 +15,7 @@ afterAll(async () => {
 
 test('exec returns stdout, stderr and the exit code', async () => {
   const r = await sandbox.exec('echo hello; echo oops >&2; exit 7', { timeoutMs: 10_000 });
-  expect(r).toEqual({ stdout: 'hello\n', stderr: 'oops\n', exitCode: 7, timedOut: false });
+  expect(r).toEqual({ stdout: 'hello\n', stderr: 'oops\n', exitCode: 7, timedOut: false, truncated: false });
 });
 
 test('exec runs in /workspace by default and in a workspace subfolder on request', async () => {
@@ -51,3 +51,51 @@ test('exec with a cwd outside /workspace is rejected before running', async () =
   }
   expect(caught).toBeInstanceOf(SandboxError);
 });
+
+const MiB = 1024 * 1024;
+
+test('exec output is capped at 1 MiB per stream by default and flagged truncated', async () => {
+  const r = await sandbox.exec("head -c 3145728 /dev/zero | tr '\\0' a", { timeoutMs: 30_000 });
+  expect(r.truncated).toBe(true);
+  expect(r.stdout.length).toBe(MiB);
+  expect(r.stdout).toMatch(/^a+$/);
+});
+
+test('an endless writer is cut off quickly and does not keep running', async () => {
+  const started = Date.now();
+  const r = await sandbox.exec('yes', { timeoutMs: 60_000 });
+  expect(Date.now() - started).toBeLessThan(15_000);
+  expect(r.truncated).toBe(true);
+  expect(r.stdout.length).toBe(MiB);
+  let left = 'unknown';
+  for (let i = 0; i < 20; i++) {
+    left = (await sandbox.exec('pgrep -x yes || true', { timeoutMs: 5_000 })).stdout.trim();
+    if (left === '') break;
+    await Bun.sleep(250);
+  }
+  expect(left).toBe('');
+}, 30_000);
+
+test('readFile refuses files over 50 MiB by default', async () => {
+  await sandbox.exec('head -c 52428801 /dev/zero > big.bin', { timeoutMs: 30_000 });
+  let caught: unknown;
+  try {
+    await sandbox.readFile('big.bin');
+  } catch (err) {
+    caught = err;
+  }
+  expect(caught).toBeInstanceOf(SandboxError);
+  expect((caught as SandboxError).code).toBe('file_too_large');
+  expect((caught as SandboxError).message).toContain('big.bin');
+  await sandbox.exec('rm big.bin', { timeoutMs: 10_000 });
+}, 30_000);
+
+test('a non-finite or non-positive timeoutMs falls back to the 120 s default', async () => {
+  for (const timeoutMs of [Number.NaN, 0, -5, Number.POSITIVE_INFINITY]) {
+    const r = await sandbox.exec('sleep 2; echo ok', { timeoutMs });
+    expect({ timeoutMs, r }).toEqual({
+      timeoutMs,
+      r: { stdout: 'ok\n', stderr: '', exitCode: 0, timedOut: false, truncated: false },
+    });
+  }
+}, 60_000);

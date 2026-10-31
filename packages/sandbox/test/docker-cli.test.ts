@@ -46,3 +46,34 @@ test('timeoutMs kills a hanging docker client', async () => {
   expect(Date.now() - started).toBeLessThan(10_000);
   expect(r.exitCode).not.toBe(0);
 });
+
+test('maxOutputBytes stops collecting, kills the client and reports truncation', async () => {
+  const name = `agent-cli-flood-${crypto.randomUUID().slice(0, 8)}`;
+  leftovers.push(name);
+  const started = Date.now();
+  const r = await cli.run(['run', '--rm', '--name', name, SANDBOX_IMAGE, 'yes'], { maxOutputBytes: 64 * 1024 });
+  expect(Date.now() - started).toBeLessThan(15_000);
+  expect(r.truncated).toBe(true);
+  expect(r.stdout.length).toBe(64 * 1024);
+  expect(new TextDecoder().decode(r.stdout.slice(0, 4))).toBe('y\ny\n');
+});
+
+test('output within maxOutputBytes is returned whole and not truncated', async () => {
+  const r = await cli.run(['run', '--rm', SANDBOX_IMAGE, 'bash', '-c', 'printf 12345; printf ab >&2'], {
+    maxOutputBytes: 5,
+  });
+  expect(r.truncated).toBe(false);
+  expect(new TextDecoder().decode(r.stdout)).toBe('12345');
+  expect(r.stderr).toBe('ab');
+  expect(r.exitCode).toBe(0);
+});
+
+test('stderr over maxOutputBytes is capped too', async () => {
+  const name = `agent-cli-flood-${crypto.randomUUID().slice(0, 8)}`;
+  leftovers.push(name);
+  const r = await cli.run(['run', '--rm', '--name', name, SANDBOX_IMAGE, 'bash', '-c', 'yes >&2'], {
+    maxOutputBytes: 1000,
+  });
+  expect(r.truncated).toBe(true);
+  expect(r.stderr.length).toBe(1000);
+});

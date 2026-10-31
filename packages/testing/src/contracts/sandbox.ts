@@ -1,5 +1,13 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { NotFoundError, SandboxError, type Sandbox, type SandboxErrorCode, type SandboxProvider } from '@agent/core';
+import {
+  NotFoundError,
+  SandboxError,
+  type ExecOptions,
+  type ExecResult,
+  type Sandbox,
+  type SandboxErrorCode,
+  type SandboxProvider,
+} from '@agent/core';
 
 async function expectSandboxError(promise: Promise<unknown>, code: SandboxErrorCode): Promise<void> {
   let caught: unknown;
@@ -26,9 +34,36 @@ async function expectNotFound(promise: Promise<unknown>, entity: string, key: st
 
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 
+/** Лимиты, с которыми контракт просит открыть провайдер: маленькие, чтобы проверить обрезку дёшево. */
+export interface SandboxContractLimits {
+  maxExecOutputBytes: number;
+  maxReadFileBytes: number;
+}
+export const SANDBOX_CONTRACT_LIMITS: SandboxContractLimits = { maxExecOutputBytes: 4096, maxReadFileBytes: 8192 };
+
+const FLOOD = /^head -c (\d+) \/dev\/zero \| tr '\\0' (\w)( >&2)?$/;
+const flood = (bytes: number, char: string, toStderr = false) =>
+  `head -c ${bytes} /dev/zero | tr '\\0' ${char}${toStderr ? ' >&2' : ''}`;
+
+/**
+ * Обработчик exec для двойника: понимает ровно те команды, которые запускает контракт, — так одни и те же
+ * проверки идут и против настоящего bash, и против памяти. Обрезку по лимиту делает сам двойник.
+ */
+export function contractExecHandler(cmd: string, _opts: ExecOptions): Omit<ExecResult, 'truncated'> {
+  if (cmd === 'echo contract-ok') return { stdout: 'contract-ok\n', stderr: '', exitCode: 0, timedOut: false };
+  const m = FLOOD.exec(cmd);
+  if (m) {
+    const out = (m[2] ?? 'x').repeat(Number(m[1]));
+    return m[3]
+      ? { stdout: '', stderr: out, exitCode: 0, timedOut: false }
+      : { stdout: out, stderr: '', exitCode: 0, timedOut: false };
+  }
+  return { stdout: '', stderr: `contract handler does not know: ${cmd}`, exitCode: 127, timedOut: false };
+}
+
 export function sandboxContract(
   name: string,
-  open: () => Promise<{ provider: SandboxProvider; close(): Promise<void> }>,
+  open: (limits: SandboxContractLimits) => Promise<{ provider: SandboxProvider; close(): Promise<void> }>,
 ): void {
   describe(`sandbox contract: ${name}`, () => {
     let provider: SandboxProvider;
@@ -41,7 +76,7 @@ export function sandboxContract(
     };
 
     beforeAll(async () => {
-      ({ provider, close } = await open());
+      ({ provider, close } = await open(SANDBOX_CONTRACT_LIMITS));
     });
     afterAll(async () => {
       await Promise.all(created.map(s => s.destroy().catch(() => {})));
@@ -213,6 +248,39 @@ export function sandboxContract(
       await expectNotFound(s.readFile('gone.txt'), 'sandbox', s.id);
       const reborn = await fresh(taskId);
       await expectNotFound(reborn.readFile('gone.txt'), 'file', 'gone.txt');
+    });
+
+    test('exec returns complete output with truncated false', async () => {
+      const s = await fresh();
+      expect(await s.exec('echo contract-ok', { timeoutMs: 10_000 })).toEqual({
+        stdout: 'contract-ok\n',
+        stderr: '',
+        exitCode: 0,
+        timedOut: false,
+        truncated: false,
+      });
+    });
+
+    test('exec output over the limit is cut to the limit and flagged truncated', async () => {
+      const s = await fresh();
+      const limit = SANDBOX_CONTRACT_LIMITS.maxExecOutputBytes;
+      const exact = await s.exec(flood(limit, 'x'), { timeoutMs: 10_000 });
+      expect(exact).toMatchObject({ truncated: false, stdout: 'x'.repeat(limit) });
+      const out = await s.exec(flood(limit * 5, 'x'), { timeoutMs: 10_000 });
+      expect(out.truncated).toBe(true);
+      expect(out.stdout).toBe('x'.repeat(limit));
+      const err = await s.exec(flood(limit * 5, 'y', true), { timeoutMs: 10_000 });
+      expect(err.truncated).toBe(true);
+      expect(err.stderr).toBe('y'.repeat(limit));
+    });
+
+    test('readFile refuses a file over the limit with file_too_large', async () => {
+      const s = await fresh();
+      const limit = SANDBOX_CONTRACT_LIMITS.maxReadFileBytes;
+      await s.writeFile('fits.bin', new Uint8Array(limit).fill(7));
+      expect((await s.readFile('fits.bin')).length).toBe(limit);
+      await s.writeFile('big.bin', new Uint8Array(limit + 1).fill(7));
+      await expectSandboxError(s.readFile('big.bin'), 'file_too_large');
     });
 
     test('sandboxes are isolated from each other', async () => {

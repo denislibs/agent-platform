@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { loadConfig } from '@agent/shared';
-import { DockerCli, DockerSandboxProvider, type CliResult } from '../src';
+import { DockerCli, DockerSandboxProvider, type CliResult, type RunOptions } from '../src';
 import { requireSandboxImage } from './helpers';
 
 const cfg = loadConfig().sandbox;
@@ -8,9 +8,9 @@ const real = new DockerCli();
 
 /** Настоящий docker CLI, но проба здоровья browserd всегда падает мгновенно. */
 class BrokenHealthCli extends DockerCli {
-  override async run(args: string[], opts?: { stdin?: string | Uint8Array; timeoutMs?: number }): Promise<CliResult> {
+  override async run(args: string[], opts?: RunOptions): Promise<CliResult> {
     if (args[0] === 'exec' && args.includes('curl') && args.some(a => a.endsWith('/health'))) {
-      return { stdout: new Uint8Array(), stderr: '', exitCode: 1 };
+      return { stdout: new Uint8Array(), stderr: '', exitCode: 1, truncated: false };
     }
     return super.run(args, opts);
   }
