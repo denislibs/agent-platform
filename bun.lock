@@ -11,6 +11,13 @@
         "typescript": "^7",
       },
     },
+    "packages/core": {
+      "name": "@agent/core",
+      "version": "0.0.0",
+      "dependencies": {
+        "@agent/shared": "workspace:*",
+      },
+    },
     "packages/shared": {
       "name": "@agent/shared",
       "version": "0.0.0",
@@ -20,6 +27,8 @@
     },
   },
   "packages": {
+    "@agent/core": ["@agent/core@workspace:packages/core"],
+
     "@agent/shared": ["@agent/shared@workspace:packages/shared"],
 
     "@oxlint/binding-android-arm-eabi": ["@oxlint/binding-android-arm-eabi@1.90.0", "", { "os": "android", "cpu": "arm" }, "sha512-sgfalb1HuxYjiAa4wESZ626z1FGusqNcXYHyB5oIOEprS2sbPg0UYEfo83uF1GNG70DIfZxHkXuE6KFrlSdn8Q=="],
