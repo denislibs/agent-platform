@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: agent
       POSTGRES_PASSWORD: agent
       POSTGRES_DB: agent
-    ports: ['55432:5432']
+    ports: ['127.0.0.1:55432:5432']
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -20,7 +20,7 @@ services:
   valkey:
     image: valkey/valkey:8-alpine
     command: ['valkey-server', '--appendonly', 'yes', '--appendfsync', 'everysec', '--maxmemory-policy', 'noeviction']
-    ports: ['56379:6379']
+    ports: ['127.0.0.1:56379:6379']
     volumes:
       - valkeydata:/data
     healthcheck:
@@ -36,7 +36,7 @@ services:
       GARAGE_DEFAULT_ACCESS_KEY: GK0123456789abcdef01234567
       GARAGE_DEFAULT_SECRET_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       GARAGE_DEFAULT_BUCKET: agent-files
-    ports: ['53900:3900']
+    ports: ['127.0.0.1:53900:3900']
     volumes:
       - ./garage/garage.toml:/etc/garage.toml:ro
       - garagemeta:/var/lib/garage/meta
