@@ -87,7 +87,11 @@ export interface SandboxInfo {
   running: boolean;
 }
 
-/** Одна песочница на задачу: create идемпотентен (остановленную — запускает), id = agent-sbx-<taskId>. */
+/**
+ * Одна песочница на задачу: create идемпотентен (остановленную — запускает), id = agent-sbx-<taskId>.
+ * Неожиданный SandboxError('not_running') — песочница упала сама (например, агент убил её процессы или
+ * пришёл OOM) — восстановим: `provider.create(taskId)` снова запускает её с теми же файлами.
+ */
 export interface SandboxProvider {
   create(taskId: string): Promise<Sandbox>;
   get(sandboxId: string): Promise<Sandbox | undefined>;

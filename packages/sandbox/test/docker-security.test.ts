@@ -73,6 +73,15 @@ describe('resource limits', () => {
   });
 });
 
+describe('restart policy', () => {
+  test('the container has no automatic restart policy', async () => {
+    // Правила egress ставит провайдер при каждом запуске; перезапуск силами демона прошёл бы мимо них.
+    // Падение самой песочницы даёт not_running, и provider.create(taskId) поднимает её с правилами.
+    const policy = await cli.ok(['inspect', '--format', '{{.HostConfig.RestartPolicy.Name}}', sandbox.id]);
+    expect(['', 'no']).toContain(policy);
+  });
+});
+
 describe('network isolation', () => {
   test('is attached only to the sandbox network', async () => {
     const networks = await cli.ok(['inspect', '--format', '{{json .NetworkSettings.Networks}}', sandbox.id]);

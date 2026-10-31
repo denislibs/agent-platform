@@ -31,6 +31,8 @@ const BROWSERD_HEALTH = 'http://127.0.0.1:9230/health';
 const BROWSERD_ACTION = 'http://127.0.0.1:9230/action';
 const SAFE_TASK_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}$/;
 const DAEMON_ERROR = /^Error response from daemon/i;
+/** curl: не удалось подключиться — browserd сейчас не слушает (например, перезапускается). */
+const CURL_COULDNT_CONNECT = 7;
 const NOT_RUNNING = /is not running|is paused|is restarting/i;
 const NO_SUCH_CONTAINER = /no such (object|container)/i;
 
@@ -211,22 +213,18 @@ export class DockerSandbox implements Sandbox {
   }
 
   async browser(action: BrowserAction): Promise<PageSnapshot> {
-    const r = await this.execRaw(
-      [
-        'curl',
-        '-s',
-        '--max-time',
-        '60',
-        '-X',
-        'POST',
-        '-H',
-        'content-type: application/json',
-        '--data-binary',
-        '@-',
-        BROWSERD_ACTION,
-      ],
-      { stdin: JSON.stringify(action), timeoutMs: 75_000 },
-    );
+    let r = await this.browserRequest(action);
+    if (r.exitCode === CURL_COULDNT_CONNECT) {
+      // browserd перезапускается супервизором: действие до него не дошло, повторить безопасно.
+      try {
+        await waitForBrowserd(this.cli, this.containerId, this.id);
+      } catch (err) {
+        if (err instanceof DockerError)
+          throw new SandboxError('browser_failed', `browserd did not come back: ${err.message}`);
+        throw err;
+      }
+      r = await this.browserRequest(action);
+    }
     if (r.exitCode !== 0) {
       throw new SandboxError('browser_failed', `browserd is unreachable (curl exit ${r.exitCode}): ${r.stderr.trim()}`);
     }
@@ -245,6 +243,25 @@ export class DockerSandbox implements Sandbox {
       throw new SandboxError(body.code === 'element_not_found' ? 'element_not_found' : 'browser_failed', body.error);
     }
     return body.snapshot;
+  }
+
+  private browserRequest(action: BrowserAction): Promise<CliResult> {
+    return this.execRaw(
+      [
+        'curl',
+        '-s',
+        '--max-time',
+        '60',
+        '-X',
+        'POST',
+        '-H',
+        'content-type: application/json',
+        '--data-binary',
+        '@-',
+        BROWSERD_ACTION,
+      ],
+      { stdin: JSON.stringify(action), timeoutMs: 75_000 },
+    );
   }
 
   async stop(): Promise<void> {

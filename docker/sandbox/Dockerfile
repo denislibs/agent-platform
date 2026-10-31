@@ -20,6 +20,7 @@ RUN npm ci --omit=dev \
  && chmod -R a+rX /ms-playwright \
  && rm -rf /var/lib/apt/lists/* /root/.npm
 COPY browserd/server.mjs ./
+COPY --chmod=755 supervise.sh ./
 
 # uid 1000 занят пользователем node базового образа.
 RUN useradd --create-home --uid 1001 --shell /bin/bash agent \
@@ -28,4 +29,5 @@ RUN useradd --create-home --uid 1001 --shell /bin/bash agent \
 
 USER agent
 WORKDIR /workspace
-CMD ["node", "/opt/browserd/server.mjs"]
+# Супервизор перезапускает browserd; PID 1 — tini (docker run --init).
+CMD ["/opt/browserd/supervise.sh"]
