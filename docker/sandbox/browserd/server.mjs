@@ -22,15 +22,50 @@ class ActionError extends Error {
 }
 
 let browser;
+let context;
 let page;
+// Страницы, открытые самим сайтом (target=_blank, window.open) с начала текущего действия.
+let openedPages = [];
+
+function resetBrowserState() {
+  browser = undefined;
+  context = undefined;
+  page = undefined;
+  openedPages = [];
+}
+
+// Chromium может умереть (OOM, kill): тогда поднимаем новый браузер с ОДНИМ контекстом на весь его срок жизни.
+async function getContext() {
+  if (browser?.isConnected() && context) return context;
+  await browser?.close().catch(() => {});
+  resetBrowserState();
+  const launched = await chromium.launch({ args: ['--no-sandbox', '--disable-dev-shm-usage'] });
+  launched.on('disconnected', () => {
+    if (browser === launched) resetBrowserState();
+  });
+  browser = launched;
+  context = await launched.newContext({ viewport: { width: 1280, height: 800 } });
+  context.setDefaultTimeout(NAV_TIMEOUT_MS);
+  context.on('page', opened => openedPages.push(opened));
+  return context;
+}
 
 async function getPage() {
+  const ctx = await getContext();
   if (page && !page.isClosed()) return page;
-  browser ??= await chromium.launch({ args: ['--no-sandbox', '--disable-dev-shm-usage'] });
-  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-  page = await context.newPage();
-  page.setDefaultTimeout(NAV_TIMEOUT_MS);
+  // Текущую вкладку закрыли (window.close) — берём последнюю из оставшихся.
+  page = ctx.pages().findLast(candidate => !candidate.isClosed()) ?? (await ctx.newPage());
   return page;
+}
+
+// Если действие открыло новую вкладку — переключаемся на неё и ждём загрузки.
+async function followNewTab(current) {
+  const next = openedPages.findLast(candidate => !candidate.isClosed());
+  openedPages = [];
+  if (!next || next === current) return current;
+  page = next;
+  await settle(next);
+  return next;
 }
 
 async function settle(p) {
@@ -140,20 +175,25 @@ async function snapshot(p) {
 
 async function perform(action) {
   const p = await getPage();
+  openedPages = [];
+  let current = p;
   switch (action?.type) {
     case 'open':
       await p.goto(String(action.url), { waitUntil: 'domcontentloaded' });
       await settle(p);
       break;
-    case 'click':
+    case 'click': {
       await (await target(p, action.id)).click();
       await settle(p);
+      current = await followNewTab(p);
       break;
+    }
     case 'type': {
       const el = await target(p, action.id);
       await el.fill(String(action.text ?? ''));
       if (action.submit) await el.press('Enter');
       await settle(p);
+      current = await followNewTab(p);
       break;
     }
     case 'scroll':
@@ -164,7 +204,7 @@ async function perform(action) {
     default:
       throw new ActionError('browser_failed', `unknown action type: ${action?.type}`);
   }
-  return snapshot(p);
+  return snapshot(current);
 }
 
 // Одна страница — действия выполняются строго по очереди.

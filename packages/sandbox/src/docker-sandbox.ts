@@ -14,6 +14,7 @@ import {
   type SandboxProvider,
 } from '@agent/core';
 import { DockerCli, DockerError, type CliResult } from './docker-cli';
+import { BrowserdResponseSchema } from './page-snapshot';
 
 export interface DockerSandboxConfig {
   image: string;
@@ -27,6 +28,7 @@ const NAME_PREFIX = 'agent-sbx-';
 const LABEL = 'agent.sandbox';
 const TASK_LABEL = 'agent.task';
 const BROWSERD_HEALTH = 'http://127.0.0.1:9230/health';
+const BROWSERD_ACTION = 'http://127.0.0.1:9230/action';
 const SAFE_TASK_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}$/;
 const DAEMON_ERROR = /^Error response from daemon/i;
 const NOT_RUNNING = /is not running|is paused|is restarting/i;
@@ -143,8 +145,41 @@ export class DockerSandbox implements Sandbox {
       .toSorted(byPath);
   }
 
-  async browser(_action: BrowserAction): Promise<PageSnapshot> {
-    throw new SandboxError('browser_failed', 'browser is wired in a later step');
+  async browser(action: BrowserAction): Promise<PageSnapshot> {
+    const r = await this.execRaw(
+      [
+        'curl',
+        '-s',
+        '--max-time',
+        '60',
+        '-X',
+        'POST',
+        '-H',
+        'content-type: application/json',
+        '--data-binary',
+        '@-',
+        BROWSERD_ACTION,
+      ],
+      { stdin: JSON.stringify(action), timeoutMs: 75_000 },
+    );
+    if (r.exitCode !== 0) {
+      throw new SandboxError('browser_failed', `browserd is unreachable (curl exit ${r.exitCode}): ${r.stderr.trim()}`);
+    }
+    let json: unknown;
+    try {
+      json = JSON.parse(decode(r.stdout));
+    } catch {
+      throw new SandboxError('browser_failed', 'browserd returned a response that is not valid JSON');
+    }
+    const parsed = BrowserdResponseSchema.safeParse(json);
+    if (!parsed.success) {
+      throw new SandboxError('browser_failed', `unexpected browserd response: ${parsed.error.message}`);
+    }
+    const body = parsed.data;
+    if (!body.ok) {
+      throw new SandboxError(body.code === 'element_not_found' ? 'element_not_found' : 'browser_failed', body.error);
+    }
+    return body.snapshot;
   }
 
   async stop(): Promise<void> {
