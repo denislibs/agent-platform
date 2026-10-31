@@ -47,6 +47,17 @@
         "zod": "^4",
       },
     },
+    "packages/storage": {
+      "name": "@agent/storage",
+      "version": "0.0.0",
+      "dependencies": {
+        "@agent/core": "workspace:*",
+      },
+      "devDependencies": {
+        "@agent/shared": "workspace:*",
+        "@agent/testing": "workspace:*",
+      },
+    },
     "packages/testing": {
       "name": "@agent/testing",
       "version": "0.0.0",
@@ -64,6 +75,8 @@
     "@agent/llm": ["@agent/llm@workspace:packages/llm"],
 
     "@agent/shared": ["@agent/shared@workspace:packages/shared"],
+
+    "@agent/storage": ["@agent/storage@workspace:packages/storage"],
 
     "@agent/testing": ["@agent/testing@workspace:packages/testing"],
 
