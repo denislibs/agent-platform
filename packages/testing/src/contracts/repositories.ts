@@ -16,11 +16,28 @@ export interface RepositoryHarness {
   ledger: CreditLedger;
   files: FileRepository;
   seedUser(p?: { credits?: number; email?: string }): Promise<string>;
+  /** Сколько событий расхода записано всего (для проверки, что неудачная запись ничего не оставила). */
+  countUsageEvents(): Promise<number>;
   reset(): Promise<void>;
 }
 
 const contract = (goal: string) => ({ goal, context: '', doneCriteria: `${goal} done`, expectedOutputs: [] });
 const msg = (text: string) => ({ type: 'message', role: 'assistant', text }) as const;
+const MALFORMED_ID = 'abc';
+const upload = (userId: string, taskId?: string) => ({
+  userId,
+  ...(taskId === undefined ? {} : { taskId }),
+  kind: 'input' as const,
+  path: 'data.csv',
+  storageKey: `in/${crypto.randomUUID()}`,
+  size: 10,
+  mime: 'text/csv',
+});
+
+async function expectNotFound(p: Promise<unknown>, entity: string): Promise<void> {
+  await expect(p).rejects.toBeInstanceOf(NotFoundError);
+  await expect(p).rejects.toHaveProperty('entity', entity);
+}
 
 export function repositoryContract(
   name: string,
@@ -76,6 +93,16 @@ export function repositoryContract(
       test('unknown task: transition and update throw NotFoundError', async () => {
         await expect(h.tasks.transition(crypto.randomUUID(), 'planning')).rejects.toBeInstanceOf(NotFoundError);
         await expect(h.tasks.update(crypto.randomUUID(), { activeMs: 1 })).rejects.toBeInstanceOf(NotFoundError);
+      });
+
+      test('malformed id behaves like an unknown id', async () => {
+        expect(await h.tasks.get(MALFORMED_ID)).toBeUndefined();
+        await expectNotFound(h.tasks.transition(MALFORMED_ID, 'planning'), 'task');
+        await expectNotFound(h.tasks.update(MALFORMED_ID, { activeMs: 1 }), 'task');
+      });
+
+      test('create for an unknown user throws NotFoundError', async () => {
+        await expectNotFound(h.tasks.create({ userId: crypto.randomUUID(), prompt: 'x' }), 'user');
       });
 
       test('update changes fields but not status', async () => {
@@ -146,6 +173,28 @@ export function repositoryContract(
         ).rejects.toBeInstanceOf(NotFoundError);
       });
 
+      test('malformed task id: list is empty, append throws NotFoundError', async () => {
+        expect(await h.steps.list(MALFORMED_ID)).toEqual([]);
+        await expectNotFound(h.steps.append({ taskId: MALFORMED_ID, agent: 'user', payload: msg('x') }), 'task');
+        const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
+        await h.steps.append({ taskId: task.id, agent: 'user', payload: msg('x') });
+        expect(await h.steps.list(task.id, { subtaskId: MALFORMED_ID })).toEqual([]);
+      });
+
+      test('append with an unknown subtask throws NotFoundError and does not advance lastSeq', async () => {
+        const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
+        for (const subtaskId of [crypto.randomUUID(), MALFORMED_ID]) {
+          await expectNotFound(
+            h.steps.append({ taskId: task.id, subtaskId, agent: 'executor', payload: msg('x') }),
+            'subtask',
+          );
+        }
+        expect(await h.steps.list(task.id)).toEqual([]);
+        expect((await h.tasks.get(task.id))?.lastSeq).toBe(0);
+        const next = await h.steps.append({ taskId: task.id, agent: 'executor', payload: msg('ok') });
+        expect(next.seq).toBe(1);
+      });
+
       test('list filters by afterSeq and subtask, ordered by seq', async () => {
         const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
         const [sub] = await h.subtasks.insertMany(task.id, [contract('a')]);
@@ -205,6 +254,20 @@ export function repositoryContract(
         expect(done.report?.files).toEqual(['outputs/a.csv']);
       });
 
+      test('insertMany for an unknown or malformed task throws NotFoundError', async () => {
+        for (const taskId of [crypto.randomUUID(), MALFORMED_ID]) {
+          await expectNotFound(h.subtasks.insertMany(taskId, [contract('a')]), 'task');
+          expect(await h.subtasks.insertMany(taskId, [])).toEqual([]);
+          expect(await h.subtasks.list(taskId)).toEqual([]);
+        }
+      });
+
+      test('malformed id behaves like an unknown id', async () => {
+        expect(await h.subtasks.list(MALFORMED_ID)).toEqual([]);
+        expect(await h.subtasks.nextPending(MALFORMED_ID)).toBeUndefined();
+        await expectNotFound(h.subtasks.transition(MALFORMED_ID, 'running'), 'subtask');
+      });
+
       test('invalid transition and unknown subtask', async () => {
         const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
         const [s] = await h.subtasks.insertMany(task.id, [contract('a')]);
@@ -254,6 +317,18 @@ export function repositoryContract(
         await expect(h.ledger.grant('nobody@test.dev', 1)).rejects.toBeInstanceOf(NotFoundError);
       });
 
+      test('record for an unknown or malformed task throws NotFoundError and writes nothing', async () => {
+        const userId = await h.seedUser({ credits: 100, email: 'ledger@test.dev' });
+        for (const taskId of [crypto.randomUUID(), MALFORMED_ID]) {
+          await expectNotFound(
+            h.ledger.record({ userId, taskId, model: 'qwen', tokensIn: 10, tokensOut: 10, credits: 7 }),
+            'task',
+          );
+        }
+        expect(await h.ledger.grant('ledger@test.dev', 0)).toEqual({ balance: 100 });
+        expect(await h.countUsageEvents()).toBe(0);
+      });
+
       test('grant by email', async () => {
         await h.seedUser({ credits: 0, email: 'beta@test.dev' });
         expect(await h.ledger.grant('beta@test.dev', 500)).toEqual({ balance: 500 });
@@ -295,6 +370,32 @@ export function repositoryContract(
         });
         expect((await h.files.listForTask(task.id)).map(f => f.path).toSorted()).toEqual(['data.csv', 'outputs/r.csv']);
         expect((await h.files.listForTask(task.id, 'output')).map(f => f.path)).toEqual(['outputs/r.csv']);
+      });
+
+      test('insert with an unknown user or task throws NotFoundError', async () => {
+        const userId = await h.seedUser();
+        await expectNotFound(h.files.insert(upload(crypto.randomUUID())), 'user');
+        await expectNotFound(h.files.insert(upload(userId, crypto.randomUUID())), 'task');
+        await expectNotFound(h.files.insert(upload(userId, MALFORMED_ID)), 'task');
+      });
+
+      test('malformed ids are treated as unknown', async () => {
+        const userId = await h.seedUser();
+        const task = await h.tasks.create({ userId, prompt: 'x' });
+        const mine = await h.files.insert(upload(userId));
+        expect(await h.files.listForTask(MALFORMED_ID)).toEqual([]);
+        expect(await h.files.attachToTask([MALFORMED_ID, mine.id], userId, task.id)).toBe(1);
+        expect((await h.files.listForTask(task.id)).map(f => f.id)).toEqual([mine.id]);
+      });
+
+      test('attachToTask to an unknown or malformed task throws NotFoundError and attaches nothing', async () => {
+        const userId = await h.seedUser();
+        const mine = await h.files.insert(upload(userId));
+        for (const taskId of [crypto.randomUUID(), MALFORMED_ID]) {
+          await expectNotFound(h.files.attachToTask([mine.id], userId, taskId), 'task');
+        }
+        const task = await h.tasks.create({ userId, prompt: 'x' });
+        expect(await h.files.attachToTask([mine.id], userId, task.id)).toBe(1);
       });
     });
   });

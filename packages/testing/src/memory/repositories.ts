@@ -38,6 +38,7 @@ export class InMemoryTaskRepository implements TaskRepository {
   }
 
   async create(input: { userId: string; prompt: string }): Promise<Task> {
+    if (!this.m.users.has(input.userId)) throw new NotFoundError('user', input.userId);
     const now = this.m.clock.now();
     const task: Task = {
       id: this.m.ids.uuid(),
@@ -95,6 +96,7 @@ export class InMemoryStepLog implements StepLog {
     const payload = StepPayloadSchema.parse(input.payload);
     const task = this.m.tasks.get(input.taskId);
     if (!task) throw new NotFoundError('task', input.taskId);
+    if (input.subtaskId && !this.m.subtasks.has(input.subtaskId)) throw new NotFoundError('subtask', input.subtaskId);
     task.lastSeq += 1;
     task.updatedAt = this.m.clock.now();
     const step: Step = {
@@ -133,6 +135,8 @@ export class InMemorySubtaskRepository implements SubtaskRepository {
   }
 
   async insertMany(taskId: string, contracts: SubtaskContract[]): Promise<Subtask[]> {
+    if (contracts.length === 0) return [];
+    if (!this.m.tasks.has(taskId)) throw new NotFoundError('task', taskId);
     const existing = [...this.m.subtasks.values()].filter(s => s.taskId === taskId);
     let next = existing.reduce((max, s) => Math.max(max, s.idx), -1) + 1;
     const now = this.m.clock.now();
@@ -189,12 +193,11 @@ export class InMemoryCreditLedger implements CreditLedger {
   async record(e: UsageInput): Promise<{ balance: number }> {
     const user = this.m.users.get(e.userId);
     if (!user) throw new NotFoundError('user', e.userId);
+    const task = e.taskId ? this.m.tasks.get(e.taskId) : undefined;
+    if (e.taskId && !task) throw new NotFoundError('task', e.taskId);
     user.credits -= e.credits;
     this.m.usage.push({ ...e, createdAt: this.m.clock.now() });
-    if (e.taskId) {
-      const task = this.m.tasks.get(e.taskId);
-      if (task) task.tokensUsed += e.tokensIn + e.tokensOut;
-    }
+    if (task) task.tokensUsed += e.tokensIn + e.tokensOut;
     return { balance: user.credits };
   }
 
@@ -213,6 +216,8 @@ export class InMemoryFileRepository implements FileRepository {
   }
 
   async insert(input: NewFile): Promise<FileRecord> {
+    if (!this.m.users.has(input.userId)) throw new NotFoundError('user', input.userId);
+    if (input.taskId && !this.m.tasks.has(input.taskId)) throw new NotFoundError('task', input.taskId);
     const f: FileRecord = {
       ...input,
       taskId: input.taskId ?? null,
@@ -228,6 +233,8 @@ export class InMemoryFileRepository implements FileRepository {
   }
 
   async attachToTask(fileIds: string[], userId: string, taskId: string): Promise<number> {
+    if (fileIds.length === 0) return 0;
+    if (!this.m.tasks.has(taskId)) throw new NotFoundError('task', taskId);
     let n = 0;
     for (const id of fileIds) {
       const f = this.m.files.get(id);

@@ -9,6 +9,7 @@ import {
 import { canTransitionSubtask, SUBTASK_STATUSES, type SubtaskContract, type SubtaskStatus } from '@agent/shared';
 import type { DbHandle } from '../client';
 import { subtasks, tasks } from '../schema';
+import { isUuid } from '../uuid';
 
 export class DrizzleSubtaskRepository implements SubtaskRepository {
   constructor(private readonly deps: { database: DbHandle }) {}
@@ -18,9 +19,11 @@ export class DrizzleSubtaskRepository implements SubtaskRepository {
 
   async insertMany(taskId: string, contracts: SubtaskContract[]): Promise<Subtask[]> {
     if (contracts.length === 0) return [];
+    if (!isUuid(taskId)) throw new NotFoundError('task', taskId);
     return this.db.transaction(async tx => {
       // Блокировка строки задачи сериализует выдачу idx: параллельные вызовы ждут коммита предыдущего.
-      await tx.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, taskId)).for('update');
+      const [locked] = await tx.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, taskId)).for('update');
+      if (!locked) throw new NotFoundError('task', taskId);
       const [last] = await tx
         .select({ maxIdx: sql<number>`coalesce(max(${subtasks.idx}), -1)` })
         .from(subtasks)
@@ -43,10 +46,12 @@ export class DrizzleSubtaskRepository implements SubtaskRepository {
   }
 
   async list(taskId: string): Promise<Subtask[]> {
+    if (!isUuid(taskId)) return [];
     return this.db.select().from(subtasks).where(eq(subtasks.taskId, taskId)).orderBy(asc(subtasks.idx));
   }
 
   async nextPending(taskId: string): Promise<Subtask | undefined> {
+    if (!isUuid(taskId)) return undefined;
     const [row] = await this.db
       .select()
       .from(subtasks)
@@ -57,6 +62,7 @@ export class DrizzleSubtaskRepository implements SubtaskRepository {
   }
 
   async transition(id: string, to: SubtaskStatus, patch: SubtaskPatch = {}): Promise<Subtask> {
+    if (!isUuid(id)) throw new NotFoundError('subtask', id);
     const allowedFrom = SUBTASK_STATUSES.filter(from => canTransitionSubtask(from, to));
     const [row] =
       allowedFrom.length === 0

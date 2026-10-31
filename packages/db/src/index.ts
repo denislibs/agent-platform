@@ -1,6 +1,7 @@
 export * from './schema';
 export * from './client';
 export * from './migrate';
+export * from './uuid';
 export * from './adapters/tasks';
 export * from './adapters/steps';
 export * from './adapters/subtasks';

@@ -1,3 +1,4 @@
+import { count } from 'drizzle-orm';
 import { repositoryContract } from '@agent/testing';
 import {
   DrizzleCreditLedger,
@@ -5,6 +6,7 @@ import {
   DrizzleStepLog,
   DrizzleSubtaskRepository,
   DrizzleTaskRepository,
+  usageEvents,
 } from '../src';
 import { createTestUser, resetDb, setupTestDb } from './helpers';
 
@@ -20,6 +22,10 @@ repositoryContract('drizzle/postgres', async () => {
       files: new DrizzleFileRepository(deps),
       seedUser: async (p = {}) =>
         (await createTestUser(database.db, { credits: p.credits ?? 100, ...(p.email ? { email: p.email } : {}) })).id,
+      countUsageEvents: async () => {
+        const [row] = await database.db.select({ n: count() }).from(usageEvents);
+        return row?.n ?? 0;
+      },
       reset: () => resetDb(database.db),
     },
     close: () => database.close(),

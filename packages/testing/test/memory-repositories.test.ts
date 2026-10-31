@@ -25,6 +25,7 @@ repositoryContract('in-memory', async () => {
       ledger: new InMemoryCreditLedger(deps),
       files: new InMemoryFileRepository(deps),
       seedUser: async (p = {}) => memory.seedUser(p),
+      countUsageEvents: async () => memory.usage.length,
       reset: async () => {
         memory = new InMemoryState({ clock: new FixedClock(), ids: new CryptoIds() });
       },

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import type { FileStore } from '@agent/core';
+import { NotFoundError, type FileStore } from '@agent/core';
 
 export function fileStoreContract(
   name: string,
@@ -47,10 +47,22 @@ export function fileStoreContract(
       expect(await store.getText(k)).toBe('v2');
     });
 
-    test('missing key does not exist and reading it rejects', async () => {
+    test('missing key does not exist and reading it rejects with NotFoundError', async () => {
       const k = key('missing.txt');
       expect(await store.exists(k)).toBe(false);
-      await expect(store.getText(k)).rejects.toThrow();
+      await expect(store.getText(k)).rejects.toBeInstanceOf(NotFoundError);
+      await expect(store.getText(k)).rejects.toHaveProperty('entity', 'object');
+      await expect(store.getBytes(k)).rejects.toBeInstanceOf(NotFoundError);
+      await expect(store.getBytes(k)).rejects.toHaveProperty('key', k);
+    });
+
+    test('delete of a missing key resolves (idempotent)', async () => {
+      const k = key('never-written.txt');
+      await expect(store.delete(k)).resolves.toBeUndefined();
+      await store.put(k, 'x');
+      await store.delete(k);
+      await expect(store.delete(k)).resolves.toBeUndefined();
+      expect(await store.exists(k)).toBe(false);
     });
 
     test('presigned URLs are produced for a key', () => {

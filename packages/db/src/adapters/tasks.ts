@@ -2,7 +2,8 @@ import { and, count, eq, inArray, notInArray } from 'drizzle-orm';
 import { InvalidTransitionError, NotFoundError, type Task, type TaskPatch, type TaskRepository } from '@agent/core';
 import { canTransitionTask, TASK_STATUSES, TERMINAL_TASK_STATUSES, type TaskStatus } from '@agent/shared';
 import type { DbHandle } from '../client';
-import { tasks } from '../schema';
+import { tasks, user } from '../schema';
+import { isUuid } from '../uuid';
 
 export class DrizzleTaskRepository implements TaskRepository {
   constructor(private readonly deps: { database: DbHandle }) {}
@@ -11,16 +12,20 @@ export class DrizzleTaskRepository implements TaskRepository {
   }
 
   async create(input: { userId: string; prompt: string }): Promise<Task> {
+    const [owner] = await this.db.select({ id: user.id }).from(user).where(eq(user.id, input.userId));
+    if (!owner) throw new NotFoundError('user', input.userId);
     const [row] = await this.db.insert(tasks).values(input).returning();
     return row!;
   }
 
   async get(id: string): Promise<Task | undefined> {
+    if (!isUuid(id)) return undefined;
     const [row] = await this.db.select().from(tasks).where(eq(tasks.id, id));
     return row;
   }
 
   async transition(id: string, to: TaskStatus, patch: TaskPatch = {}): Promise<Task> {
+    if (!isUuid(id)) throw new NotFoundError('task', id);
     const allowedFrom = TASK_STATUSES.filter(from => canTransitionTask(from, to));
     const [row] =
       allowedFrom.length === 0
@@ -36,6 +41,7 @@ export class DrizzleTaskRepository implements TaskRepository {
   }
 
   async update(id: string, patch: TaskPatch): Promise<Task> {
+    if (!isUuid(id)) throw new NotFoundError('task', id);
     const [row] = await this.db
       .update(tasks)
       .set({ ...patch, updatedAt: new Date() })

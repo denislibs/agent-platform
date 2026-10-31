@@ -2,6 +2,7 @@ import { eq, sql } from 'drizzle-orm';
 import { NotFoundError, type CreditLedger, type UsageInput } from '@agent/core';
 import type { DbHandle } from '../client';
 import { tasks, usageEvents, user } from '../schema';
+import { isUuid } from '../uuid';
 
 export class DrizzleCreditLedger implements CreditLedger {
   constructor(private readonly deps: { database: DbHandle }) {}
@@ -18,13 +19,18 @@ export class DrizzleCreditLedger implements CreditLedger {
         .where(eq(user.id, e.userId))
         .returning({ credits: user.credits });
       if (!u) throw new NotFoundError('user', e.userId);
-      await tx.insert(usageEvents).values(e);
       if (e.taskId) {
-        await tx
-          .update(tasks)
-          .set({ tokensUsed: sql`${tasks.tokensUsed} + ${e.tokensIn + e.tokensOut}` })
-          .where(eq(tasks.id, e.taskId));
+        // Неизвестная задача: исключение откатывает транзакцию вместе со списанием.
+        const [t] = isUuid(e.taskId)
+          ? await tx
+              .update(tasks)
+              .set({ tokensUsed: sql`${tasks.tokensUsed} + ${e.tokensIn + e.tokensOut}` })
+              .where(eq(tasks.id, e.taskId))
+              .returning({ id: tasks.id })
+          : [];
+        if (!t) throw new NotFoundError('task', e.taskId);
       }
+      await tx.insert(usageEvents).values(e);
       return { balance: u.credits };
     });
   }
