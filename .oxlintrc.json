@@ -6,5 +6,75 @@
     "no-console": "off",
     "typescript/no-explicit-any": "warn"
   },
-  "ignorePatterns": ["packages/db/drizzle/**", "node_modules/**", "design/**", ".superpowers/**"]
+  "ignorePatterns": ["packages/db/drizzle/**", "node_modules/**", "design/**", ".superpowers/**"],
+  "overrides": [
+    {
+      "files": ["packages/core/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "drizzle-orm",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "postgres",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "openai",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "awilix",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "bun",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "@agent/db",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "@agent/llm",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "@agent/storage",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "@agent/testing",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "@agent/composition",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              }
+            ],
+            "patterns": [
+              {
+                "group": [
+                  "drizzle-orm/**",
+                  "postgres/**",
+                  "openai/**",
+                  "awilix/**",
+                  "@agent/db/**",
+                  "@agent/llm/**",
+                  "@agent/storage/**",
+                  "@agent/testing/**",
+                  "@agent/composition/**"
+                ],
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
 }
