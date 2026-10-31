@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { LlmError } from '@agent/core';
 import { createLlm } from '@agent/llm';
 import { completion, fakeOpenAI } from './fake-openai';
 
@@ -87,7 +88,69 @@ describe('createLlm', () => {
     server = fakeOpenAI(() => new Response('down', { status: 500, headers: { 'retry-after-ms': '1' } }));
     await expect(
       llmFor(server.url, 1).chat({ role: 'executor', messages: [{ role: 'user', content: 'x' }] }),
-    ).rejects.toThrow();
+    ).rejects.toBeInstanceOf(LlmError);
     expect(server.requests).toHaveLength(2);
+  });
+});
+
+const ask = (url: string, timeoutMs?: number) =>
+  createLlm({
+    baseURL: url,
+    apiKey: 'k',
+    models: { planner: 'deepseek-x', executor: 'qwen-x' },
+    maxRetries: 0,
+    ...(timeoutMs ? { timeoutMs } : {}),
+  }).chat({ role: 'executor', messages: [{ role: 'user', content: 'x' }] });
+
+async function expectLlmError(p: Promise<unknown>, code: string, retryable: boolean): Promise<void> {
+  await expect(p).rejects.toBeInstanceOf(LlmError);
+  await expect(p).rejects.toMatchObject({ code, retryable });
+}
+
+const status = (code: number, message: string) => () => Response.json({ error: { message } }, { status: code });
+
+describe('errors', () => {
+  test('429 → rate_limited, retryable', async () => {
+    server = fakeOpenAI(status(429, 'slow down'));
+    await expectLlmError(ask(server.url), 'rate_limited', true);
+  });
+
+  test('5xx → unavailable, retryable', async () => {
+    server = fakeOpenAI(status(502, 'bad gateway'));
+    await expectLlmError(ask(server.url), 'unavailable', true);
+  });
+
+  test('401 → auth, not retryable', async () => {
+    server = fakeOpenAI(status(401, 'invalid key'));
+    await expectLlmError(ask(server.url), 'auth', false);
+  });
+
+  test('400 about the context window → context_length, not retryable', async () => {
+    server = fakeOpenAI(status(400, "This model's maximum context length is 32768 tokens"));
+    await expectLlmError(ask(server.url), 'context_length', false);
+  });
+
+  test('other 400 → bad_request, not retryable', async () => {
+    server = fakeOpenAI(status(400, 'tools[0].function.name is invalid'));
+    await expectLlmError(ask(server.url), 'bad_request', false);
+  });
+
+  test('unreachable endpoint → unavailable, retryable', async () => {
+    await expectLlmError(ask('http://127.0.0.1:1/v1'), 'unavailable', true);
+  });
+
+  test('slow endpoint → timeout, retryable', async () => {
+    server = fakeOpenAI(async () => {
+      await Bun.sleep(500);
+      return completion({ content: 'late' });
+    });
+    await expectLlmError(ask(server.url, 50), 'timeout', true);
+  });
+
+  test('a response without choices → unavailable, retryable', async () => {
+    server = fakeOpenAI(() =>
+      Response.json({ id: 'x', object: 'chat.completion', created: 0, model: 'm', choices: [] }),
+    );
+    await expectLlmError(ask(server.url), 'unavailable', true);
   });
 });

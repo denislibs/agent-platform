@@ -25,3 +25,14 @@ test('throws a clear error when the script runs out', async () => {
   const llm = new ScriptedLlm([]);
   await expect(llm.chat({ role: 'executor', messages: [] })).rejects.toThrow(/no scripted response for call #1/);
 });
+
+test('tool calls without an explicit id get stable ids from the call number and position', async () => {
+  const llm = new ScriptedLlm([
+    { toolCalls: [toolCall('shell', { cmd: 'ls' }), toolCall('file_read', { path: 'a' })] },
+    { toolCalls: [toolCall('report', {}), toolCall('shell', {}, 'mine')] },
+  ]);
+  const first = await llm.chat({ role: 'executor', messages: [] });
+  const second = await llm.chat({ role: 'executor', messages: [] });
+  expect(first.toolCalls.map(c => c.id)).toEqual(['call_1_0', 'call_1_1']);
+  expect(second.toolCalls.map(c => c.id)).toEqual(['call_2_0', 'mine']);
+});

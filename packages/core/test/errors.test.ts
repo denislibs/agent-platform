@@ -1,5 +1,12 @@
 import { expect, test } from 'bun:test';
-import { InvalidTransitionError, LimitExceededError, NotFoundError, SandboxError, SearchError } from '@agent/core';
+import {
+  InvalidTransitionError,
+  LimitExceededError,
+  LlmError,
+  NotFoundError,
+  SandboxError,
+  SearchError,
+} from '@agent/core';
 
 test('InvalidTransitionError carries entity, id and target status', () => {
   const e = new InvalidTransitionError('task', 't1', 'done');
@@ -34,4 +41,10 @@ test('LimitExceededError names the limit', () => {
   const e = new LimitExceededError('active_tasks', 'at most 2 active tasks');
   expect(e).toBeInstanceOf(Error);
   expect(e).toMatchObject({ name: 'LimitExceededError', limit: 'active_tasks', message: 'at most 2 active tasks' });
+});
+
+test('LlmError carries a code and whether a later retry may help', () => {
+  const e = new LlmError('rate_limited', 'qwen: 429', true);
+  expect(e).toBeInstanceOf(Error);
+  expect(e).toMatchObject({ name: 'LlmError', code: 'rate_limited', retryable: true, message: 'qwen: 429' });
 });

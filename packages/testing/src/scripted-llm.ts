@@ -2,11 +2,8 @@ import type { ChatRequest, ChatResult, Llm, ToolCall } from '@agent/core';
 
 export type ScriptedTurn = Partial<ChatResult> | ((req: ChatRequest) => Partial<ChatResult>);
 
-export function toolCall(
-  name: string,
-  args: unknown,
-  id: string = `call_${crypto.randomUUID().slice(0, 8)}`,
-): ToolCall {
+/** Вызов инструмента для сценария. Без id ScriptedLlm сам выдаст `call_<номер вызова>_<позиция>`. */
+export function toolCall(name: string, args: unknown, id = ''): ToolCall {
   return { id, name, rawArgs: JSON.stringify(args), args };
 }
 
@@ -33,7 +30,8 @@ export class ScriptedLlm implements Llm {
     const turn = this.turns.shift();
     if (!turn) throw new Error(`ScriptedLlm: no scripted response for call #${this.calls.length} (role ${req.role})`);
     const partial = typeof turn === 'function' ? turn(req) : turn;
-    const toolCalls = partial.toolCalls ?? [];
+    const callNo = this.calls.length;
+    const toolCalls = (partial.toolCalls ?? []).map((c, i) => (c.id ? c : { ...c, id: `call_${callNo}_${i}` }));
     return {
       model: `scripted-${req.role}`,
       content: null,

@@ -57,3 +57,22 @@ export class LimitExceededError extends Error {
     this.name = 'LimitExceededError';
   }
 }
+
+export type LlmErrorCode = 'rate_limited' | 'unavailable' | 'timeout' | 'context_length' | 'bad_request' | 'auth';
+
+/**
+ * Ошибка вызова модели — уже после повторов внутри SDK (спецификация 7: до 4 повторов на 429/5xx).
+ * retryable = true: имеет смысл повторить позже — job падает, и BullMQ повторяет его (план 3c).
+ * retryable = false: повтор не поможет (ключ, формат запроса, переполненный контекст) — job не повторяется,
+ * вызывающий решает сам (например, ужимает контекст при context_length).
+ */
+export class LlmError extends Error {
+  constructor(
+    readonly code: LlmErrorCode,
+    message: string,
+    readonly retryable: boolean,
+  ) {
+    super(message);
+    this.name = 'LlmError';
+  }
+}
