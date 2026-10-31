@@ -35,6 +35,8 @@ const DAEMON_ERROR = /^Error response from daemon/i;
 const CURL_COULDNT_CONNECT = 7;
 const NOT_RUNNING = /is not running|is paused|is restarting/i;
 const NO_SUCH_CONTAINER = /no such (object|container)/i;
+const NETWORK_NOT_FOUND = /network .* not found/i;
+const CONTAINER_ID = /^[0-9a-f]{12,64}$/;
 
 /**
  * Имена, под которыми Docker Desktop и OrbStack отдают контейнерам хост. Все закрепляются за 127.0.0.1
@@ -275,10 +277,15 @@ export class DockerSandbox implements Sandbox {
   }
 
   async destroy(): Promise<void> {
+    // `docker rm -f` несуществующего контейнера завершается успешно, поэтому сначала проверяем ID:
+    // контейнера нет (уничтожен, имя занято новой песочницей) — ни он, ни том `agent-ws-<taskId>` не наши.
+    const found = await this.cli.run(['inspect', '--type', 'container', '--format', '{{.Id}}', this.containerId]);
+    if (found.exitCode !== 0) {
+      if (NO_SUCH_CONTAINER.test(found.stderr)) return;
+      throw new DockerError(['inspect', this.containerId], found.exitCode, found.stderr);
+    }
     const r = await this.cli.run(['rm', '-f', this.containerId]);
-    if (r.exitCode !== 0) {
-      // Контейнера уже нет (в том числе: имя занято новым контейнером) — том не наш, не трогаем.
-      if (NO_SUCH_CONTAINER.test(r.stderr)) return;
+    if (r.exitCode !== 0 && !NO_SUCH_CONTAINER.test(r.stderr)) {
       throw new DockerError(['rm', this.containerId], r.exitCode, r.stderr);
     }
     await this.cli.run(['volume', 'rm', '-f', volumeName(this.taskId)]);
@@ -450,44 +457,7 @@ export class DockerSandboxProvider implements SandboxProvider {
     const name = containerName(taskId);
     let info = await this.inspect(name);
     let created = false;
-    if (!info) {
-      await this.ensureNetwork();
-      const r = await this.cli.run([
-        'run',
-        '-d',
-        '--init',
-        '--name',
-        name,
-        '--label',
-        `${LABEL}=1`,
-        '--label',
-        `${TASK_LABEL}=${taskId}`,
-        '--network',
-        this.cfg.network,
-        '--cpus',
-        String(this.cfg.cpus),
-        '--memory',
-        this.cfg.memory,
-        '--pids-limit',
-        String(this.cfg.pids),
-        '--cap-drop',
-        'ALL',
-        '--security-opt',
-        'no-new-privileges',
-        ...HOST_ALIASES.flatMap(alias => ['--add-host', `${alias}:127.0.0.1`]),
-        '--mount',
-        `type=volume,src=${volumeName(taskId)},dst=${WORKSPACE_ROOT}`,
-        this.cfg.image,
-      ]);
-      if (r.exitCode === 0) {
-        info = { containerId: decode(r.stdout).trim(), labeled: true, running: true };
-        created = true;
-      } else if (/is already in use/i.test(r.stderr)) {
-        // Параллельный create той же задачи: контейнер уже создан другим вызовом.
-        info = await this.inspect(name);
-      }
-      if (!info) throw new DockerError(['run', name], r.exitCode, r.stderr);
-    }
+    if (!info) ({ info, created } = await this.runContainer(taskId, name));
     const sandbox = new DockerSandbox(name, taskId, info.containerId, this.cli, this.settings);
     try {
       if (!info.running) await sandbox.start();
@@ -502,6 +472,73 @@ export class DockerSandboxProvider implements SandboxProvider {
       throw err;
     }
     return sandbox;
+  }
+
+  /**
+   * `docker run` новой песочницы. Том создаётся заранее с метками (сборщик найдёт осиротевшие тома).
+   * Если Docker успел создать контейнер, но не запустил его, контейнер (по напечатанному ID) и том
+   * убираются; «network … not found» (сеть удалили после кэширования) — повтор один раз с новой сетью.
+   */
+  private async runContainer(taskId: string, name: string): Promise<{ info: ContainerInfo; created: boolean }> {
+    for (let attempt = 1; ; attempt++) {
+      await this.ensureNetwork();
+      await this.cli.ok([
+        'volume',
+        'create',
+        '--label',
+        `${LABEL}=1`,
+        '--label',
+        `${TASK_LABEL}=${taskId}`,
+        volumeName(taskId),
+      ]);
+      const r = await this.cli.run(this.runArgs(taskId, name));
+      const id = decode(r.stdout).trim();
+      if (r.exitCode === 0) return { info: { containerId: id, labeled: true, running: true }, created: true };
+      if (/is already in use/i.test(r.stderr)) {
+        // Параллельный create той же задачи: контейнер уже создан другим вызовом.
+        const info = await this.inspect(name);
+        if (info) return { info, created: false };
+        throw new DockerError(['run', name], r.exitCode, r.stderr);
+      }
+      // По ID, а не по имени: имя мог успеть занять параллельный create, его контейнер не трогаем.
+      if (CONTAINER_ID.test(id)) await this.cli.run(['rm', '-f', id]);
+      await this.cli.run(['volume', 'rm', '-f', volumeName(taskId)]);
+      if (attempt === 1 && NETWORK_NOT_FOUND.test(r.stderr)) {
+        this.networkReady = undefined;
+        continue;
+      }
+      throw new DockerError(['run', name], r.exitCode, r.stderr);
+    }
+  }
+
+  private runArgs(taskId: string, name: string): string[] {
+    return [
+      'run',
+      '-d',
+      '--init',
+      '--name',
+      name,
+      '--label',
+      `${LABEL}=1`,
+      '--label',
+      `${TASK_LABEL}=${taskId}`,
+      '--network',
+      this.cfg.network,
+      '--cpus',
+      String(this.cfg.cpus),
+      '--memory',
+      this.cfg.memory,
+      '--pids-limit',
+      String(this.cfg.pids),
+      '--cap-drop',
+      'ALL',
+      '--security-opt',
+      'no-new-privileges',
+      ...HOST_ALIASES.flatMap(alias => ['--add-host', `${alias}:127.0.0.1`]),
+      '--mount',
+      `type=volume,src=${volumeName(taskId)},dst=${WORKSPACE_ROOT}`,
+      this.cfg.image,
+    ];
   }
 
   async get(sandboxId: string): Promise<Sandbox | undefined> {

@@ -8,10 +8,10 @@
   },
   "dependencies": {
     "@agent/core": "workspace:*",
-    "@agent/shared": "workspace:*",
     "zod": "^4"
   },
   "devDependencies": {
+    "@agent/shared": "workspace:*",
     "@agent/testing": "workspace:*"
   }
 }
