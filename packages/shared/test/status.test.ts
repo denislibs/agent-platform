@@ -5,6 +5,7 @@ import {
   isTerminalTask,
   SUBTASK_STATUSES,
   canTransitionSubtask,
+  isExpectedStatus,
 } from '@agent/shared';
 
 describe('task transitions', () => {
@@ -67,5 +68,18 @@ describe('subtask transitions', () => {
 
   test('statuses list', () => {
     expect(SUBTASK_STATUSES).toEqual(['pending', 'running', 'reviewing', 'accepted', 'failed', 'skipped']);
+  });
+});
+
+describe('isExpectedStatus', () => {
+  test('no expectation accepts any status', () => {
+    expect(isExpectedStatus('running')).toBe(true);
+  });
+
+  test('single status and list', () => {
+    expect(isExpectedStatus('running', 'running')).toBe(true);
+    expect(isExpectedStatus('running', 'waiting_user')).toBe(false);
+    expect(isExpectedStatus('running', ['planning', 'running'])).toBe(true);
+    expect(isExpectedStatus('running', [])).toBe(false);
   });
 });

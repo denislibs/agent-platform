@@ -1,6 +1,19 @@
 import { and, count, eq, inArray, notInArray } from 'drizzle-orm';
-import { InvalidTransitionError, NotFoundError, type Task, type TaskPatch, type TaskRepository } from '@agent/core';
-import { canTransitionTask, TASK_STATUSES, TERMINAL_TASK_STATUSES, type TaskStatus } from '@agent/shared';
+import {
+  InvalidTransitionError,
+  NotFoundError,
+  type ExpectedFrom,
+  type Task,
+  type TaskPatch,
+  type TaskRepository,
+} from '@agent/core';
+import {
+  canTransitionTask,
+  isExpectedStatus,
+  TASK_STATUSES,
+  TERMINAL_TASK_STATUSES,
+  type TaskStatus,
+} from '@agent/shared';
 import type { DbHandle } from '../client';
 import { tasks, user } from '../schema';
 import { isUuid } from '../uuid';
@@ -24,9 +37,17 @@ export class DrizzleTaskRepository implements TaskRepository {
     return row;
   }
 
-  async transition(id: string, to: TaskStatus, patch: TaskPatch = {}): Promise<Task> {
+  /** Проверка статуса и запись — один UPDATE … WHERE status IN (допустимые ∩ expectedFrom). */
+  async transition(
+    id: string,
+    to: TaskStatus,
+    patch: TaskPatch = {},
+    opts: { expectedFrom?: ExpectedFrom<TaskStatus> } = {},
+  ): Promise<Task> {
     if (!isUuid(id)) throw new NotFoundError('task', id);
-    const allowedFrom = TASK_STATUSES.filter(from => canTransitionTask(from, to));
+    const allowedFrom = TASK_STATUSES.filter(
+      from => canTransitionTask(from, to) && isExpectedStatus(from, opts.expectedFrom),
+    );
     const [row] =
       allowedFrom.length === 0
         ? []

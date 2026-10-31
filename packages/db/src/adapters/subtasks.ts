@@ -2,11 +2,18 @@ import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import {
   InvalidTransitionError,
   NotFoundError,
+  type ExpectedFrom,
   type Subtask,
   type SubtaskPatch,
   type SubtaskRepository,
 } from '@agent/core';
-import { canTransitionSubtask, SUBTASK_STATUSES, type SubtaskContract, type SubtaskStatus } from '@agent/shared';
+import {
+  canTransitionSubtask,
+  isExpectedStatus,
+  SUBTASK_STATUSES,
+  type SubtaskContract,
+  type SubtaskStatus,
+} from '@agent/shared';
 import type { DbHandle } from '../client';
 import { subtasks, tasks } from '../schema';
 import { isUuid } from '../uuid';
@@ -61,9 +68,17 @@ export class DrizzleSubtaskRepository implements SubtaskRepository {
     return row;
   }
 
-  async transition(id: string, to: SubtaskStatus, patch: SubtaskPatch = {}): Promise<Subtask> {
+  /** Проверка статуса и запись — один UPDATE … WHERE status IN (допустимые ∩ expectedFrom). */
+  async transition(
+    id: string,
+    to: SubtaskStatus,
+    patch: SubtaskPatch = {},
+    opts: { expectedFrom?: ExpectedFrom<SubtaskStatus> } = {},
+  ): Promise<Subtask> {
     if (!isUuid(id)) throw new NotFoundError('subtask', id);
-    const allowedFrom = SUBTASK_STATUSES.filter(from => canTransitionSubtask(from, to));
+    const allowedFrom = SUBTASK_STATUSES.filter(
+      from => canTransitionSubtask(from, to) && isExpectedStatus(from, opts.expectedFrom),
+    );
     const [row] =
       allowedFrom.length === 0
         ? []

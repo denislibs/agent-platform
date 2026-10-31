@@ -33,6 +33,12 @@ export function canTransitionTask(from: TaskStatus, to: TaskStatus): boolean {
   return TASK_TRANSITIONS[from].includes(to);
 }
 
+/** Совпадает ли текущий статус с ожидаемым (один статус или список); без ожидания — всегда да. */
+export function isExpectedStatus<S extends string>(status: S, expected?: S | readonly S[]): boolean {
+  if (expected === undefined) return true;
+  return typeof expected === 'string' ? expected === status : expected.includes(status);
+}
+
 export const SUBTASK_STATUSES = ['pending', 'running', 'reviewing', 'accepted', 'failed', 'skipped'] as const;
 export type SubtaskStatus = (typeof SUBTASK_STATUSES)[number];
 

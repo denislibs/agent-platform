@@ -3,6 +3,7 @@ import {
   NotFoundError,
   type AppendStepInput,
   type CreditLedger,
+  type ExpectedFrom,
   type FileKind,
   type FileRecord,
   type FileRepository,
@@ -20,6 +21,7 @@ import {
 import {
   canTransitionSubtask,
   canTransitionTask,
+  isExpectedStatus,
   isTerminalTask,
   StepPayloadSchema,
   type SubtaskContract,
@@ -66,10 +68,17 @@ export class InMemoryTaskRepository implements TaskRepository {
     return t && copy(t);
   }
 
-  async transition(id: string, to: TaskStatus, patch: TaskPatch = {}): Promise<Task> {
+  async transition(
+    id: string,
+    to: TaskStatus,
+    patch: TaskPatch = {},
+    opts: { expectedFrom?: ExpectedFrom<TaskStatus> } = {},
+  ): Promise<Task> {
     const t = this.m.tasks.get(id);
     if (!t) throw new NotFoundError('task', id);
-    if (!canTransitionTask(t.status, to)) throw new InvalidTransitionError('task', id, to);
+    if (!canTransitionTask(t.status, to) || !isExpectedStatus(t.status, opts.expectedFrom)) {
+      throw new InvalidTransitionError('task', id, to);
+    }
     Object.assign(t, patch, { status: to, updatedAt: this.m.clock.now() });
     return copy(t);
   }
@@ -172,10 +181,17 @@ export class InMemorySubtaskRepository implements SubtaskRepository {
     return (await this.list(taskId)).find(s => s.status === 'pending');
   }
 
-  async transition(id: string, to: SubtaskStatus, patch: SubtaskPatch = {}): Promise<Subtask> {
+  async transition(
+    id: string,
+    to: SubtaskStatus,
+    patch: SubtaskPatch = {},
+    opts: { expectedFrom?: ExpectedFrom<SubtaskStatus> } = {},
+  ): Promise<Subtask> {
     const s = this.m.subtasks.get(id);
     if (!s) throw new NotFoundError('subtask', id);
-    if (!canTransitionSubtask(s.status, to)) throw new InvalidTransitionError('subtask', id, to);
+    if (!canTransitionSubtask(s.status, to) || !isExpectedStatus(s.status, opts.expectedFrom)) {
+      throw new InvalidTransitionError('subtask', id, to);
+    }
     s.status = to;
     s.updatedAt = this.m.clock.now();
     if (patch.report) s.report = copy(patch.report);

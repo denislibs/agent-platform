@@ -20,12 +20,25 @@ import type {
  *   и при этом ничего не записывается.
  */
 
-/** transition/update бросают NotFoundError для неизвестной задачи и InvalidTransitionError для запрещённого перехода. */
+/** Ожидаемый текущий статус (один или несколько) для защиты перехода от гонок. */
+export type ExpectedFrom<S extends string> = S | readonly S[];
+
+/**
+ * transition/update бросают NotFoundError для неизвестной задачи и InvalidTransitionError для запрещённого перехода.
+ * transition атомарен: с opts.expectedFrom переход разрешён только из (допустимые по машине статусов ∩ expectedFrom),
+ * иначе InvalidTransitionError и ничего не меняется. Так из двух параллельных переходов из одного статуса
+ * побеждает ровно один.
+ */
 export interface TaskRepository {
   /** Неизвестный userId — NotFoundError('user'). */
   create(input: { userId: string; prompt: string }): Promise<Task>;
   get(id: string): Promise<Task | undefined>;
-  transition(id: string, to: TaskStatus, patch?: TaskPatch): Promise<Task>;
+  transition(
+    id: string,
+    to: TaskStatus,
+    patch?: TaskPatch,
+    opts?: { expectedFrom?: ExpectedFrom<TaskStatus> },
+  ): Promise<Task>;
   update(id: string, patch: TaskPatch): Promise<Task>;
   /** Задачи пользователя в нефинальных статусах. */
   countActive(userId: string): Promise<number>;
@@ -46,7 +59,13 @@ export interface SubtaskRepository {
   insertMany(taskId: string, contracts: SubtaskContract[]): Promise<Subtask[]>;
   list(taskId: string): Promise<Subtask[]>;
   nextPending(taskId: string): Promise<Subtask | undefined>;
-  transition(id: string, to: SubtaskStatus, patch?: SubtaskPatch): Promise<Subtask>;
+  /** Как TaskRepository.transition: NotFoundError / InvalidTransitionError, атомарная проверка opts.expectedFrom. */
+  transition(
+    id: string,
+    to: SubtaskStatus,
+    patch?: SubtaskPatch,
+    opts?: { expectedFrom?: ExpectedFrom<SubtaskStatus> },
+  ): Promise<Subtask>;
 }
 
 /** Учёт расхода: событие, списание кредитов и токены задачи — атомарно. Баланс может уйти в минус. */

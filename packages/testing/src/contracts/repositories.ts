@@ -90,6 +90,48 @@ export function repositoryContract(
         await expect(h.tasks.transition(task.id, 'planning')).rejects.toBeInstanceOf(InvalidTransitionError);
       });
 
+      test('expectedFrom matching the current status lets the transition through', async () => {
+        const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
+        await h.tasks.transition(task.id, 'planning', {}, { expectedFrom: 'queued' });
+        await h.tasks.transition(task.id, 'running', {}, { expectedFrom: ['planning', 'waiting_user'] });
+        const waiting = await h.tasks.transition(task.id, 'waiting_user', { activeMs: 7 }, { expectedFrom: 'running' });
+        expect(waiting).toMatchObject({ status: 'waiting_user', activeMs: 7 });
+      });
+
+      test('expectedFrom not matching the current status throws InvalidTransitionError and changes nothing', async () => {
+        const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
+        await h.tasks.transition(task.id, 'planning');
+        await h.tasks.transition(task.id, 'running');
+        // running → finalizing is allowed by the state machine, but the caller expected waiting_user.
+        await expect(
+          h.tasks.transition(task.id, 'finalizing', { activeMs: 9 }, { expectedFrom: 'waiting_user' }),
+        ).rejects.toBeInstanceOf(InvalidTransitionError);
+        await expect(
+          h.tasks.transition(task.id, 'failed', {}, { expectedFrom: ['queued', 'planning'] }),
+        ).rejects.toBeInstanceOf(InvalidTransitionError);
+        expect(await h.tasks.get(task.id)).toMatchObject({ status: 'running', activeMs: 0 });
+        await expectNotFound(
+          h.tasks.transition(crypto.randomUUID(), 'planning', {}, { expectedFrom: 'queued' }),
+          'task',
+        );
+      });
+
+      test('concurrent transitions guarded by expectedFrom: exactly one wins', async () => {
+        const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
+        await h.tasks.transition(task.id, 'planning');
+        await h.tasks.transition(task.id, 'running');
+        const results = await Promise.allSettled([
+          h.tasks.transition(task.id, 'waiting_user', {}, { expectedFrom: 'running' }),
+          h.tasks.transition(task.id, 'finalizing', {}, { expectedFrom: 'running' }),
+        ]);
+        const fulfilled = results.filter(r => r.status === 'fulfilled');
+        const rejected = results.filter(r => r.status === 'rejected');
+        expect(fulfilled).toHaveLength(1);
+        expect(rejected).toHaveLength(1);
+        expect(rejected[0]!.reason).toBeInstanceOf(InvalidTransitionError);
+        expect((await h.tasks.get(task.id))?.status).toBe(fulfilled[0]!.value.status);
+      });
+
       test('unknown task: transition and update throw NotFoundError', async () => {
         await expect(h.tasks.transition(crypto.randomUUID(), 'planning')).rejects.toBeInstanceOf(NotFoundError);
         await expect(h.tasks.update(crypto.randomUUID(), { activeMs: 1 })).rejects.toBeInstanceOf(NotFoundError);
@@ -266,6 +308,22 @@ export function repositoryContract(
         expect(await h.subtasks.list(MALFORMED_ID)).toEqual([]);
         expect(await h.subtasks.nextPending(MALFORMED_ID)).toBeUndefined();
         await expectNotFound(h.subtasks.transition(MALFORMED_ID, 'running'), 'subtask');
+      });
+
+      test('expectedFrom guards subtask transitions', async () => {
+        const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
+        const [s] = await h.subtasks.insertMany(task.id, [contract('a')]);
+        await h.subtasks.transition(s!.id, 'running', { incrementAttempts: true }, { expectedFrom: 'pending' });
+        await h.subtasks.transition(s!.id, 'reviewing', {}, { expectedFrom: ['running', 'pending'] });
+        // reviewing → running is allowed by the state machine, but the caller expected running.
+        await expect(
+          h.subtasks.transition(s!.id, 'running', { incrementAttempts: true }, { expectedFrom: 'running' }),
+        ).rejects.toBeInstanceOf(InvalidTransitionError);
+        expect((await h.subtasks.list(task.id))[0]).toMatchObject({ status: 'reviewing', attempts: 1 });
+        await expectNotFound(
+          h.subtasks.transition(crypto.randomUUID(), 'running', {}, { expectedFrom: 'pending' }),
+          'subtask',
+        );
       });
 
       test('invalid transition and unknown subtask', async () => {
