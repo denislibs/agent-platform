@@ -54,6 +54,14 @@
               {
                 "name": "@agent/composition",
                 "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "@agent/sandbox",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "@agent/search",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
               }
             ],
             "patterns": [
@@ -67,7 +75,9 @@
                   "@agent/llm/**",
                   "@agent/storage/**",
                   "@agent/testing/**",
-                  "@agent/composition/**"
+                  "@agent/composition/**",
+                  "@agent/sandbox/**",
+                  "@agent/search/**"
                 ],
                 "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
               }

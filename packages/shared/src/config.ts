@@ -25,6 +25,16 @@ const EnvSchema = z.object({
   STEPS_PER_JOB: positiveInt(5),
   WORKER_CONCURRENCY: positiveInt(4),
   WAIT_USER_TIMEOUT_MS: positiveInt(86_400_000),
+  SANDBOX_IMAGE: z.string().min(1).default('agent-sandbox:dev'),
+  SANDBOX_NETWORK: z.string().min(1).default('agent-sandbox'),
+  SANDBOX_CPUS: z.coerce.number().positive().default(2),
+  SANDBOX_MEMORY: z
+    .string()
+    .regex(/^\d+[kmg]$/i, 'expected a Docker memory size like 4g or 512m')
+    .default('4g'),
+  SANDBOX_PIDS: positiveInt(512),
+  BRAVE_API_KEY: z.preprocess(v => (v === '' ? undefined : v), z.string().min(1).optional()),
+  BRAVE_BASE_URL: z.string().min(1).default('https://api.search.brave.com'),
 });
 
 export type Config = ReturnType<typeof loadConfig>;
@@ -62,6 +72,17 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       stepsPerJob: e.STEPS_PER_JOB,
       workerConcurrency: e.WORKER_CONCURRENCY,
       waitUserTimeoutMs: e.WAIT_USER_TIMEOUT_MS,
+    },
+    sandbox: {
+      image: e.SANDBOX_IMAGE,
+      network: e.SANDBOX_NETWORK,
+      cpus: e.SANDBOX_CPUS,
+      memory: e.SANDBOX_MEMORY,
+      pids: e.SANDBOX_PIDS,
+    },
+    search: {
+      braveApiKey: e.BRAVE_API_KEY ?? null,
+      braveBaseUrl: e.BRAVE_BASE_URL,
     },
   };
 }

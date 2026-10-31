@@ -46,4 +46,39 @@ describe('loadConfig', () => {
   test('rejects non-positive limits', () => {
     expect(() => loadConfig({ ...base, STEPS_PER_JOB: '0' })).toThrow(/STEPS_PER_JOB/);
   });
+
+  test('sandbox and search sections have defaults', () => {
+    const c = loadConfig(base);
+    expect(c.sandbox).toEqual({
+      image: 'agent-sandbox:dev',
+      network: 'agent-sandbox',
+      cpus: 2,
+      memory: '4g',
+      pids: 512,
+    });
+    expect(c.search).toEqual({ braveApiKey: null, braveBaseUrl: 'https://api.search.brave.com' });
+  });
+
+  test('sandbox and search values can be overridden', () => {
+    const c = loadConfig({
+      ...base,
+      SANDBOX_IMAGE: 'agent-sandbox:1',
+      SANDBOX_NETWORK: 'net-x',
+      SANDBOX_CPUS: '1.5',
+      SANDBOX_MEMORY: '512m',
+      SANDBOX_PIDS: '128',
+      BRAVE_API_KEY: 'brave-key',
+      BRAVE_BASE_URL: 'http://localhost:9999',
+    });
+    expect(c.sandbox).toEqual({ image: 'agent-sandbox:1', network: 'net-x', cpus: 1.5, memory: '512m', pids: 128 });
+    expect(c.search).toEqual({ braveApiKey: 'brave-key', braveBaseUrl: 'http://localhost:9999' });
+  });
+
+  test('empty BRAVE_API_KEY means search is not configured', () => {
+    expect(loadConfig({ ...base, BRAVE_API_KEY: '' }).search.braveApiKey).toBeNull();
+  });
+
+  test('rejects malformed sandbox memory', () => {
+    expect(() => loadConfig({ ...base, SANDBOX_MEMORY: 'lots' })).toThrow(/SANDBOX_MEMORY/);
+  });
 });
