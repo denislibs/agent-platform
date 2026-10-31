@@ -1,0 +1,49 @@
+name: agent-dev
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: agent
+      POSTGRES_PASSWORD: agent
+      POSTGRES_DB: agent
+    ports: ['127.0.0.1:55432:5432']
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U agent -d agent']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    command: ['valkey-server', '--appendonly', 'yes', '--appendfsync', 'everysec', '--maxmemory-policy', 'noeviction']
+    ports: ['127.0.0.1:56379:6379']
+    volumes:
+      - valkeydata:/data
+    healthcheck:
+      test: ['CMD', 'valkey-cli', 'ping']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  garage:
+    image: dxflrs/garage:v2.4.1
+    command: ['/garage', 'server', '--single-node', '--default-bucket']
+    environment:
+      GARAGE_DEFAULT_ACCESS_KEY: GK0123456789abcdef01234567
+      GARAGE_DEFAULT_SECRET_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      GARAGE_DEFAULT_BUCKET: agent-files
+    ports: ['127.0.0.1:53900:3900']
+    volumes:
+      - ./garage/garage.toml:/etc/garage.toml:ro
+      - garagemeta:/var/lib/garage/meta
+      - garagedata:/var/lib/garage/data
+
+volumes:
+  pgdata:
+  valkeydata:
+  garagemeta:
+  garagedata:

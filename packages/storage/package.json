@@ -1,0 +1,16 @@
+{
+  "name": "@agent/storage",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@agent/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@agent/shared": "workspace:*",
+    "@agent/testing": "workspace:*"
+  }
+}

@@ -1,0 +1,47 @@
+import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
+import { NotFoundError, type FileKind, type FileRecord, type FileRepository, type NewFile } from '@agent/core';
+import type { DbHandle } from '../client';
+import { files, tasks, user } from '../schema';
+import { isUuid } from '../uuid';
+
+export class DrizzleFileRepository implements FileRepository {
+  constructor(private readonly deps: { database: DbHandle }) {}
+  private get db() {
+    return this.deps.database.db;
+  }
+
+  private async assertTaskExists(taskId: string): Promise<void> {
+    const [t] = isUuid(taskId) ? await this.db.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, taskId)) : [];
+    if (!t) throw new NotFoundError('task', taskId);
+  }
+
+  async insert(input: NewFile): Promise<FileRecord> {
+    const [owner] = await this.db.select({ id: user.id }).from(user).where(eq(user.id, input.userId));
+    if (!owner) throw new NotFoundError('user', input.userId);
+    if (input.taskId) await this.assertTaskExists(input.taskId);
+    const [row] = await this.db
+      .insert(files)
+      .values({ ...input, taskId: input.taskId ?? null })
+      .returning();
+    return row!;
+  }
+
+  async listForTask(taskId: string, kind?: FileKind): Promise<FileRecord[]> {
+    if (!isUuid(taskId)) return [];
+    const where = kind ? and(eq(files.taskId, taskId), eq(files.kind, kind)) : eq(files.taskId, taskId);
+    return this.db.select().from(files).where(where).orderBy(asc(files.createdAt));
+  }
+
+  async attachToTask(fileIds: string[], userId: string, taskId: string): Promise<number> {
+    if (fileIds.length === 0) return 0;
+    await this.assertTaskExists(taskId);
+    const ids = fileIds.filter(isUuid);
+    if (ids.length === 0) return 0;
+    const rows = await this.db
+      .update(files)
+      .set({ taskId })
+      .where(and(inArray(files.id, ids), eq(files.userId, userId), isNull(files.taskId)))
+      .returning({ id: files.id });
+    return rows.length;
+  }
+}
