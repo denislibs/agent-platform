@@ -1,0 +1,29 @@
+{
+  "name": "agent-platform",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "test:unit": "bun test packages/shared packages/core packages/testing packages/llm",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "oxlint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "bun run typecheck && bun run lint && bun run format:check",
+    "infra:up": "docker compose -f docker/compose.yml up -d",
+    "infra:down": "docker compose -f docker/compose.yml down",
+    "infra:reset": "docker compose -f docker/compose.yml down -v",
+    "infra:wait": "bun scripts/wait-infra.ts",
+    "db:generate": "cd packages/db && bunx --bun drizzle-kit generate",
+    "db:migrate": "bun packages/db/src/migrate.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "oxlint": "^1.90.0",
+    "prettier": "^3.9.10",
+    "typescript": "^7"
+  }
+}

@@ -1,0 +1,8 @@
+bun.lock
+node_modules
+packages/db/drizzle
+docs
+design
+.claude
+backlog.md
+.superpowers
