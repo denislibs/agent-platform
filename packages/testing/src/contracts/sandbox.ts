@@ -78,10 +78,11 @@ export function sandboxContract(
     beforeAll(async () => {
       ({ provider, close } = await open(SANDBOX_CONTRACT_LIMITS));
     });
+    // Параллельная уборка двух десятков настоящих контейнеров под нагрузкой не укладывается в 5 с по умолчанию.
     afterAll(async () => {
       await Promise.all(created.map(s => s.destroy().catch(() => {})));
       await close();
-    });
+    }, 60_000);
 
     test('create is idempotent per task; get and list find the sandbox', async () => {
       const taskId = crypto.randomUUID();

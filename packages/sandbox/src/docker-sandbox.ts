@@ -361,6 +361,8 @@ const EGRESS_RULE_PREF = '100';
  * Делает это короткоживущий служебный контейнер с одной лишь NET_ADMIN, разделяющий сеть песочницы:
  * у самой песочницы capabilities нет, снять правила она не может. Правила живут, пока жив netns, —
  * поэтому их ставит каждый запуск через провайдер, а политики автоперезапуска у контейнера нет.
+ * Идемпотентно и без окна: на работающей песочнице добавляются только недостающие правила, а устаревшие
+ * снимаются уже после этого (повторный create() не открывает доступ даже на миллисекунды).
  */
 async function blockEgress(cli: DockerCli, image: string, containerId: string, id: string): Promise<void> {
   const script = [
@@ -368,8 +370,13 @@ async function blockEgress(cli: DockerCli, image: string, containerId: string, i
     "gw=$(ip -4 route show default | awk '{print $3; exit}')",
     "subnet=$(ip -4 route show scope link proto kernel | awk '{print $1; exit}')",
     '[ -n "$gw" ] && [ -n "$subnet" ] || { echo "no default route or subnet" >&2; exit 1; }',
-    `while ip rule del pref ${EGRESS_RULE_PREF} 2>/dev/null; do :; done`,
-    `for d in "$@" "$subnet" "$gw/32"; do ip rule add pref ${EGRESS_RULE_PREF} to "$d" blackhole; done`,
+    // Целевой набор; /32 ip rule показывает без маски — нормализуем так же.
+    `want=$(for d in "$@" "$subnet" "$gw/32"; do echo "\${d%/32}"; done)`,
+    `have() { ip rule show pref ${EGRESS_RULE_PREF} | awk '$NF == "blackhole" { for (i = 1; i < NF; i++) if ($i == "to") print $(i + 1) }'; }`,
+    // Сначала добавляем недостающее, и только потом снимаем устаревшее: набор ни в какой момент не неполон.
+    'current=$(have)',
+    `for d in $want; do echo "$current" | grep -qxF "$d" || ip rule add pref ${EGRESS_RULE_PREF} to "$d" blackhole; done`,
+    `for d in $(have); do echo "$want" | grep -qxF "$d" || ip rule del pref ${EGRESS_RULE_PREF} to "$d" blackhole; done`,
   ].join('\n');
   const args = [
     'run',
@@ -457,7 +464,8 @@ export class DockerSandboxProvider implements SandboxProvider {
     const name = containerName(taskId);
     let info = await this.inspect(name);
     let created = false;
-    if (!info) ({ info, created } = await this.runContainer(taskId, name));
+    let volumeCreated = false;
+    if (!info) ({ info, created, volumeCreated } = await this.runContainer(taskId, name));
     const sandbox = new DockerSandbox(name, taskId, info.containerId, this.cli, this.settings);
     try {
       if (!info.running) await sandbox.start();
@@ -467,19 +475,32 @@ export class DockerSandboxProvider implements SandboxProvider {
         await waitForBrowserd(this.cli, info.containerId, name, this.opts.healthAttempts);
       }
     } catch (err) {
-      // Откатываем только то, что создали сами: чужой/ранее существовавший контейнер и его том не трогаем.
-      if (created) await sandbox.destroy().catch(() => undefined);
+      // Откатываем только то, что создал этот вызов: чужой/ранее существовавший контейнер не трогаем,
+      // а уцелевший том (например, после prune контейнера и сети) хранит файлы пользователя.
+      if (created) await this.rollback(info.containerId, taskId, volumeCreated);
       throw err;
     }
     return sandbox;
   }
 
+  /** Best-effort: контейнер по ID; том — только если его создал этот вызов create(). */
+  private async rollback(containerId: string, taskId: string, volumeCreated: boolean): Promise<void> {
+    if (CONTAINER_ID.test(containerId)) await this.cli.run(['rm', '-f', containerId]).catch(() => undefined);
+    if (volumeCreated) await this.cli.run(['volume', 'rm', '-f', volumeName(taskId)]).catch(() => undefined);
+  }
+
   /**
-   * `docker run` новой песочницы. Том создаётся заранее с метками (сборщик найдёт осиротевшие тома).
-   * Если Docker успел создать контейнер, но не запустил его, контейнер (по напечатанному ID) и том
-   * убираются; «network … not found» (сеть удалили после кэширования) — повтор один раз с новой сетью.
+   * `docker run` новой песочницы. Том создаётся заранее с метками (сборщик найдёт осиротевшие тома);
+   * уже существующий том (файлы прежней жизни песочницы) переиспользуется и при откате не удаляется.
+   * Если Docker успел создать контейнер, но не запустил его, контейнер (по напечатанному ID) убирается,
+   * а том — только созданный этим вызовом; «network … not found» (сеть удалили после кэширования) —
+   * повтор один раз с новой сетью.
    */
-  private async runContainer(taskId: string, name: string): Promise<{ info: ContainerInfo; created: boolean }> {
+  private async runContainer(
+    taskId: string,
+    name: string,
+  ): Promise<{ info: ContainerInfo; created: boolean; volumeCreated: boolean }> {
+    const volumeCreated = (await this.cli.run(['volume', 'inspect', volumeName(taskId)])).exitCode !== 0;
     for (let attempt = 1; ; attempt++) {
       await this.ensureNetwork();
       await this.cli.ok([
@@ -493,20 +514,22 @@ export class DockerSandboxProvider implements SandboxProvider {
       ]);
       const r = await this.cli.run(this.runArgs(taskId, name));
       const id = decode(r.stdout).trim();
-      if (r.exitCode === 0) return { info: { containerId: id, labeled: true, running: true }, created: true };
+      if (r.exitCode === 0) {
+        return { info: { containerId: id, labeled: true, running: true }, created: true, volumeCreated };
+      }
       if (/is already in use/i.test(r.stderr)) {
-        // Параллельный create той же задачи: контейнер уже создан другим вызовом.
+        // Параллельный create той же задачи: контейнер уже создан другим вызовом, его том не наш.
         const info = await this.inspect(name);
-        if (info) return { info, created: false };
+        if (info) return { info, created: false, volumeCreated: false };
         throw new DockerError(['run', name], r.exitCode, r.stderr);
       }
       // По ID, а не по имени: имя мог успеть занять параллельный create, его контейнер не трогаем.
       if (CONTAINER_ID.test(id)) await this.cli.run(['rm', '-f', id]);
-      await this.cli.run(['volume', 'rm', '-f', volumeName(taskId)]);
       if (attempt === 1 && NETWORK_NOT_FOUND.test(r.stderr)) {
         this.networkReady = undefined;
         continue;
       }
+      if (volumeCreated) await this.cli.run(['volume', 'rm', '-f', volumeName(taskId)]);
       throw new DockerError(['run', name], r.exitCode, r.stderr);
     }
   }

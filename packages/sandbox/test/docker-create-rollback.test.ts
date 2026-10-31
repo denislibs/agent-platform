@@ -27,4 +27,44 @@ describe('create rollback', () => {
     expect(containers).toBe('');
     expect(volumes).toBe('');
   }, 20_000);
+
+  test('a failed create keeps a workspace volume that existed before the call (I-4)', async () => {
+    await requireSandboxImage();
+    const taskId = crypto.randomUUID();
+    const volume = `agent-ws-${taskId}`;
+    await real.ok(['volume', 'create', volume]);
+    try {
+      await real.ok([
+        'run',
+        '--rm',
+        '--user',
+        '0',
+        '--mount',
+        `type=volume,src=${volume},dst=/workspace`,
+        '--entrypoint',
+        'sh',
+        cfg.image,
+        '-c',
+        'echo kept > /workspace/old.txt',
+      ]);
+      const provider = new DockerSandboxProvider(cfg, new BrokenHealthCli(), { healthAttempts: 3 });
+      await expect(provider.create(taskId)).rejects.toThrow(/browserd did not become healthy/);
+      expect(await real.ok(['ps', '-a', '-q', '--filter', `name=agent-sbx-${taskId}`])).toBe('');
+      expect(await real.ok(['volume', 'ls', '-q', '--filter', `name=${volume}`])).toBe(volume);
+      const kept = await real.ok([
+        'run',
+        '--rm',
+        '--mount',
+        `type=volume,src=${volume},dst=/workspace`,
+        '--entrypoint',
+        'cat',
+        cfg.image,
+        '/workspace/old.txt',
+      ]);
+      expect(kept).toBe('kept');
+    } finally {
+      await real.run(['rm', '-f', `agent-sbx-${taskId}`]);
+      await real.run(['volume', 'rm', '-f', volume]);
+    }
+  }, 30_000);
 });

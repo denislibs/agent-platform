@@ -35,6 +35,27 @@ class BrokenStartCli extends DockerCli {
   }
 }
 
+/** Том `agent-ws-<taskId>`, оставшийся от прежней жизни песочницы, с файлом old.txt = "kept". */
+async function seedVolume(taskId: string): Promise<string> {
+  const volume = `agent-ws-${taskId}`;
+  volumes.push(volume);
+  await real.ok(['volume', 'create', volume]);
+  await real.ok([
+    'run',
+    '--rm',
+    '--user',
+    '0',
+    '--mount',
+    `type=volume,src=${volume},dst=/workspace`,
+    '--entrypoint',
+    'sh',
+    cfg.image,
+    '-c',
+    'echo kept > /workspace/old.txt && chown -R 1001:1001 /workspace',
+  ]);
+  return volume;
+}
+
 const containersOf = (taskId: string) => real.ok(['ps', '-a', '-q', '--filter', `name=agent-sbx-${taskId}`]);
 const volumesOf = (taskId: string) => real.ok(['volume', 'ls', '-q', '--filter', `name=agent-ws-${taskId}`]);
 
@@ -98,22 +119,7 @@ describe('workspace volume (M-3)', () => {
 
   test('create reuses an existing workspace volume and its files', async () => {
     const taskId = crypto.randomUUID();
-    const volume = `agent-ws-${taskId}`;
-    volumes.push(volume);
-    await real.ok(['volume', 'create', volume]);
-    await real.ok([
-      'run',
-      '--rm',
-      '--user',
-      '0',
-      '--mount',
-      `type=volume,src=${volume},dst=/workspace`,
-      '--entrypoint',
-      'sh',
-      cfg.image,
-      '-c',
-      'echo kept > /workspace/old.txt && chown -R 1001:1001 /workspace',
-    ]);
+    await seedVolume(taskId);
     const s = await new DockerSandboxProvider(cfg).create(taskId);
     created.push(s);
     expect(new TextDecoder().decode(await s.readFile('old.txt'))).toBe('kept\n');
@@ -121,7 +127,7 @@ describe('workspace volume (M-3)', () => {
 });
 
 describe('failed docker run (M-4)', () => {
-  test('a container that was created but could not start is removed with its volume', async () => {
+  test('a fresh create whose container could not start removes the container and the volume it made', async () => {
     const taskId = crypto.randomUUID();
     const cli = new BrokenStartCli();
     let caught: unknown;
@@ -138,4 +144,39 @@ describe('failed docker run (M-4)', () => {
     expect(await containersOf(taskId)).toBe('');
     expect(await volumesOf(taskId)).toBe('');
   }, 30_000);
+
+  test('a failed docker run keeps a workspace volume that existed before the call (I-4)', async () => {
+    const taskId = crypto.randomUUID();
+    await seedVolume(taskId);
+    let caught: unknown;
+    try {
+      created.push(await new DockerSandboxProvider(cfg, new BrokenStartCli()).create(taskId));
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(DockerError);
+    expect(await containersOf(taskId)).toBe('');
+    expect(await volumesOf(taskId)).toBe(`agent-ws-${taskId}`);
+    const s = await new DockerSandboxProvider(cfg).create(taskId);
+    created.push(s);
+    expect(new TextDecoder().decode(await s.readFile('old.txt'))).toBe('kept\n');
+  }, 30_000);
+});
+
+describe('pruned container and network (I-4)', () => {
+  test('create after `docker system prune`-style cleanup keeps the surviving workspace', async () => {
+    const network = `agent-sbx-nettest-${crypto.randomUUID().slice(0, 8)}`;
+    networks.push(network);
+    const provider = new DockerSandboxProvider({ ...cfg, network });
+    const taskId = crypto.randomUUID();
+    const first = await provider.create(taskId);
+    await first.writeFile('keep.txt', 'survives');
+    await first.stop();
+    // Как prune: остановленный контейнер и неиспользуемая сеть удалены, том остался.
+    await real.ok(['rm', `agent-sbx-${taskId}`]);
+    await real.ok(['network', 'rm', network]);
+    const again = await provider.create(taskId);
+    created.push(again);
+    expect(new TextDecoder().decode(await again.readFile('keep.txt'))).toBe('survives');
+  }, 60_000);
 });

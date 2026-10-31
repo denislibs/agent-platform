@@ -196,6 +196,93 @@ async function hostReply(host: string, port: number, payloadHex: string): Promis
   });
 }
 
+const blackholes = async () =>
+  (await sh('ip rule show pref 100')).stdout
+    .split('\n')
+    .filter(l => l.includes('blackhole'))
+    .toSorted();
+
+describe('egress block re-apply (C-1a)', () => {
+  const RACE_LOOP_PY = String.raw`
+import os, socket, sys, time
+targets = [(h, int(p)) for h, p in (t.split(':') for t in sys.argv[1:])]
+attempts = 0
+with open('/tmp/race-hits.log', 'a') as hits:
+    while not os.path.exists('/tmp/race-stop'):
+        for host, port in targets:
+            attempts += 1
+            try:
+                s = socket.create_connection((host, port), timeout=0.2)
+                s.settimeout(0.5)
+                s.sendall(b'PING\r\n')
+                data = s.recv(16)
+                s.close()
+                if data:
+                    hits.write(f'{host}:{port} {data!r}\n')
+                    hits.flush()
+            except OSError:
+                pass
+        if attempts % 200 == 0:
+            with open('/tmp/race-attempts', 'w') as f:
+                f.write(str(attempts))
+    with open('/tmp/race-attempts', 'w') as f:
+        f.write(str(attempts))
+`;
+
+  test('create() on a running sandbox never leaves a gap in the block', async () => {
+    const valkey = (await infraContainers()).find(c => c.port === 6379);
+    expect(valkey).toBeDefined();
+    const targets = [`${ORBSTACK_HOST_IP}:${INFRA_PORTS.valkey}`, `${valkey?.ip}:6379`];
+    await sh('rm -f /tmp/race-hits.log /tmp/race-stop /tmp/race-attempts /tmp/race-loop.py');
+    await sandbox.writeFile('/workspace/.race-loop.py', RACE_LOOP_PY);
+    await sh(`setsid nohup python3 /workspace/.race-loop.py ${targets.join(' ')} >/dev/null 2>&1 &`);
+    const provider = new DockerSandboxProvider(cfg);
+    for (let i = 0; i < 20; i++) {
+      const again = await provider.create(sandbox.taskId);
+      expect(again.id).toBe(sandbox.id);
+    }
+    await sh('touch /tmp/race-stop');
+    await Bun.sleep(1_000);
+    const attempts = Number((await sh('cat /tmp/race-attempts')).stdout.trim());
+    const hits = (await sh('cat /tmp/race-hits.log 2>/dev/null || true')).stdout;
+    await sh('rm -f /tmp/race-hits.log /tmp/race-stop /tmp/race-attempts /workspace/.race-loop.py');
+    // Позитивный контроль: петля действительно долбилась всё время повторных create().
+    expect(attempts).toBeGreaterThan(200);
+    expect(hits).toBe('');
+  }, 120_000);
+
+  test('re-apply keeps exactly one rule per destination and drops stale ones', async () => {
+    const before = await blackholes();
+    // Устаревшее правило, которого нет в нынешнем наборе (как после смены BLOCKED_EGRESS).
+    await cli.ok([
+      'run',
+      '--rm',
+      '--network',
+      `container:${sandbox.id}`,
+      '--user',
+      '0',
+      '--cap-drop',
+      'ALL',
+      '--cap-add',
+      'NET_ADMIN',
+      '--entrypoint',
+      'ip',
+      cfg.image,
+      'rule',
+      'add',
+      'pref',
+      '100',
+      'to',
+      '203.0.113.0/24',
+      'blackhole',
+    ]);
+    expect((await blackholes()).some(l => l.includes('203.0.113.0/24'))).toBe(true);
+    await new DockerSandboxProvider(cfg).create(sandbox.taskId);
+    await new DockerSandboxProvider(cfg).create(sandbox.taskId);
+    expect(await blackholes()).toEqual(before);
+  }, 60_000);
+});
+
 const INFRA_SERVICES: Record<string, { port: number; payload: string }> = {
   postgres: { port: 5432, payload: PAYLOAD_BY_PORT[INFRA_PORTS.postgres] ?? '' },
   valkey: { port: 6379, payload: PAYLOAD_BY_PORT[INFRA_PORTS.valkey] ?? '' },
