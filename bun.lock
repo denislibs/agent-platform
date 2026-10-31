@@ -67,6 +67,17 @@
         "@agent/testing": "workspace:*",
       },
     },
+    "packages/search": {
+      "name": "@agent/search",
+      "version": "0.0.0",
+      "dependencies": {
+        "@agent/core": "workspace:*",
+        "zod": "^4",
+      },
+      "devDependencies": {
+        "@agent/testing": "workspace:*",
+      },
+    },
     "packages/shared": {
       "name": "@agent/shared",
       "version": "0.0.0",
@@ -105,6 +116,8 @@
     "@agent/llm": ["@agent/llm@workspace:packages/llm"],
 
     "@agent/sandbox": ["@agent/sandbox@workspace:packages/sandbox"],
+
+    "@agent/search": ["@agent/search@workspace:packages/search"],
 
     "@agent/shared": ["@agent/shared@workspace:packages/shared"],
 
