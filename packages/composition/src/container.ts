@@ -7,6 +7,7 @@ import {
   type AwilixContainer,
   type Resolver,
 } from 'awilix';
+import { agentServices, type AgentServices } from '@agent/agent';
 import { CryptoIds, SystemClock, type Ports } from '@agent/core';
 import {
   createDb,
@@ -24,7 +25,7 @@ import { BraveSearchProvider, UnavailableSearchProvider } from '@agent/search';
 import type { Config } from '@agent/shared';
 import { S3FileStore } from '@agent/storage';
 
-export interface Cradle extends Ports {
+export interface Cradle extends Ports, AgentServices {
   config: Config;
   database: DbHandle;
 }
@@ -56,6 +57,7 @@ export function buildContainer(appConfig: Config, overrides: Overrides = {}): Ap
         ? new BraveSearchProvider({ apiKey: config.search.braveApiKey, baseUrl: config.search.braveBaseUrl })
         : new UnavailableSearchProvider(),
     ).singleton(),
+    ...agentServices(),
     ...overrides,
   });
   return container;

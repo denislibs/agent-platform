@@ -44,3 +44,16 @@ export class SearchError extends Error {
     this.name = 'SearchError';
   }
 }
+
+export type LimitKind = 'active_tasks' | 'credits';
+
+/** Действие пользователя упёрлось в лимит (спецификация 4.4, 11); API отвечает 429 или 402. */
+export class LimitExceededError extends Error {
+  constructor(
+    readonly limit: LimitKind,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'LimitExceededError';
+  }
+}

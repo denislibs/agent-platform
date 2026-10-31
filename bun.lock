@@ -11,10 +11,23 @@
         "typescript": "^7",
       },
     },
+    "packages/agent": {
+      "name": "@agent/agent",
+      "version": "0.0.0",
+      "dependencies": {
+        "@agent/core": "workspace:*",
+        "@agent/shared": "workspace:*",
+        "awilix": "^13",
+      },
+      "devDependencies": {
+        "@agent/testing": "workspace:*",
+      },
+    },
     "packages/composition": {
       "name": "@agent/composition",
       "version": "0.0.0",
       "dependencies": {
+        "@agent/agent": "workspace:*",
         "@agent/core": "workspace:*",
         "@agent/db": "workspace:*",
         "@agent/llm": "workspace:*",
@@ -109,6 +122,8 @@
     },
   },
   "packages": {
+    "@agent/agent": ["@agent/agent@workspace:packages/agent"],
+
     "@agent/composition": ["@agent/composition@workspace:packages/composition"],
 
     "@agent/core": ["@agent/core@workspace:packages/core"],

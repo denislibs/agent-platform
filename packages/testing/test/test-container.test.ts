@@ -7,6 +7,7 @@ import {
   InMemoryTaskRepository,
   InMemoryUnitOfWork,
   ScriptedLlm,
+  testConfig,
 } from '@agent/testing';
 
 test('resolves every port with in-memory doubles sharing one state', async () => {
@@ -46,4 +47,14 @@ test('registers in-memory sandboxes and fake search', async () => {
   expect(c.cradle.search).toBeInstanceOf(FakeSearchProvider);
   const s = await c.cradle.sandboxes.create('task-1');
   expect(s.id).toBe('agent-sbx-task-1');
+});
+
+test('registers a test config with default limits', () => {
+  const c = createTestContainer();
+  expect(c.cradle.config.limits.maxActiveTasksPerUser).toBe(2);
+  expect(c.cradle.config.llm.models).toEqual({ planner: 'scripted-planner', executor: 'scripted-executor' });
+});
+
+test('testConfig accepts env overrides', () => {
+  expect(testConfig({ MAX_ACTIVE_TASKS_PER_USER: '5' }).limits.maxActiveTasksPerUser).toBe(5);
 });

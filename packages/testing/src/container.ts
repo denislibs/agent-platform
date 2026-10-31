@@ -1,5 +1,14 @@
-import { asClass, asFunction, createContainer, InjectionMode, type AwilixContainer, type Resolver } from 'awilix';
+import {
+  asClass,
+  asFunction,
+  asValue,
+  createContainer,
+  InjectionMode,
+  type AwilixContainer,
+  type Resolver,
+} from 'awilix';
 import type { Ports } from '@agent/core';
+import type { Config } from '@agent/shared';
 import { FixedClock, SequentialIds } from './fixed-clock';
 import { InMemoryFileStore } from './memory/file-store';
 import {
@@ -14,8 +23,10 @@ import { FakeSearchProvider } from './memory/search';
 import { InMemoryState } from './memory/state';
 import { InMemoryUnitOfWork } from './memory/unit-of-work';
 import { ScriptedLlm } from './scripted-llm';
+import { testConfig } from './test-config';
 
 export interface TestCradle extends Ports {
+  config: Config;
   memory: InMemoryState;
   clock: FixedClock;
   llm: ScriptedLlm;
@@ -33,6 +44,7 @@ export function createTestContainer(overrides: TestOverrides = {}): AwilixContai
     strict: true,
   });
   container.register({
+    config: asValue(testConfig()),
     // FixedClock принимает необязательную дату — создаём явно, чтобы awilix не передал ему cradle.
     clock: asFunction(() => new FixedClock()).singleton(),
     ids: asFunction(() => new SequentialIds()).singleton(),

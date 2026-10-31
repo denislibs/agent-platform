@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, expect, test } from 'bun:test';
 import { asValue } from 'awilix';
-import { CryptoIds, SystemClock } from '@agent/core';
+import { CryptoIds, LimitExceededError, SystemClock } from '@agent/core';
 import { buildContainer, type AppContainer } from '@agent/composition';
 import {
   DrizzleCreditLedger,
@@ -109,4 +109,19 @@ test('dispose closes the database pool', async () => {
   await c.dispose();
   // Drizzle query builders are thenables, not Promises — wrap so `.rejects` can attach.
   await expect(Promise.resolve(database.db.select().from(user).limit(1))).rejects.toThrow();
+});
+
+test('task intake enforces the active task limit against Postgres under concurrency', async () => {
+  container = buildContainer({ ...config, limits: { ...config.limits, maxActiveTasksPerUser: 2 } });
+  const { database, intake, tasks } = container.cradle;
+  const [u] = await database.db
+    .insert(user)
+    .values({ id: crypto.randomUUID(), name: 'I', email: `${crypto.randomUUID()}@test.dev`, millicredits: 1000 })
+    .returning();
+  const results = await Promise.allSettled(
+    Array.from({ length: 5 }, (_, i) => intake.create({ userId: u!.id, prompt: `t${i}` })),
+  );
+  expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(2);
+  for (const r of results) if (r.status === 'rejected') expect(r.reason).toBeInstanceOf(LimitExceededError);
+  expect(await tasks.countActive(u!.id)).toBe(2);
 });

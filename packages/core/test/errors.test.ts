@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { InvalidTransitionError, NotFoundError, SandboxError, SearchError } from '@agent/core';
+import { InvalidTransitionError, LimitExceededError, NotFoundError, SandboxError, SearchError } from '@agent/core';
 
 test('InvalidTransitionError carries entity, id and target status', () => {
   const e = new InvalidTransitionError('task', 't1', 'done');
@@ -28,4 +28,10 @@ test('SearchError carries a code and retryability', () => {
   expect(e.name).toBe('SearchError');
   expect([e.code, e.retryable]).toEqual(['rate_limited', true]);
   expect(new SearchError('invalid_query', 'empty').retryable).toBe(false);
+});
+
+test('LimitExceededError names the limit', () => {
+  const e = new LimitExceededError('active_tasks', 'at most 2 active tasks');
+  expect(e).toBeInstanceOf(Error);
+  expect(e).toMatchObject({ name: 'LimitExceededError', limit: 'active_tasks', message: 'at most 2 active tasks' });
 });

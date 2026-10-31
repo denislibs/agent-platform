@@ -1,0 +1,17 @@
+{
+  "name": "@agent/agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@agent/core": "workspace:*",
+    "@agent/shared": "workspace:*",
+    "awilix": "^13"
+  },
+  "devDependencies": {
+    "@agent/testing": "workspace:*"
+  }
+}
