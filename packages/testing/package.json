@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@agent/core": "workspace:*",
-    "@agent/shared": "workspace:*"
+    "@agent/shared": "workspace:*",
+    "awilix": "^13"
   }
 }
