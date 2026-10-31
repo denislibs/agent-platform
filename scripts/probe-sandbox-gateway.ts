@@ -1,4 +1,5 @@
 // Проверяет, достигает ли песочница сервисов инфраструктуры хоста через шлюз сети Docker.
+// Для самопроверки классификатора: PROBE_HOST и PROBE_PORTS (через запятую) переопределяют цель.
 import { DockerSandboxProvider } from '../packages/sandbox/src';
 import { loadConfig } from '../packages/shared/src';
 
@@ -17,15 +18,28 @@ try {
     .toReversed()
     .map(h => Number.parseInt(h, 16))
     .join('.');
-  let exposed = false;
-  for (const port of PORTS) {
-    const r = await sandbox.exec(`curl -s --max-time 3 telnet://${gateway}:${port} </dev/null`, { timeoutMs: 8_000 });
-    const reachable = r.exitCode === 0;
-    exposed ||= reachable;
-    console.log(`${gateway}:${port} → curl exit ${r.exitCode} (${reachable ? 'REACHABLE' : 'blocked'})`);
+  type Verdict = 'REACHABLE' | 'closed' | 'INCONCLUSIVE';
+  // Открытый, но молчащий порт (Postgres/Valkey/S3 ждут клиента) нельзя отличить по curl: только по самому connect().
+  const probe = async (host: string, port: number): Promise<Verdict> => {
+    const r = await sandbox.exec(`timeout 3 bash -c 'exec 3<>/dev/tcp/${host}/${port}'`, { timeoutMs: 8_000 });
+    if (r.exitCode === 0) return 'REACHABLE';
+    if (r.exitCode === 124 || r.timedOut) return 'INCONCLUSIVE';
+    return 'closed';
+  };
+  const target = process.env.PROBE_HOST ?? gateway;
+  const ports = process.env.PROBE_PORTS ? process.env.PROBE_PORTS.split(',').map(Number) : PORTS;
+  const verdicts: Verdict[] = [];
+  for (const port of ports) {
+    const verdict = await probe(target, port);
+    verdicts.push(verdict);
+    console.log(`${target}:${port} → ${verdict}`);
   }
   console.log(
-    exposed ? 'RESULT: host services ARE reachable from the sandbox' : 'RESULT: host services are not reachable',
+    verdicts.includes('REACHABLE')
+      ? 'RESULT: host services ARE reachable from the sandbox'
+      : verdicts.includes('INCONCLUSIVE')
+        ? 'RESULT: inconclusive (some ports timed out, none reachable)'
+        : 'RESULT: host services are not reachable',
   );
 } finally {
   await sandbox.destroy();

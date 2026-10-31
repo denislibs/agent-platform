@@ -25,12 +25,16 @@ describe('process isolation', () => {
 
   test('has no capabilities and cannot gain privileges', async () => {
     expect((await sh("grep CapEff /proc/self/status | awk '{print $2}'")).stdout.trim()).toBe('0000000000000000');
+    expect((await sh("grep CapBnd /proc/self/status | awk '{print $2}'")).stdout.trim()).toBe('0000000000000000');
     expect((await sh("grep NoNewPrivs /proc/self/status | awk '{print $2}'")).stdout.trim()).toBe('1');
   });
 
   test('cannot write outside /workspace and its home', async () => {
-    expect((await sh('touch /etc/agent-test')).exitCode).not.toBe(0);
-    expect((await sh('touch /opt/browserd/agent-test')).exitCode).not.toBe(0);
+    for (const path of ['/etc/agent-test', '/opt/browserd/agent-test']) {
+      const r = await sh(`touch ${path}`);
+      expect(r.exitCode).not.toBe(0);
+      expect(r.stderr).toMatch(/Permission denied|Read-only/);
+    }
   });
 
   test('has no secrets in its environment', async () => {
@@ -67,6 +71,8 @@ describe('network isolation', () => {
   });
 
   test('cannot resolve infrastructure services by name', async () => {
+    // Позитивный контроль: резолвер работает, поэтому провал имён ниже — не артефакт сломанного DNS.
+    expect((await sh('getent hosts localhost')).exitCode).toBe(0);
     for (const host of ['postgres', 'valkey', 'garage']) {
       expect((await sh(`getent hosts ${host}`)).exitCode).not.toBe(0);
     }

@@ -175,8 +175,15 @@ export class DockerSandbox implements Sandbox {
   }
 }
 
-async function waitForBrowserd(cli: DockerCli, containerId: string, id: string): Promise<void> {
-  for (let i = 0; i < 40; i++) {
+const DEFAULT_HEALTH_ATTEMPTS = 40;
+
+async function waitForBrowserd(
+  cli: DockerCli,
+  containerId: string,
+  id: string,
+  attempts = DEFAULT_HEALTH_ATTEMPTS,
+): Promise<void> {
+  for (let i = 0; i < attempts; i++) {
     const r = await cli.run(['exec', containerId, 'curl', '-sf', '-m', '2', BROWSERD_HEALTH], { timeoutMs: 5_000 });
     if (r.exitCode === 0) return;
     if (DAEMON_ERROR.test(r.stderr)) {
@@ -185,7 +192,7 @@ async function waitForBrowserd(cli: DockerCli, containerId: string, id: string):
     }
     await Bun.sleep(250);
   }
-  throw new DockerError(['exec', containerId], 1, 'browserd did not become healthy in 20s');
+  throw new DockerError(['exec', containerId], 1, `browserd did not become healthy after ${attempts} attempts`);
 }
 
 interface ContainerInfo {
@@ -200,12 +207,14 @@ export class DockerSandboxProvider implements SandboxProvider {
   constructor(
     private readonly cfg: DockerSandboxConfig,
     private readonly cli: DockerCli = new DockerCli(),
+    private readonly opts: { healthAttempts?: number } = {},
   ) {}
 
   async create(taskId: string): Promise<Sandbox> {
     if (!SAFE_TASK_ID.test(taskId)) throw new Error(`invalid task id for a sandbox: ${taskId}`);
     const name = containerName(taskId);
     let info = await this.inspect(name);
+    let created = false;
     if (!info) {
       await this.ensureNetwork();
       const r = await this.cli.run([
@@ -238,6 +247,7 @@ export class DockerSandboxProvider implements SandboxProvider {
       ]);
       if (r.exitCode === 0) {
         info = { containerId: decode(r.stdout).trim(), labeled: true, running: true };
+        created = true;
       } else if (/is already in use/i.test(r.stderr)) {
         // Параллельный create той же задачи: контейнер уже создан другим вызовом.
         info = await this.inspect(name);
@@ -245,8 +255,14 @@ export class DockerSandboxProvider implements SandboxProvider {
       if (!info) throw new DockerError(['run', name], r.exitCode, r.stderr);
     }
     const sandbox = new DockerSandbox(name, taskId, info.containerId, this.cli);
-    if (!info.running) await sandbox.start();
-    else await waitForBrowserd(this.cli, info.containerId, name);
+    try {
+      if (!info.running) await sandbox.start();
+      else await waitForBrowserd(this.cli, info.containerId, name, this.opts.healthAttempts);
+    } catch (err) {
+      // Откатываем только то, что создали сами: чужой/ранее существовавший контейнер и его том не трогаем.
+      if (created) await sandbox.destroy().catch(() => undefined);
+      throw err;
+    }
     return sandbox;
   }
 
