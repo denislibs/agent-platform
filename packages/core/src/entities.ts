@@ -95,5 +95,6 @@ export interface UsageInput {
   model: string;
   tokensIn: number;
   tokensOut: number;
-  credits: number;
+  /** Стоимость вызова в милликредитах. */
+  millicredits: number;
 }

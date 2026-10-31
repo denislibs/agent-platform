@@ -69,11 +69,17 @@ export interface SubtaskRepository {
   ): Promise<Subtask>;
 }
 
-/** Учёт расхода: событие, списание кредитов и токены задачи — атомарно. Баланс может уйти в минус. */
+/**
+ * Деньги — целые милликредиты (1 кредит = 1000).
+ * Учёт расхода: событие, списание и токены задачи — атомарно. Баланс может уйти в минус.
+ */
 export interface CreditLedger {
   /** Неизвестный пользователь — NotFoundError('user'), неизвестная задача — NotFoundError('task'); ничего не списывается и не пишется. */
   record(e: UsageInput): Promise<{ balance: number }>;
-  grant(email: string, amount: number): Promise<{ balance: number }>;
+  /** Начисление по email; неизвестный email — NotFoundError('user'). */
+  grant(email: string, millicredits: number): Promise<{ balance: number }>;
+  /** Текущий баланс; неизвестный пользователь — NotFoundError('user'). */
+  balance(userId: string): Promise<number>;
 }
 
 export interface FileRepository {

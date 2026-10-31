@@ -15,7 +15,7 @@ export interface RepositoryHarness {
   subtasks: SubtaskRepository;
   ledger: CreditLedger;
   files: FileRepository;
-  seedUser(p?: { credits?: number; email?: string }): Promise<string>;
+  seedUser(p?: { millicredits?: number; email?: string }): Promise<string>;
   /** Сколько событий расхода записано всего (для проверки, что неудачная запись ничего не оставила). */
   countUsageEvents(): Promise<number>;
   reset(): Promise<void>;
@@ -354,10 +354,17 @@ export function repositoryContract(
 
     describe('CreditLedger', () => {
       test('record debits credits and adds tokens to the task', async () => {
-        const userId = await h.seedUser({ credits: 100 });
+        const userId = await h.seedUser({ millicredits: 100 });
         const task = await h.tasks.create({ userId, prompt: 'x' });
         expect(
-          await h.ledger.record({ userId, taskId: task.id, model: 'qwen', tokensIn: 1000, tokensOut: 200, credits: 3 }),
+          await h.ledger.record({
+            userId,
+            taskId: task.id,
+            model: 'qwen',
+            tokensIn: 1000,
+            tokensOut: 200,
+            millicredits: 3,
+          }),
         ).toEqual({ balance: 97 });
         expect(
           await h.ledger.record({
@@ -366,16 +373,16 @@ export function repositoryContract(
             model: 'deepseek',
             tokensIn: 500,
             tokensOut: 100,
-            credits: 2,
+            millicredits: 2,
           }),
         ).toEqual({ balance: 95 });
         expect((await h.tasks.get(task.id))?.tokensUsed).toBe(1800);
       });
 
       test('balance may go negative; the caller decides what to do', async () => {
-        const userId = await h.seedUser({ credits: 1 });
+        const userId = await h.seedUser({ millicredits: 1 });
         expect(
-          await h.ledger.record({ userId, taskId: null, model: 'qwen', tokensIn: 1, tokensOut: 1, credits: 5 }),
+          await h.ledger.record({ userId, taskId: null, model: 'qwen', tokensIn: 1, tokensOut: 1, millicredits: 5 }),
         ).toEqual({ balance: -4 });
       });
 
@@ -387,17 +394,17 @@ export function repositoryContract(
             model: 'q',
             tokensIn: 1,
             tokensOut: 1,
-            credits: 1,
+            millicredits: 1,
           }),
         ).rejects.toBeInstanceOf(NotFoundError);
         await expect(h.ledger.grant('nobody@test.dev', 1)).rejects.toBeInstanceOf(NotFoundError);
       });
 
       test('record for an unknown or malformed task throws NotFoundError and writes nothing', async () => {
-        const userId = await h.seedUser({ credits: 100, email: 'ledger@test.dev' });
+        const userId = await h.seedUser({ millicredits: 100, email: 'ledger@test.dev' });
         for (const taskId of [crypto.randomUUID(), MALFORMED_ID]) {
           await expectNotFound(
-            h.ledger.record({ userId, taskId, model: 'qwen', tokensIn: 10, tokensOut: 10, credits: 7 }),
+            h.ledger.record({ userId, taskId, model: 'qwen', tokensIn: 10, tokensOut: 10, millicredits: 7 }),
             'task',
           );
         }
@@ -406,8 +413,22 @@ export function repositoryContract(
       });
 
       test('grant by email', async () => {
-        await h.seedUser({ credits: 0, email: 'beta@test.dev' });
+        await h.seedUser({ millicredits: 0, email: 'beta@test.dev' });
         expect(await h.ledger.grant('beta@test.dev', 500)).toEqual({ balance: 500 });
+      });
+
+      test('balance reads the current millicredits', async () => {
+        const userId = await h.seedUser({ millicredits: 2500 });
+        expect(await h.ledger.balance(userId)).toBe(2500);
+        await h.ledger.record({ userId, taskId: null, model: 'qwen', tokensIn: 1, tokensOut: 1, millicredits: 700 });
+        expect(await h.ledger.balance(userId)).toBe(1800);
+        await expectNotFound(h.ledger.balance('no-such-user'), 'user');
+      });
+
+      test('balances beyond 32-bit integers survive the round trip', async () => {
+        const userId = await h.seedUser({ millicredits: 5_000_000_000 });
+        await h.ledger.record({ userId, taskId: null, model: 'qwen', tokensIn: 1, tokensOut: 1, millicredits: 1 });
+        expect(await h.ledger.balance(userId)).toBe(4_999_999_999);
       });
     });
 

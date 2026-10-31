@@ -3,7 +3,8 @@ import type { Clock, FileRecord, IdGenerator, Step, Subtask, Task, UsageInput } 
 export interface MemoryUser {
   id: string;
   email: string;
-  credits: number;
+  /** Баланс в милликредитах. */
+  millicredits: number;
 }
 
 /** Общее состояние всех in-memory адаптеров — аналог одной базы данных. */
@@ -22,9 +23,9 @@ export class InMemoryState {
     this.ids = ids;
   }
 
-  seedUser(p: { id?: string; email?: string; credits?: number } = {}): string {
+  seedUser(p: { id?: string; email?: string; millicredits?: number } = {}): string {
     const id = p.id ?? this.ids.uuid();
-    this.users.set(id, { id, email: p.email ?? `${id}@test.dev`, credits: p.credits ?? 100 });
+    this.users.set(id, { id, email: p.email ?? `${id}@test.dev`, millicredits: p.millicredits ?? 100_000 });
     return id;
   }
 }

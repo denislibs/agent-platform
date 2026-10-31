@@ -63,7 +63,7 @@ test('wired adapters work together against real infrastructure', async () => {
       id: crypto.randomUUID(),
       name: 'C',
       email: `${crypto.randomUUID()}@test.dev`,
-      credits: 10,
+      millicredits: 10,
     })
     .returning();
   const task = await tasks.create({ userId: u!.id, prompt: 'wired' });
@@ -79,7 +79,7 @@ test('wired adapters work together against real infrastructure', async () => {
       model: 'qwen',
       tokensIn: 1,
       tokensOut: 1,
-      credits: 2,
+      millicredits: 2,
     }),
   ).toEqual({ balance: 8 });
   const key = `tasks/${task.id}/outputs/hello.txt`;

@@ -39,7 +39,8 @@ export const user = pgTable('user', {
   email: text('email').notNull().unique(),
   emailVerified: boolean('email_verified').notNull().default(false),
   image: text('image'),
-  credits: integer('credits').notNull().default(0),
+  /** Баланс в милликредитах (1 кредит = 1000). */
+  millicredits: bigint('millicredits', { mode: 'number' }).notNull().default(0),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -106,7 +107,10 @@ export const tasks = pgTable(
     updatedAt: updatedAt(),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
   },
-  t => [index('tasks_user_created_idx').on(t.userId, t.createdAt), index('tasks_status_idx').on(t.status)],
+  t => [
+    index('tasks_user_created_idx').on(t.userId, t.createdAt),
+    index('tasks_status_updated_idx').on(t.status, t.updatedAt),
+  ],
 );
 
 export const subtasks = pgTable(
@@ -168,7 +172,7 @@ export const files = pgTable(
     mime: text('mime').notNull(),
     createdAt: createdAt(),
   },
-  t => [index('files_task_idx').on(t.taskId)],
+  t => [index('files_task_idx').on(t.taskId), index('files_user_idx').on(t.userId)],
 );
 
 export const usageEvents = pgTable(
@@ -182,8 +186,8 @@ export const usageEvents = pgTable(
     model: text('model').notNull(),
     tokensIn: integer('tokens_in').notNull(),
     tokensOut: integer('tokens_out').notNull(),
-    credits: integer('credits').notNull(),
+    millicredits: bigint('millicredits', { mode: 'number' }).notNull().default(0),
     createdAt: createdAt(),
   },
-  t => [index('usage_user_created_idx').on(t.userId, t.createdAt)],
+  t => [index('usage_user_created_idx').on(t.userId, t.createdAt), index('usage_task_idx').on(t.taskId)],
 );

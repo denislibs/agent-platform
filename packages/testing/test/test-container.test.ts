@@ -12,7 +12,7 @@ test('resolves every port with in-memory doubles sharing one state', async () =>
   const c = createTestContainer();
   const { tasks, steps, memory, clock } = c.cradle;
   expect(tasks).toBeInstanceOf(InMemoryTaskRepository);
-  const userId = memory.seedUser({ credits: 10 });
+  const userId = memory.seedUser({ millicredits: 10 });
   const task = await tasks.create({ userId, prompt: 'x' });
   await steps.append({
     taskId: task.id,

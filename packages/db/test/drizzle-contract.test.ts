@@ -21,7 +21,12 @@ repositoryContract('drizzle/postgres', async () => {
       ledger: new DrizzleCreditLedger(deps),
       files: new DrizzleFileRepository(deps),
       seedUser: async (p = {}) =>
-        (await createTestUser(database.db, { credits: p.credits ?? 100, ...(p.email ? { email: p.email } : {}) })).id,
+        (
+          await createTestUser(database.db, {
+            millicredits: p.millicredits ?? 100_000,
+            ...(p.email ? { email: p.email } : {}),
+          })
+        ).id,
       countUsageEvents: async () => {
         const [row] = await database.db.select({ n: count() }).from(usageEvents);
         return row?.n ?? 0;

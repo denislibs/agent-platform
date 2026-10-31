@@ -41,7 +41,7 @@ export async function createTestUser(db: Db, patch: Partial<typeof user.$inferIn
       id: crypto.randomUUID(),
       name: 'Test User',
       email: `${crypto.randomUUID()}@test.dev`,
-      credits: 100,
+      millicredits: 100_000,
       ...patch,
     })
     .returning();

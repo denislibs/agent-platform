@@ -214,17 +214,23 @@ export class InMemoryCreditLedger implements CreditLedger {
     if (!user) throw new NotFoundError('user', e.userId);
     const task = e.taskId ? this.m.tasks.get(e.taskId) : undefined;
     if (e.taskId && !task) throw new NotFoundError('task', e.taskId);
-    user.credits -= e.credits;
+    user.millicredits -= e.millicredits;
     this.m.usage.push({ ...e, createdAt: this.m.clock.now() });
     if (task) task.tokensUsed += e.tokensIn + e.tokensOut;
-    return { balance: user.credits };
+    return { balance: user.millicredits };
   }
 
-  async grant(email: string, amount: number): Promise<{ balance: number }> {
+  async grant(email: string, millicredits: number): Promise<{ balance: number }> {
     const user = [...this.m.users.values()].find(u => u.email === email);
     if (!user) throw new NotFoundError('user', email);
-    user.credits += amount;
-    return { balance: user.credits };
+    user.millicredits += millicredits;
+    return { balance: user.millicredits };
+  }
+
+  async balance(userId: string): Promise<number> {
+    const user = this.m.users.get(userId);
+    if (!user) throw new NotFoundError('user', userId);
+    return user.millicredits;
   }
 }
 

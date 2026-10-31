@@ -15,9 +15,9 @@ export class DrizzleCreditLedger implements CreditLedger {
       // Сначала пользователь: иначе вставка события упадёт на внешнем ключе вместо NotFoundError.
       const [u] = await tx
         .update(user)
-        .set({ credits: sql`${user.credits} - ${e.credits}` })
+        .set({ millicredits: sql`${user.millicredits} - ${e.millicredits}` })
         .where(eq(user.id, e.userId))
-        .returning({ credits: user.credits });
+        .returning({ millicredits: user.millicredits });
       if (!u) throw new NotFoundError('user', e.userId);
       if (e.taskId) {
         // Неизвестная задача: исключение откатывает транзакцию вместе со списанием.
@@ -31,17 +31,23 @@ export class DrizzleCreditLedger implements CreditLedger {
         if (!t) throw new NotFoundError('task', e.taskId);
       }
       await tx.insert(usageEvents).values(e);
-      return { balance: u.credits };
+      return { balance: u.millicredits };
     });
   }
 
-  async grant(email: string, amount: number): Promise<{ balance: number }> {
+  async grant(email: string, millicredits: number): Promise<{ balance: number }> {
     const [u] = await this.db
       .update(user)
-      .set({ credits: sql`${user.credits} + ${amount}`, updatedAt: new Date() })
+      .set({ millicredits: sql`${user.millicredits} + ${millicredits}`, updatedAt: new Date() })
       .where(eq(user.email, email))
-      .returning({ credits: user.credits });
+      .returning({ millicredits: user.millicredits });
     if (!u) throw new NotFoundError('user', email);
-    return { balance: u.credits };
+    return { balance: u.millicredits };
+  }
+
+  async balance(userId: string): Promise<number> {
+    const [u] = await this.db.select({ millicredits: user.millicredits }).from(user).where(eq(user.id, userId));
+    if (!u) throw new NotFoundError('user', userId);
+    return u.millicredits;
   }
 }
