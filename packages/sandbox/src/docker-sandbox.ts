@@ -34,6 +34,54 @@ const DAEMON_ERROR = /^Error response from daemon/i;
 const NOT_RUNNING = /is not running|is paused|is restarting/i;
 const NO_SUCH_CONTAINER = /no such (object|container)/i;
 
+/**
+ * Имена, под которыми Docker Desktop и OrbStack отдают контейнерам хост. Все закрепляются за 127.0.0.1
+ * самой песочницы (`--add-host`), чтобы по имени нельзя было дойти до сервисов хоста.
+ */
+export const HOST_ALIASES = [
+  'host.docker.internal',
+  'host.orb.internal',
+  'host.internal',
+  'gateway.docker.internal',
+  'docker.for.mac.localhost',
+  'docker.for.mac.host.internal',
+] as const;
+
+/**
+ * Назначения, закрытые в сетевом пространстве песочницы правилами `ip rule … blackhole`. Сверх списка
+ * закрываются шлюз сети (/32) и вся собственная подсеть песочницы — там живут другие песочницы.
+ * Закрепление имён не мешает ходить на хост по IP: на OrbStack хост — 0.250.250.254, контейнеры
+ * инфраструктуры видны по своим адресам из соседних сетей, а `enable_icc=false` OrbStack не соблюдает.
+ * Свой IP и 127.0.0.0/8 остаются доступны: таблица local проверяется раньше этих правил.
+ */
+export const BLOCKED_EGRESS = [
+  '0.0.0.0/8', // OrbStack: 0.250.250.254 — это хост
+  '10.0.0.0/8',
+  '100.64.0.0/10', // CGNAT, Tailscale
+  '169.254.0.0/16', // link-local, облачные метаданные 169.254.169.254
+  '172.16.0.0/12',
+  '192.168.0.0/16',
+  '198.18.0.0/15', // сеть VM OrbStack
+] as const;
+
+const ICC_OPTION = 'com.docker.network.bridge.enable_icc';
+
+/** Сеть песочниц существует с включённым ICC, и пересоздать её нельзя: к ней подключены контейнеры. */
+export class SandboxNetworkError extends Error {
+  readonly code = 'icc_enabled' as const;
+  constructor(
+    readonly network: string,
+    readonly attached: number,
+  ) {
+    super(
+      `sandbox network "${network}" allows traffic between containers (ICC is on) and still has ${attached} ` +
+        `container(s) attached. Remove them and run \`docker network rm ${network}\`; ` +
+        'the next sandbox create recreates it with ICC disabled.',
+    );
+    this.name = 'SandboxNetworkError';
+  }
+}
+
 const containerName = (taskId: string) => `${NAME_PREFIX}${taskId}`;
 const volumeName = (taskId: string) => `agent-ws-${taskId}`;
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
@@ -50,6 +98,7 @@ export class DockerSandbox implements Sandbox {
     readonly taskId: string,
     private readonly containerId: string,
     private readonly cli: DockerCli,
+    private readonly settings: SandboxSettings,
   ) {}
 
   /** docker exec внутри песочницы; ошибки самого Docker превращаются в ошибки порта. */
@@ -188,6 +237,7 @@ export class DockerSandbox implements Sandbox {
 
   async start(): Promise<void> {
     await this.lifecycle(['start', this.containerId]);
+    await blockEgressOrStop(this.cli, this.settings.image, this.containerId, this.id);
     await waitForBrowserd(this.cli, this.containerId, this.id);
   }
 
@@ -211,6 +261,69 @@ export class DockerSandbox implements Sandbox {
 }
 
 const DEFAULT_HEALTH_ATTEMPTS = 40;
+
+/** Что DockerSandbox берёт у провайдера. */
+interface SandboxSettings {
+  image: string;
+}
+
+/** Приоритет правил блокировки: после таблицы local (0), до main (32766). */
+const EGRESS_RULE_PREF = '100';
+
+/**
+ * Ставит правила BLOCKED_EGRESS (плюс шлюз и подсеть) в сетевое пространство запущенной песочницы.
+ * Делает это короткоживущий служебный контейнер с одной лишь NET_ADMIN, разделяющий сеть песочницы:
+ * у самой песочницы capabilities нет, снять правила она не может. Правила живут, пока жив netns, —
+ * поэтому их ставит каждый запуск через провайдер, а политики автоперезапуска у контейнера нет.
+ */
+async function blockEgress(cli: DockerCli, image: string, containerId: string, id: string): Promise<void> {
+  const script = [
+    'set -e',
+    "gw=$(ip -4 route show default | awk '{print $3; exit}')",
+    "subnet=$(ip -4 route show scope link proto kernel | awk '{print $1; exit}')",
+    '[ -n "$gw" ] && [ -n "$subnet" ] || { echo "no default route or subnet" >&2; exit 1; }',
+    `while ip rule del pref ${EGRESS_RULE_PREF} 2>/dev/null; do :; done`,
+    `for d in "$@" "$subnet" "$gw/32"; do ip rule add pref ${EGRESS_RULE_PREF} to "$d" blackhole; done`,
+  ].join('\n');
+  const args = [
+    'run',
+    '--rm',
+    '--network',
+    `container:${containerId}`,
+    '--user',
+    '0',
+    '--cap-drop',
+    'ALL',
+    '--cap-add',
+    'NET_ADMIN',
+    '--security-opt',
+    'no-new-privileges',
+    '--entrypoint',
+    'sh',
+    image,
+    '-c',
+    script,
+    'sh',
+    ...BLOCKED_EGRESS,
+  ];
+  const r = await cli.run(args, { timeoutMs: 30_000 });
+  if (r.exitCode === 0) return;
+  if (NO_SUCH_CONTAINER.test(r.stderr)) throw new NotFoundError('sandbox', id);
+  if (/non running container|is not running/i.test(r.stderr)) {
+    throw new SandboxError('not_running', `sandbox ${id} is stopped`);
+  }
+  throw new DockerError(['run', 'egress-block', containerId], r.exitCode, r.stderr);
+}
+
+/** Не удалось закрыть исходящий трафик — песочница не должна работать без него: останавливаем. */
+async function blockEgressOrStop(cli: DockerCli, image: string, containerId: string, id: string): Promise<void> {
+  try {
+    await blockEgress(cli, image, containerId, id);
+  } catch (err) {
+    await cli.run(['stop', '-t', '1', containerId]).catch(() => undefined);
+    throw err;
+  }
+}
 
 async function waitForBrowserd(
   cli: DockerCli,
@@ -245,6 +358,10 @@ export class DockerSandboxProvider implements SandboxProvider {
     private readonly opts: { healthAttempts?: number } = {},
   ) {}
 
+  private get settings(): SandboxSettings {
+    return { image: this.cfg.image };
+  }
+
   async create(taskId: string): Promise<Sandbox> {
     if (!SAFE_TASK_ID.test(taskId)) throw new Error(`invalid task id for a sandbox: ${taskId}`);
     const name = containerName(taskId);
@@ -274,8 +391,7 @@ export class DockerSandboxProvider implements SandboxProvider {
         'ALL',
         '--security-opt',
         'no-new-privileges',
-        '--add-host',
-        'host.docker.internal:127.0.0.1',
+        ...HOST_ALIASES.flatMap(alias => ['--add-host', `${alias}:127.0.0.1`]),
         '--mount',
         `type=volume,src=${volumeName(taskId)},dst=${WORKSPACE_ROOT}`,
         this.cfg.image,
@@ -289,10 +405,14 @@ export class DockerSandboxProvider implements SandboxProvider {
       }
       if (!info) throw new DockerError(['run', name], r.exitCode, r.stderr);
     }
-    const sandbox = new DockerSandbox(name, taskId, info.containerId, this.cli);
+    const sandbox = new DockerSandbox(name, taskId, info.containerId, this.cli, this.settings);
     try {
       if (!info.running) await sandbox.start();
-      else await waitForBrowserd(this.cli, info.containerId, name, this.opts.healthAttempts);
+      else {
+        // Идемпотентно (старые правила снимаются): заодно чинит контейнер, запущенный в обход провайдера.
+        await blockEgressOrStop(this.cli, this.cfg.image, info.containerId, name);
+        await waitForBrowserd(this.cli, info.containerId, name, this.opts.healthAttempts);
+      }
     } catch (err) {
       // Откатываем только то, что создали сами: чужой/ранее существовавший контейнер и его том не трогаем.
       if (created) await sandbox.destroy().catch(() => undefined);
@@ -305,7 +425,7 @@ export class DockerSandboxProvider implements SandboxProvider {
     if (!sandboxId.startsWith(NAME_PREFIX)) return undefined;
     const info = await this.inspect(sandboxId);
     if (!info?.labeled) return undefined;
-    return new DockerSandbox(sandboxId, sandboxId.slice(NAME_PREFIX.length), info.containerId, this.cli);
+    return new DockerSandbox(sandboxId, sandboxId.slice(NAME_PREFIX.length), info.containerId, this.cli, this.settings);
   }
 
   async list(): Promise<SandboxInfo[]> {
@@ -336,11 +456,36 @@ export class DockerSandboxProvider implements SandboxProvider {
     return { containerId, labeled: label === '1', running: running === 'true' };
   }
 
+  /**
+   * Сеть песочниц — bridge с выключенным ICC: песочницы не видят друг друга. Старая сеть с включённым ICC
+   * пересоздаётся, если к ней ничего не подключено (в том числе остановленные контейнеры: после
+   * пересоздания они бы уже не запустились); иначе — SandboxNetworkError с инструкцией для оператора.
+   */
   private ensureNetwork(): Promise<void> {
+    const network = this.cfg.network;
     this.networkReady ??= (async () => {
-      const exists = await this.cli.run(['network', 'inspect', this.cfg.network]);
-      if (exists.exitCode === 0) return;
-      const created = await this.cli.run(['network', 'create', '--driver', 'bridge', this.cfg.network]);
+      const exists = await this.cli.run(['network', 'inspect', '--format', '{{json .Options}}', network]);
+      if (exists.exitCode === 0) {
+        const options = JSON.parse(decode(exists.stdout).trim() || '{}') as Record<string, string> | null;
+        if (options?.[ICC_OPTION] === 'false') return;
+        const attached = (await this.cli.ok(['ps', '-a', '-q', '--filter', `network=${network}`]))
+          .split('\n')
+          .filter(Boolean).length;
+        if (attached > 0) throw new SandboxNetworkError(network, attached);
+        const removed = await this.cli.run(['network', 'rm', network]);
+        if (removed.exitCode !== 0 && !/not found/i.test(removed.stderr)) {
+          throw new DockerError(['network', 'rm'], removed.exitCode, removed.stderr);
+        }
+      }
+      const created = await this.cli.run([
+        'network',
+        'create',
+        '--driver',
+        'bridge',
+        '-o',
+        `${ICC_OPTION}=false`,
+        network,
+      ]);
       if (created.exitCode !== 0 && !/already exists/i.test(created.stderr)) {
         throw new DockerError(['network', 'create'], created.exitCode, created.stderr);
       }
