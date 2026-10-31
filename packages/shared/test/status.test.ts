@@ -13,6 +13,7 @@ describe('task transitions', () => {
     ['queued', 'planning'],
     ['planning', 'running'],
     ['planning', 'waiting_user'],
+    ['planning', 'finalizing'],
     ['running', 'waiting_user'],
     ['waiting_user', 'running'],
     ['waiting_user', 'planning'],

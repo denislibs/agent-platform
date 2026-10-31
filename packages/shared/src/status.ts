@@ -14,7 +14,7 @@ export const TERMINAL_TASK_STATUSES = ['done', 'failed', 'cancelled'] as const s
 
 const TASK_TRANSITIONS: Record<TaskStatus, readonly TaskStatus[]> = {
   queued: ['planning'],
-  planning: ['running', 'waiting_user'],
+  planning: ['running', 'waiting_user', 'finalizing'],
   running: ['waiting_user', 'finalizing'],
   waiting_user: ['planning', 'running', 'finalizing'],
   finalizing: ['done'],
