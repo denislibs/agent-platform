@@ -25,11 +25,21 @@
         "zod": "^4",
       },
     },
+    "packages/testing": {
+      "name": "@agent/testing",
+      "version": "0.0.0",
+      "dependencies": {
+        "@agent/core": "workspace:*",
+        "@agent/shared": "workspace:*",
+      },
+    },
   },
   "packages": {
     "@agent/core": ["@agent/core@workspace:packages/core"],
 
     "@agent/shared": ["@agent/shared@workspace:packages/shared"],
+
+    "@agent/testing": ["@agent/testing@workspace:packages/testing"],
 
     "@oxlint/binding-android-arm-eabi": ["@oxlint/binding-android-arm-eabi@1.90.0", "", { "os": "android", "cpu": "arm" }, "sha512-sgfalb1HuxYjiAa4wESZ626z1FGusqNcXYHyB5oIOEprS2sbPg0UYEfo83uF1GNG70DIfZxHkXuE6KFrlSdn8Q=="],
 
