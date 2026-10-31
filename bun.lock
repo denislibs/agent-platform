@@ -55,6 +55,18 @@
         "openai": "^7.47.0",
       },
     },
+    "packages/sandbox": {
+      "name": "@agent/sandbox",
+      "version": "0.0.0",
+      "dependencies": {
+        "@agent/core": "workspace:*",
+        "@agent/shared": "workspace:*",
+        "zod": "^4",
+      },
+      "devDependencies": {
+        "@agent/testing": "workspace:*",
+      },
+    },
     "packages/shared": {
       "name": "@agent/shared",
       "version": "0.0.0",
@@ -91,6 +103,8 @@
     "@agent/db": ["@agent/db@workspace:packages/db"],
 
     "@agent/llm": ["@agent/llm@workspace:packages/llm"],
+
+    "@agent/sandbox": ["@agent/sandbox@workspace:packages/sandbox"],
 
     "@agent/shared": ["@agent/shared@workspace:packages/shared"],
 

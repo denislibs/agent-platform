@@ -6,7 +6,13 @@
     "no-console": "off",
     "typescript/no-explicit-any": "warn"
   },
-  "ignorePatterns": ["packages/db/drizzle/**", "node_modules/**", "design/**", ".superpowers/**"],
+  "ignorePatterns": [
+    "packages/db/drizzle/**",
+    "node_modules/**",
+    "design/**",
+    ".superpowers/**",
+    "docker/sandbox/browserd/node_modules/**"
+  ],
   "overrides": [
     {
       "files": ["packages/core/**"],

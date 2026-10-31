@@ -1,0 +1,17 @@
+{
+  "name": "@agent/sandbox",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@agent/core": "workspace:*",
+    "@agent/shared": "workspace:*",
+    "zod": "^4"
+  },
+  "devDependencies": {
+    "@agent/testing": "workspace:*"
+  }
+}

@@ -13,6 +13,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "bun run typecheck && bun run lint && bun run format:check",
+    "sandbox:build": "docker build -t agent-sandbox:dev docker/sandbox",
     "infra:up": "docker compose -f docker/compose.yml up -d",
     "infra:down": "docker compose -f docker/compose.yml down",
     "infra:reset": "docker compose -f docker/compose.yml down -v",
