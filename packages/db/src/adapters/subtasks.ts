@@ -8,7 +8,7 @@ import {
 } from '@agent/core';
 import { canTransitionSubtask, SUBTASK_STATUSES, type SubtaskContract, type SubtaskStatus } from '@agent/shared';
 import type { DbHandle } from '../client';
-import { subtasks } from '../schema';
+import { subtasks, tasks } from '../schema';
 
 export class DrizzleSubtaskRepository implements SubtaskRepository {
   constructor(private readonly deps: { database: DbHandle }) {}
@@ -19,6 +19,8 @@ export class DrizzleSubtaskRepository implements SubtaskRepository {
   async insertMany(taskId: string, contracts: SubtaskContract[]): Promise<Subtask[]> {
     if (contracts.length === 0) return [];
     return this.db.transaction(async tx => {
+      // Блокировка строки задачи сериализует выдачу idx: параллельные вызовы ждут коммита предыдущего.
+      await tx.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, taskId)).for('update');
       const [last] = await tx
         .select({ maxIdx: sql<number>`coalesce(max(${subtasks.idx}), -1)` })
         .from(subtasks)

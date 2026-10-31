@@ -170,6 +170,20 @@ export function repositoryContract(
         expect(await h.subtasks.insertMany(task.id, [])).toEqual([]);
       });
 
+      test('parallel insertMany calls get unique consecutive idx', async () => {
+        const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
+        const calls = 10;
+        const results = await Promise.allSettled(
+          Array.from({ length: calls }, (_, i) =>
+            h.subtasks.insertMany(task.id, [contract(`a${i}`), contract(`b${i}`)]),
+          ),
+        );
+        expect(results.filter(r => r.status === 'rejected')).toEqual([]);
+        expect((await h.subtasks.list(task.id)).map(s => s.idx)).toEqual(
+          Array.from({ length: calls * 2 }, (_, i) => i),
+        );
+      });
+
       test('nextPending returns the lowest pending idx', async () => {
         const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
         const [a] = await h.subtasks.insertMany(task.id, [contract('a'), contract('b')]);
