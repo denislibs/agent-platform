@@ -1,0 +1,19 @@
+{
+  "name": "@agent/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@agent/core": "workspace:*",
+    "@agent/shared": "workspace:*",
+    "drizzle-orm": "^0.45.1",
+    "postgres": "^3.4"
+  },
+  "devDependencies": {
+    "@agent/testing": "workspace:*",
+    "drizzle-kit": "^0.31.5"
+  }
+}
