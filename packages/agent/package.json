@@ -13,7 +13,6 @@
     "zod": "^4"
   },
   "devDependencies": {
-    "@agent/sandbox": "workspace:*",
     "@agent/testing": "workspace:*"
   }
 }

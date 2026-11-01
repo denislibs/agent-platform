@@ -3,7 +3,7 @@ import type { Sandbox } from '@agent/core';
 import { DockerCli, DockerSandboxProvider } from '@agent/sandbox';
 import { FakeSearchProvider, testConfig } from '@agent/testing';
 import { loadConfig } from '@agent/shared';
-import { executorTools, runToolCall, type ToolContext } from '../../src';
+import { executorTools, runToolCall, type ToolContext } from '@agent/agent';
 
 // Тот же образ и та же проверка, что в packages/sandbox/test/helpers.ts (requireSandboxImage).
 const SANDBOX_IMAGE = process.env.SANDBOX_IMAGE ?? 'agent-sandbox:dev';
