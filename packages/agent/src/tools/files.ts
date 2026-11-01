@@ -5,7 +5,10 @@ import { defineTool, ToolError } from './tool';
 export const FILE_READ_DEFAULT_LINES = 2000;
 export const FILE_LIST_MAX_ENTRIES = 500;
 const SERVICE_DIRS = ['.tool-outputs', '.screenshots'];
-const decoder = new TextDecoder('utf-8', { fatal: false });
+// Reading is lossy-tolerant (bad bytes become U+FFFD, a BOM is dropped): the file itself is untouched.
+const readDecoder = new TextDecoder('utf-8', { fatal: false });
+// Editing must round-trip exactly: strict decoding, BOM kept as a U+FEFF character.
+const editDecoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 const encoder = new TextEncoder();
 
 const isServicePath = (path: string) => SERVICE_DIRS.some(d => path === d || path.startsWith(`${d}/`));
@@ -28,9 +31,10 @@ export const fileReadTool = defineTool({
   run: async ({ path, offset, limit }, { sandbox }) => {
     const bytes = await sandbox.readFile(path);
     if (bytes.includes(0)) return { ok: true, output: `binary file (${bytes.length} bytes); inspect it with shell` };
-    const text = decoder.decode(bytes);
+    const text = readDecoder.decode(bytes);
     if (offset === undefined && limit === undefined) return { ok: true, output: text };
     const lines = text.split('\n');
+    if (lines.length > 1 && lines.at(-1) === '') lines.pop();
     const from = (offset ?? 1) - 1;
     if (from >= lines.length)
       throw new ToolError(`offset ${from + 1} is past the end of ${path} (${lines.length} lines)`);
@@ -55,11 +59,19 @@ export const fileEditTool = defineTool({
   description: 'Replace an exact, unique piece of text in a file. Include enough context to make "old" unique.',
   schema: z.object({ path: z.string().min(1), old: z.string().min(1), new: z.string() }),
   run: async ({ path, old, new: replacement }, { sandbox }) => {
-    const text = decoder.decode(await sandbox.readFile(path));
-    const count = text.split(old).length - 1;
-    if (count === 0) throw new ToolError(`the old text was not found in ${path}`);
-    if (count > 1) throw new ToolError(`the old text matches ${count} times in ${path}; include more context`);
+    const bytes = await sandbox.readFile(path);
+    let text: string;
+    try {
+      if (bytes.includes(0)) throw new Error('NUL byte');
+      text = editDecoder.decode(bytes);
+    } catch {
+      throw new ToolError(`${path} is not UTF-8 text; edit it with shell`);
+    }
     const at = text.indexOf(old);
+    if (at === -1) throw new ToolError(`the old text was not found in ${path}`);
+    let count = 1;
+    for (let next = text.indexOf(old, at + 1); next !== -1; next = text.indexOf(old, next + 1)) count++;
+    if (count > 1) throw new ToolError(`the old text matches ${count} times in ${path}; include more context`);
     await sandbox.writeFile(path, text.slice(0, at) + replacement + text.slice(at + old.length));
     return { ok: true, output: `edited ${path}` };
   },

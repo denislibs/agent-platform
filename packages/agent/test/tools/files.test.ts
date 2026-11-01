@@ -7,6 +7,10 @@ const call = (name: string, args: unknown) => ({ id: 'c', name, rawArgs: JSON.st
 const read = async (ctx: Awaited<ReturnType<typeof toolContext>>, path: string) =>
   new TextDecoder().decode(await ctx.sandbox.readFile(path));
 
+const bytesOf = async (ctx: Awaited<ReturnType<typeof toolContext>>, path: string) => [
+  ...(await ctx.sandbox.readFile(path)),
+];
+
 describe('file_write / file_read', () => {
   test('writes a file, creating folders, and reads it back', async () => {
     const ctx = await toolContext();
@@ -107,5 +111,70 @@ describe('file_read / file_list edge cases', () => {
     const lines = (await fileListTool.run({ path: 'f' }, ctx)).output.split('\n');
     expect(lines).toHaveLength(FILE_LIST_MAX_ENTRIES + 1);
     expect(lines.at(-1)).toContain('3 more entries');
+  });
+});
+
+describe('fix round 1', () => {
+  test('file_edit refuses binary and non-UTF-8 files and leaves their bytes alone', async () => {
+    const ctx = await toolContext();
+    const binary = [0x41, 0x00, 0xff, 0x41];
+    const cp1251 = [0xcf, 0xf0, 0xe8, 0xe2, 0xe5, 0xf2, 0x20, 0x41];
+    await ctx.sandbox.writeFile('b.bin', new Uint8Array(binary));
+    await ctx.sandbox.writeFile('c.txt', new Uint8Array(cp1251));
+    for (const [path, original] of [
+      ['b.bin', binary],
+      ['c.txt', cp1251],
+    ] as const) {
+      const r = await runToolCall(tools, call('file_edit', { path, old: 'A', new: 'B' }), ctx);
+      expect(r.ok).toBe(false);
+      expect(r.output).toContain(`${path} is not UTF-8 text`);
+      expect(await bytesOf(ctx, path)).toEqual([...original]);
+    }
+  });
+
+  test('file_edit keeps a UTF-8 BOM', async () => {
+    const ctx = await toolContext();
+    await ctx.sandbox.writeFile('bom.txt', new Uint8Array([0xef, 0xbb, 0xbf, 0x61, 0x62]));
+    const r = await runToolCall(tools, call('file_edit', { path: 'bom.txt', old: 'b', new: 'c' }), ctx);
+    expect(r.ok).toBe(true);
+    expect(await bytesOf(ctx, 'bom.txt')).toEqual([0xef, 0xbb, 0xbf, 0x61, 0x63]);
+  });
+
+  test('overlapping matches count as several', async () => {
+    const ctx = await toolContext();
+    await ctx.sandbox.writeFile('o.txt', 'aaa');
+    const r = await runToolCall(tools, call('file_edit', { path: 'o.txt', old: 'aa', new: 'b' }), ctx);
+    expect(r.ok).toBe(false);
+    expect(r.output).toContain('matches 2 times');
+    expect(await read(ctx, 'o.txt')).toBe('aaa');
+  });
+
+  test('a trailing newline is not an extra line', async () => {
+    const ctx = await toolContext();
+    await ctx.sandbox.writeFile('t.txt', 'hello\nworld\n');
+    const r = await runToolCall(tools, call('file_read', { path: 't.txt', offset: 1 }), ctx);
+    expect(r.output).toBe('[lines 1–2 of 2]\nhello\nworld');
+    const past = await runToolCall(tools, call('file_read', { path: 't.txt', offset: 3 }), ctx);
+    expect(past.ok).toBe(false);
+  });
+
+  test('file_read with limit and no offset starts at line 1', async () => {
+    const ctx = await toolContext();
+    await ctx.sandbox.writeFile('l.txt', 'a\nb\nc');
+    const r = await runToolCall(tools, call('file_read', { path: 'l.txt', limit: 2 }), ctx);
+    expect(r.output).toBe('[lines 1–2 of 3]\na\nb');
+  });
+
+  test('file_edit on a missing file names the path', async () => {
+    const ctx = await toolContext();
+    const r = await runToolCall(tools, call('file_edit', { path: 'gone.txt', old: 'a', new: 'b' }), ctx);
+    expect(r.ok).toBe(false);
+    expect(r.output).toContain('gone.txt');
+  });
+
+  test('file_write outside the workspace is an error result', async () => {
+    const ctx = await toolContext();
+    const r = await runToolCall(tools, call('file_write', { path: '../x', content: 'x' }), ctx);
+    expect(r.ok).toBe(false);
   });
 });
