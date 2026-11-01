@@ -19,4 +19,20 @@ describe('createAgentTestContainer', () => {
     const c = createAgentTestContainer({ memory: asValue(memoryStub) });
     expect(c.cradle.memory).toBe(memoryStub);
   });
+
+  test('every agent service resolves in the test container', () => {
+    const c = createAgentTestContainer().cradle;
+    for (const name of [
+      'intake',
+      'gateway',
+      'guard',
+      'compactor',
+      'toolExecutor',
+      'executorStage',
+      'plannerStage',
+      'composer',
+    ] as const) {
+      expect(c[name]).toBeDefined();
+    }
+  });
 });
