@@ -25,7 +25,8 @@
     "admin:grant": "bun packages/api/src/admin-grant.ts",
     "backend:build": "docker compose -f docker/compose.yml --profile app build worker",
     "stack:up": "docker compose -f docker/compose.yml --profile app up -d --build",
-    "stack:down": "docker compose -f docker/compose.yml --profile app down"
+    "stack:down": "docker compose -f docker/compose.yml --profile app down",
+    "stack:logs": "docker compose -f docker/compose.yml --profile app logs -f api worker nginx"
   },
   "devDependencies": {
     "@types/bun": "^1.4.4",
