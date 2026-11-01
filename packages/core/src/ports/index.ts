@@ -7,6 +7,7 @@ import type { JobQueue } from './queue';
 import type { Clock, IdGenerator } from './runtime';
 import type { SandboxProvider } from './sandbox';
 import type { SearchProvider } from './search';
+import type { StepEvents } from './step-events';
 import type { UnitOfWork } from './unit-of-work';
 
 export type * from './file-store';
@@ -18,6 +19,7 @@ export type * from './repositories';
 export type * from './runtime';
 export type * from './sandbox';
 export type * from './search';
+export type * from './step-events';
 export type * from './unit-of-work';
 
 /** Реестр портов. Имена полей — ключи регистрации в DI-контейнере. */
@@ -37,4 +39,5 @@ export interface Ports {
   queue: JobQueue;
   logger: Logger;
   mailer: Mailer;
+  stepEvents: StepEvents;
 }

@@ -1,11 +1,11 @@
 import { expect, test } from 'bun:test';
 import { asValue } from 'awilix';
+import { PublishingUnitOfWork } from '@agent/core';
 import {
   createTestContainer,
   FakeSearchProvider,
   InMemorySandboxProvider,
   InMemoryTaskRepository,
-  InMemoryUnitOfWork,
   ScriptedLlm,
   testConfig,
 } from '@agent/testing';
@@ -14,7 +14,7 @@ test('resolves every port with in-memory doubles sharing one state', async () =>
   const c = createTestContainer();
   const { tasks, steps, memory, clock } = c.cradle;
   expect(tasks).toBeInstanceOf(InMemoryTaskRepository);
-  expect(c.cradle.uow).toBeInstanceOf(InMemoryUnitOfWork);
+  expect(c.cradle.uow).toBeInstanceOf(PublishingUnitOfWork);
   const userId = memory.seedUser({ millicredits: 10 });
   const task = await tasks.create({ userId, prompt: 'x' });
   await steps.append({
