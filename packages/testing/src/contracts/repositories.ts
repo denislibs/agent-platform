@@ -203,6 +203,36 @@ export function repositoryContract(
         expect(await h.tasks.listForUser('no-such-user')).toEqual([]);
       });
 
+      test('listForUser pages with a before cursor without gaps or repeats; ties are broken by id', async () => {
+        const userId = await h.seedUser();
+        const created: string[] = [];
+        // Одна транзакция: в Postgres у всех трёх один now() — равный createdAt.
+        await h.uow.run(async tx => {
+          for (const prompt of ['a', 'b', 'c']) created.push((await tx.tasks.create({ userId, prompt })).id);
+        });
+        await h.elapse(5);
+        for (const prompt of ['d', 'e']) created.push((await h.tasks.create({ userId, prompt })).id);
+        const all = (await h.tasks.listForUser(userId)).map(t => t.id);
+        expect(all.toSorted()).toEqual(created.toSorted());
+
+        const paged: string[] = [];
+        let before: { createdAt: Date; id: string } | undefined;
+        for (let page = 0; page < 10; page++) {
+          const rows = await h.tasks.listForUser(userId, { limit: 2, ...(before ? { before } : {}) });
+          paged.push(...rows.map(t => t.id));
+          const last = rows.at(-1);
+          if (rows.length < 2 || !last) break;
+          before = { createdAt: last.createdAt, id: last.id };
+        }
+        expect(paged).toEqual(all);
+      });
+
+      test('listForUser with a malformed cursor id returns nothing', async () => {
+        const userId = await h.seedUser();
+        await h.tasks.create({ userId, prompt: 'x' });
+        expect(await h.tasks.listForUser(userId, { before: { createdAt: new Date(), id: MALFORMED_ID } })).toEqual([]);
+      });
+
       test('findStale returns tasks in the given statuses untouched for longer than staleForMs, oldest first', async () => {
         const userId = await h.seedUser();
         const oldest = await h.tasks.create({ userId, prompt: 'oldest' });

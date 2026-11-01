@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { jobKey } from '../../src';
 import { planned, seedTask, setupAgent } from './fixtures';
 
 const env = { STALE_TASK_MS: '120000', WAIT_USER_TIMEOUT_MS: '86400000' };
@@ -30,6 +31,27 @@ describe('Sweeper', () => {
     await c.sweeper.sweep();
     await c.sweeper.sweep();
     expect(c.queue.jobs).toHaveLength(1);
+  });
+
+  test('an answered waiting task whose job was lost is re-queued with its stage and the seq after the answer', async () => {
+    const c = setupAgent(env);
+    const answered = await planned(c);
+    await c.guard.pause(answered, 'execute');
+    await c.steps.append({
+      taskId: answered.id,
+      agent: 'user',
+      payload: { type: 'message', role: 'user', text: 'EU' },
+    });
+    const silent = await planned(c);
+    await c.guard.pause(silent, 'execute');
+    c.clock.advance(121_000);
+    const r = await c.sweeper.sweep();
+    const after = await c.tasks.get(answered.id);
+    expect(r.requeued).toBe(1);
+    expect(c.queue.jobs).toEqual([
+      { taskId: answered.id, kind: 'execute', key: jobKey(answered.id, 'execute', after!.lastSeq) },
+    ]);
+    expect(after?.status).toBe('waiting_user');
   });
 
   test('a task waiting for the user past the timeout is finalised with wait_timeout', async () => {

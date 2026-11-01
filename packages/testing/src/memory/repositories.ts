@@ -14,6 +14,7 @@ import {
   type SubtaskPatch,
   type SubtaskRepository,
   type Task,
+  type TaskCursor,
   type TaskPatch,
   type TaskRepository,
   type UsageInput,
@@ -40,6 +41,9 @@ function guardedState(deps: Deps, txToken: symbol | undefined): InMemoryState {
   return deps.memory;
 }
 const copy = <T>(v: T): T => structuredClone(v);
+const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const newestFirst = (a: Task, b: Task): number =>
+  b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
 /** Как Drizzle .set(): ключи со значением undefined не трогают поле (null — очищает). */
 const definedOnly = <T extends object>(patch: T): Partial<T> =>
   Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) as Partial<T>;
@@ -108,10 +112,13 @@ export class InMemoryTaskRepository implements TaskRepository {
     return [...this.m.tasks.values()].filter(t => t.userId === userId && !isTerminalTask(t.status)).length;
   }
 
-  async listForUser(userId: string, opts: { limit?: number } = {}): Promise<Task[]> {
+  async listForUser(userId: string, opts: { limit?: number; before?: TaskCursor } = {}): Promise<Task[]> {
+    const { before } = opts;
+    if (before && !CANONICAL_UUID.test(before.id)) return [];
+    // newestFirst(t, курсор) > 0: задача t идёт после курсора в порядке выдачи.
     return [...this.m.tasks.values()]
-      .filter(t => t.userId === userId)
-      .toSorted((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
+      .filter(t => t.userId === userId && (!before || newestFirst(t, { ...t, ...before }) > 0))
+      .toSorted(newestFirst)
       .slice(0, opts.limit ?? 50)
       .map(copy);
   }

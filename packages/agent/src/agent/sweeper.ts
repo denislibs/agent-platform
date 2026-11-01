@@ -4,9 +4,10 @@ import {
   type JobQueue,
   type Logger,
   type SandboxProvider,
+  type Task,
   type TaskRepository,
 } from '@agent/core';
-import { isTerminalTask, type Config } from '@agent/shared';
+import { isTerminalTask, type Config, type JobKind } from '@agent/shared';
 import type { TaskGuard } from './guard';
 import { jobKey, kindForStatus } from './jobs';
 
@@ -21,6 +22,7 @@ interface PassResult {
  * Ошибка на одной задаче или песочнице не прерывает проход: остальные обрабатываются, а недоделанное подхватит следующий.
  * Число таких ошибок — `failed` в результате: воркер пишет его в лог.
  * Выборка findStale — не больше 100 задач (старейшие первыми) на набор статусов за проход; остальные — в следующий.
+ * waiting_user за проход — не больше 100 старейших: при сотнях неотвеченных пауз задача с ответом может ждать (backlog).
  */
 export class Sweeper {
   constructor(
@@ -46,17 +48,23 @@ export class Sweeper {
     };
   }
 
-  /** Зависшие задачи: тот же job, что ведёт их дальше; живой job с тем же ключом очередь не повторит. */
+  /**
+   * Зависшие задачи: тот же job, что ведёт их дальше; живой job с тем же ключом очередь не повторит.
+   * waiting_user с ответом: ответ записан, а его job не поставился (сбой Valkey после коммита в API) — без этого
+   * задача висела бы до тайм-аута ожидания. Ключ — по lastSeq с ответом, как ставит API.
+   */
   private async requeueStale(): Promise<PassResult> {
     const { tasks, queue, config } = this.deps;
     const result: PassResult = { count: 0, failed: 0 };
-    for (const task of await tasks.findStale({
+    const stale = await tasks.findStale({
       statuses: ['queued', 'planning', 'running', 'finalizing'],
       staleForMs: config.worker.staleTaskMs,
-    })) {
-      const kind = kindForStatus(task.status, task.currentKind);
-      if (!kind) continue;
+    });
+    const waiting = await tasks.findStale({ statuses: ['waiting_user'], staleForMs: config.worker.staleTaskMs });
+    for (const task of [...stale, ...waiting]) {
       try {
+        const kind = await this.kindToRequeue(task);
+        if (!kind) continue;
         await queue.enqueue({ taskId: task.id, kind }, jobKey(task.id, kind, task.lastSeq));
         result.count++;
       } catch (err) {
@@ -65,6 +73,12 @@ export class Sweeper {
       }
     }
     return result;
+  }
+
+  private async kindToRequeue(task: Task): Promise<JobKind | undefined> {
+    if (task.status !== 'waiting_user') return kindForStatus(task.status, task.currentKind);
+    if (!task.currentKind) return undefined;
+    return (await this.deps.guard.hasAnswer(task.id)) ? task.currentKind : undefined;
   }
 
   /** Пользователь не ответил за WAIT_USER_TIMEOUT_MS: задача завершается с частичным результатом. */
