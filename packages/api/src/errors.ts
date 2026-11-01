@@ -58,6 +58,9 @@ function mapHttpException(status: ContentfulStatusCode): { status: ContentfulSta
   switch (status) {
     case 401:
       return { status, body: body('unauthorized', 'sign in to continue') };
+    // csrf: изменяющий запрос с чужого Origin.
+    case 403:
+      return { status, body: body('forbidden', 'the request did not come from this site') };
     case 404:
       return { status, body: body('not_found', 'not found') };
     case 413:

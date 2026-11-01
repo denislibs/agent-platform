@@ -29,7 +29,9 @@ export function setupRealApi(overrides: Overrides = {}) {
       .returning();
     userIds.push(row!.id);
     const session: SessionUser = { id: row!.id, email: row!.email, name: row!.name, image: null };
-    return { user: session, headers: { cookie: `session=${auth.signIn(session)}` } };
+    // Origin приложения: изменяющие запросы без него отклоняет csrf.
+    const origin = new URL(config.auth.baseUrl).origin;
+    return { user: session, headers: { cookie: `session=${auth.signIn(session)}`, origin } };
   }
 
   /** Удаляет созданных пользователей (задачи и файлы уходят каскадом) и закрывает соединения. */

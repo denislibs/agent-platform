@@ -42,6 +42,10 @@ test('a Hono HTTPException maps by status with a fixed message, never its own te
     body: { error: { code: 'bad_request', message: 'bad request' } },
   });
   expect(mapError(secret(401)).body.error.code).toBe('unauthorized');
+  expect(mapError(secret(403))).toEqual({
+    status: 403,
+    body: { error: { code: 'forbidden', message: 'the request did not come from this site' } },
+  });
   expect(mapError(secret(404)).body.error.code).toBe('not_found');
   expect(mapError(secret(413))).toEqual({
     status: 413,

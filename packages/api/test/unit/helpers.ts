@@ -13,23 +13,25 @@ export function setupApi(env: Record<string, string> = {}) {
     .register({ auth: asValue(auth) });
   const c = container.cradle;
   const app = createApp(c);
+  /** Origin приложения: изменяющие запросы без него отклоняет csrf. */
+  const origin = new URL(c.config.auth.baseUrl).origin;
 
   async function signIn(opts: { millicredits?: number } = {}) {
     const id = c.memory.seedUser({ millicredits: opts.millicredits ?? 1_000_000 });
     const user: SessionUser = { id, email: c.memory.users.get(id)!.email, name: 'Test User', image: null };
-    return { user, headers: { cookie: `session=${auth.signIn(user)}` } };
+    return { user, headers: { cookie: `session=${auth.signIn(user)}`, origin } };
   }
 
   function call(method: string, path: string, opts: { headers?: Record<string, string>; body?: unknown } = {}) {
     const json: Record<string, string> = opts.body === undefined ? {} : { 'content-type': 'application/json' };
     return app.request(path, {
       method,
-      headers: { ...json, ...opts.headers },
+      headers: { origin, ...json, ...opts.headers },
       ...(opts.body === undefined ? {} : { body: JSON.stringify(opts.body) }),
     });
   }
 
-  return { app, c, auth, signIn, call };
+  return { app, c, auth, origin, signIn, call };
 }
 
 export type ApiTest = ReturnType<typeof setupApi>;

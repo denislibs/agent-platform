@@ -7,6 +7,7 @@ export const API_ERROR_CODES = [
   'bad_request',
   'unauthorized',
   'insufficient_credits',
+  'forbidden',
   'not_found',
   'conflict',
   'upload_incomplete',

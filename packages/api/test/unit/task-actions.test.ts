@@ -168,6 +168,49 @@ describe('POST /api/tasks/:id/cancel', () => {
     expect(TaskEnvelopeSchema.parse(await again.json()).task.lastSeq).toBe(2);
   });
 
+  test('csrf: a cancel from a foreign Origin is 403 forbidden and changes nothing; same-origin passes', async () => {
+    const t = setupApi();
+    const { user, headers } = await t.signIn();
+    const task = await t.c.intake.create({ userId: user.id, prompt: 'x' });
+    for (const foreign of [
+      { origin: 'https://evil.example' },
+      // Порт — часть Origin: соседнее приложение на том же хосте тоже чужое.
+      { origin: 'http://localhost:3001' },
+      { origin: 'null' },
+    ]) {
+      const res = await t.call('POST', `/api/tasks/${task.id}/cancel`, { headers: { ...headers, ...foreign } });
+      expect({ foreign, status: res.status }).toEqual({ foreign, status: 403 });
+      expect(await errorCode(res)).toBe('forbidden');
+    }
+    // Ни Origin, ни Sec-Fetch-Site: браузер так не шлёт, отклоняем.
+    const { origin: _, ...bare } = headers;
+    expect((await t.app.request(`/api/tasks/${task.id}/cancel`, { method: 'POST', headers: bare })).status).toBe(403);
+    expect((await t.c.tasks.get(task.id))?.status).toBe('queued');
+
+    // Sec-Fetch-Site: same-origin без Origin — тоже свой.
+    const viaFetchSite = await t.app.request(`/api/tasks/${task.id}/cancel`, {
+      method: 'POST',
+      headers: { ...bare, 'sec-fetch-site': 'same-origin' },
+    });
+    expect(viaFetchSite.status).toBe(200);
+    expect((await t.call('POST', `/api/tasks/${task.id}/cancel`, { headers })).status).toBe(200);
+  });
+
+  test('csrf does not cover /api/auth/* (Better Auth checks Origin itself) nor GET', async () => {
+    const t = setupApi();
+    const { headers } = await t.signIn();
+    const foreign = { origin: 'https://evil.example' };
+    expect((await t.call('POST', '/api/auth/sign-out', { headers: foreign })).status).toBe(200);
+    expect((await t.call('GET', '/api/me', { headers: { ...headers, ...foreign } })).status).toBe(200);
+  });
+
+  test('csrf runs after the session guard: a foreign POST without a session is still 401', async () => {
+    const t = setupApi();
+    const task = crypto.randomUUID();
+    const res = await t.call('POST', `/api/tasks/${task}/cancel`, { headers: { origin: 'https://evil.example' } });
+    expect(res.status).toBe(401);
+  });
+
   test('a paused task can be cancelled; the worker then stops at its next check', async () => {
     const t = setupApi();
     const { user, headers } = await t.signIn();

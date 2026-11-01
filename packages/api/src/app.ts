@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import { csrf } from 'hono/csrf';
 import { requireUser } from './auth/middleware';
 import type { ApiDeps, ApiEnv } from './deps';
 import { errorLogFields, mapError } from './errors';
@@ -41,6 +42,16 @@ export function createApp(deps: ApiDeps, opts: { streams?: OpenStreams } = {}): 
   // Охрана регистрируется раньше всех маршрутов: маршрут, добавленный позже, не окажется без неё.
   const authenticated = requireUser(deps.auth);
   app.use('/api/*', (c, next) => (isPublic(c.req.method, c.req.path) ? next() : authenticated(c, next)));
+
+  /*
+   * CSRF для всех изменяющих /api/*, кроме /api/auth/* (у Better Auth своя проверка Origin). hono/csrf отклоняет
+   * не-GET/HEAD/OPTIONS запрос с типом формы или text/plain (без Content-Type — тоже), если ни Sec-Fetch-Site не
+   * same-origin, ни Origin не равен адресу приложения (BETTER_AUTH_URL). JSON с чужой страницы и так требует
+   * preflight CORS, а parseJson принимает только application/json; csrf закрывает POST без тела (отмена).
+   * После охраны: без сессии по-прежнему 401, а 403 forbidden получает только запрос с сессией.
+   */
+  const sameOrigin = csrf({ origin: new URL(deps.config.auth.baseUrl).origin });
+  app.use('/api/*', (c, next) => (c.req.path.startsWith('/api/auth/') ? next() : sameOrigin(c, next)));
 
   // Тело читается целиком только в parseJson, поэтому предел ставится до маршрутов. /api/auth/* ограничен отдельно.
   const apiBodyLimit = bodyLimit({ maxSize: API_BODY_LIMIT_BYTES });
