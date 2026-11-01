@@ -5,3 +5,4 @@ export * from './http';
 export * from './auth/gateway';
 export * from './auth/better-auth';
 export * from './serve';
+export * from './runtime-env';

@@ -66,6 +66,8 @@ const EnvSchema = z.object({
   SANDBOX_NAMESPACE: z.string().min(1).default('dev'),
   BRAVE_API_KEY: z.preprocess(v => (v === '' ? undefined : v), z.string().min(1).optional()),
   BRAVE_BASE_URL: z.url().default('https://api.search.brave.com'),
+  /** Адрес, на котором слушает API: loopback; в Docker — 0.0.0.0, порт наружу не публикуется (план 4b). */
+  API_HOST: z.string().min(1).default('127.0.0.1'),
   API_PORT: positiveInt(3000),
   /** Лимит входного файла; 50 МиБ — как лимит чтения файла песочницы. */
   UPLOAD_MAX_BYTES: positiveInt(52_428_800),
@@ -143,7 +145,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       braveApiKey: e.BRAVE_API_KEY ?? null,
       braveBaseUrl: e.BRAVE_BASE_URL,
     },
-    api: { port: e.API_PORT, uploadMaxBytes: e.UPLOAD_MAX_BYTES, sseHeartbeatMs: e.SSE_HEARTBEAT_MS },
+    api: { host: e.API_HOST, port: e.API_PORT, uploadMaxBytes: e.UPLOAD_MAX_BYTES, sseHeartbeatMs: e.SSE_HEARTBEAT_MS },
     auth: {
       secret: e.BETTER_AUTH_SECRET ?? null,
       baseUrl: e.BETTER_AUTH_URL,

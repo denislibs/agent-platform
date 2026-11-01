@@ -1,9 +1,13 @@
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { errorMessage } from '@agent/core';
 import { requireUser } from './auth/middleware';
 import type { ApiDeps, ApiEnv } from './deps';
 import { mapError } from './errors';
 import { meRoutes } from './routes/me';
+
+/** Тела запросов /api/auth/* — JSON с адресом и URL; больше этого Better Auth читать незачем. */
+export const AUTH_BODY_LIMIT_BYTES = 64 * 1024;
 
 /** Единственное исключение из охраны: проверка живости и обработчик авторизации. */
 const isPublic = (method: string, path: string): boolean =>
@@ -31,7 +35,10 @@ export function createApp(deps: ApiDeps): Hono<ApiEnv> {
   app.use('/api/*', (c, next) => (isPublic(c.req.method, c.req.path) ? next() : authenticated(c, next)));
 
   app.get('/api/health', c => c.json({ ok: true }));
-  app.on(['GET', 'POST'], '/api/auth/*', c => deps.auth.handler(c.req.raw));
+  // Предел до обработчика: bodyLimit бросает HTTPException 413, mapError превращает его в payload_too_large.
+  app.on(['GET', 'POST'], '/api/auth/*', bodyLimit({ maxSize: AUTH_BODY_LIMIT_BYTES }), c =>
+    deps.auth.handler(c.req.raw),
+  );
 
   meRoutes(app, deps);
   return app;

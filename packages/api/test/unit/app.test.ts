@@ -22,6 +22,31 @@ test('/api/auth/* goes to the auth handler without a session', async () => {
   expect(await res.text()).toBe('fake auth: /api/auth/sign-in/magic-link');
 });
 
+test('/api/auth/* bodies over 64 KiB are 413 payload_too_large before the auth handler', async () => {
+  const t = setupApi();
+  const big = await t.call('POST', '/api/auth/sign-in/magic-link', { body: { email: 'x'.repeat(64 * 1024) } });
+  expect(big.status).toBe(413);
+  expect(ApiErrorSchema.parse(await big.json()).error.code).toBe('payload_too_large');
+
+  // Без Content-Length (потоком) — тот же предел.
+  const stream = new ReadableStream({
+    start(c) {
+      c.enqueue(new TextEncoder().encode('x'.repeat(70 * 1024)));
+      c.close();
+    },
+  });
+  const chunked = await t.app.request('/api/auth/sign-in/magic-link', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: stream,
+    duplex: 'half',
+  } as RequestInit);
+  expect(chunked.status).toBe(413);
+
+  const small = await t.call('POST', '/api/auth/sign-in/magic-link', { body: { email: 'a@b.c' } });
+  expect(small.status).toBe(200);
+});
+
 test('an unknown route is 404 with a typed error body', async () => {
   const t = setupApi();
   const { headers } = await t.signIn();

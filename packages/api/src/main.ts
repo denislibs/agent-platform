@@ -14,9 +14,14 @@ warnIfMailIsLogged({ mailer, logger }, process.env.NODE_ENV);
 
 const app = createApp(container.cradle);
 const idleTimeout = idleTimeoutSec(config.api.sseHeartbeatMs);
-const server = Bun.serve({ port: config.api.port, fetch: withJsonErrors(app.fetch, logger), idleTimeout });
+const server = Bun.serve({
+  hostname: config.api.host,
+  port: config.api.port,
+  fetch: withJsonErrors(app.fetch, logger),
+  idleTimeout,
+});
 // Только порт и тайм-аут: конфиг целиком в журнал не пишем — в нём секреты.
-logger.info('api listening', { port: server.port, idleTimeout });
+logger.info('api listening', { host: config.api.host, port: server.port, idleTimeout });
 
 let closing = false;
 async function shutdown(signal: string): Promise<void> {

@@ -1,5 +1,6 @@
 import { errorMessage, LogMailer, type Logger, type Mailer } from '@agent/core';
 import { mapError } from './errors';
+import { isLocalRuntime } from './runtime-env';
 
 /** Предел idleTimeout в Bun.serve, секунды. */
 const BUN_MAX_IDLE_TIMEOUT_SEC = 255;
@@ -37,10 +38,10 @@ export function withJsonErrors<A extends unknown[]>(
 }
 
 /**
- * Решение плана: пока нет почтового провайдера, magic link пишется в журнал. В продакшене об этом
- * предупреждаем при старте, чтобы не пригласить пользователей, которым письма не дойдут.
+ * Решение плана: пока нет почтового провайдера, magic link пишется в журнал. Вне test и development
+ * (пустой NODE_ENV тоже) об этом предупреждаем при старте, чтобы не пригласить пользователей, которым письма не дойдут.
  */
 export function warnIfMailIsLogged(deps: { mailer: Mailer; logger: Logger }, nodeEnv: string | undefined): void {
-  if (nodeEnv === 'production' && deps.mailer instanceof LogMailer)
+  if (!isLocalRuntime(nodeEnv) && deps.mailer instanceof LogMailer)
     deps.logger.warn('magic links are written to the log: configure a mail provider before inviting users (backlog)');
 }

@@ -104,7 +104,9 @@ test('the session cookie is HttpOnly, SameSite=Lax, Path=/ and not Secure on an 
 test('on an https base URL the session cookie is Secure with the __Secure- prefix', async () => {
   const base = 'https://agent.example.test';
   const httpsConfig = loadConfig({ ...process.env, DATABASE_URL: config.databaseUrl, BETTER_AUTH_URL: base });
-  const gateway = new BetterAuthGateway(createBetterAuth({ db, config: httpsConfig, mailer }));
+  const gateway = new BetterAuthGateway(
+    createBetterAuth({ db, config: httpsConfig, mailer, logger: container.cradle.logger }),
+  );
   const setCookies = await magicLinkSetCookies(req => gateway.handler(req), base, newEmail());
   const token = setCookies.find(c => c.startsWith('__Secure-better-auth.session_token='));
   expect(token).toBeDefined();
@@ -161,6 +163,45 @@ test('a signed cookie whose session row is gone is undefined', async () => {
   const cookie = await signIn(newEmail());
   await db.delete(session).where(eq(session.token, decodeURIComponent(sessionToken(cookie)).split('.')[0]!));
   expect(await auth.session(new Headers({ cookie }))).toBeUndefined();
+});
+
+test('a foreign callbackURL is 403: origin checks are on even under NODE_ENV=test', async () => {
+  const email = newEmail();
+  const res = await app.request(`${origin}/api/auth/sign-in/magic-link`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin },
+    body: JSON.stringify({ email, callbackURL: 'https://evil.example/steal' }),
+  });
+  expect(res.status).toBe(403);
+  expect(mailer.lastLink(email)).toBeUndefined();
+});
+
+test('a cookie-bearing POST from a foreign Origin is 403 and keeps the session', async () => {
+  const cookie = await signIn(newEmail());
+  const out = await app.request(`${origin}/api/auth/sign-out`, {
+    method: 'POST',
+    headers: { cookie, origin: 'https://evil.example' },
+  });
+  expect(out.status).toBe(403);
+  expect((await app.request(`${origin}/api/me`, { headers: { cookie } })).status).toBe(200);
+});
+
+test('the magic-link token is stored hashed, not as sent', async () => {
+  const email = newEmail();
+  const res = await app.request(`${origin}/api/auth/sign-in/magic-link`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin },
+    body: JSON.stringify({ email, callbackURL: '/' }),
+  });
+  expect(res.status).toBe(200);
+  const token = new URL(mailer.lastLink(email)!).searchParams.get('token')!;
+  const rows = await db
+    .select()
+    .from(verification)
+    .where(like(verification.value, `%${email}%`));
+  expect(rows).toHaveLength(1);
+  expect(rows[0]!.identifier).not.toBe(token);
+  expect(JSON.stringify(rows[0])).not.toContain(token);
 });
 
 test('signing out ends the session', async () => {

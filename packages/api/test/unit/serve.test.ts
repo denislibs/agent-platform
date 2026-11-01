@@ -52,16 +52,21 @@ test('normal responses pass through the wrapper unchanged', async () => {
   expect(await res.json()).toEqual({ ok: true });
 });
 
-test('in production with the log mailer the API warns that magic links go to the log', () => {
-  const logger = new CapturingLogger();
-  warnIfMailIsLogged({ mailer: new LogMailer({ logger }), logger }, 'production');
-  expect(logger.entries).toMatchObject([{ level: 'warn', message: expect.stringContaining('magic links') }]);
+test('the log mailer warning fires unless NODE_ENV is test or development', () => {
+  for (const env of ['production', 'staging', undefined]) {
+    const logger = new CapturingLogger();
+    warnIfMailIsLogged({ mailer: new LogMailer({ logger }), logger }, env);
+    expect({ env, entries: logger.entries }).toMatchObject({
+      env,
+      entries: [{ level: 'warn', message: expect.stringContaining('magic links') }],
+    });
+  }
 });
 
-test('no warning outside production or with a real mail provider', () => {
+test('no warning in test or development, or with a real mail provider', () => {
   const logger = new CapturingLogger();
   warnIfMailIsLogged({ mailer: new LogMailer({ logger }), logger }, 'development');
-  warnIfMailIsLogged({ mailer: new LogMailer({ logger }), logger }, undefined);
+  warnIfMailIsLogged({ mailer: new LogMailer({ logger }), logger }, 'test');
   warnIfMailIsLogged({ mailer: new CapturingMailer(), logger }, 'production');
   expect(logger.entries).toEqual([]);
 });

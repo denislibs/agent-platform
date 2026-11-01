@@ -152,7 +152,8 @@ describe('loadConfig', () => {
 
   test('api and auth settings have defaults; OAuth apps are off without credentials', () => {
     const c = loadConfig(base);
-    expect(c.api).toEqual({ port: 3000, uploadMaxBytes: 52_428_800, sseHeartbeatMs: 15_000 });
+    expect(c.api).toEqual({ host: '127.0.0.1', port: 3000, uploadMaxBytes: 52_428_800, sseHeartbeatMs: 15_000 });
+    expect(loadConfig({ ...base, API_HOST: '0.0.0.0' }).api.host).toBe('0.0.0.0');
     expect(c.auth).toEqual({ secret: null, baseUrl: 'http://localhost:8080', google: null, github: null });
   });
 

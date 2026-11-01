@@ -58,7 +58,7 @@ Sandbox network isolation:
 ## API
 
 ```bash
-bun run api                 # Hono API on :3000 (API_PORT), on the infra from infra:up
+NODE_ENV=development bun run api   # Hono API on 127.0.0.1:3000 (API_HOST, API_PORT), on the infra from infra:up
 ```
 
 The API needs `BETTER_AUTH_SECRET` in `.env` (`openssl rand -base64 32`). Sign-in methods:
@@ -67,6 +67,7 @@ The API needs `BETTER_AUTH_SECRET` in `.env` (`openssl rand -base64 32`). Sign-i
 - Google / GitHub — on when both `*_CLIENT_ID` and `*_CLIENT_SECRET` are set; the OAuth callback URL is
   `<BETTER_AUTH_URL>/api/auth/callback/google` (or `/github`), `BETTER_AUTH_URL` defaults to `http://localhost:8080`.
 
-With `NODE_ENV=production` the API warns at startup while magic links still go to the log.
+Local runs use `NODE_ENV=development`. Any other value, unset included, counts as production: Better Auth rate limiting
+is on and the API warns at startup while magic links still go to the log. Origin and CSRF checks are on everywhere.
 The Better Auth integration tests (`packages/api/test/integration`) run on Postgres from `infra:up`
 and are not part of `test:unit`.

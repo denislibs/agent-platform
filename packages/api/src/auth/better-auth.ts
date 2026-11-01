@@ -1,11 +1,12 @@
 import { asFunction, type AwilixContainer } from 'awilix';
-import { betterAuth } from 'better-auth';
+import { betterAuth, type Logger as BetterAuthLoggerOptions } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { isAPIError } from 'better-auth/api';
 import { magicLink } from 'better-auth/plugins';
-import type { MailMessage, Mailer } from '@agent/core';
+import type { Logger, MailMessage, Mailer } from '@agent/core';
 import { account, session, user, verification, type Db } from '@agent/db';
 import type { Config } from '@agent/shared';
+import { isLocalRuntime } from '../runtime-env';
 import type { AuthGateway, SessionUser } from './gateway';
 
 export const MAGIC_LINK_TTL_SEC = 15 * 60;
@@ -25,19 +26,66 @@ export function magicLinkMail(to: string, url: string): MailMessage {
   return {
     to,
     subject: 'Your sign-in link',
-    text: `Open this link to sign in:\n\n${url}\n\nIt expires in 15 minutes. If you did not ask for it, ignore this email.`,
+    text: `Open this link to sign in:\n\n${url}\n\nIt expires in ${MAGIC_LINK_TTL_SEC / 60} minutes. If you did not ask for it, ignore this email.`,
+  };
+}
+
+/** Хвост сообщения DrizzleQueryError (`params: …`) — значения запроса: токены сессий, ссылки magic link. */
+const PARAMS_TAIL = /\bparams:[\s\S]*$/i;
+const scrub = (text: string) => text.replace(PARAMS_TAIL, 'params: <redacted>');
+
+/** Аргумент лога Better Auth → безопасное поле: у ошибок только имя и текст причины (ошибка Postgres). */
+function safeLogArg(arg: unknown, depth = 0): unknown {
+  if (arg instanceof Error) {
+    const cause = arg.cause instanceof Error ? scrub(arg.cause.message) : undefined;
+    return cause === undefined ? { name: arg.name } : { name: arg.name, cause };
+  }
+  if (typeof arg === 'string') return scrub(arg);
+  if (arg === null || typeof arg === 'number' || typeof arg === 'boolean') return arg;
+  if (typeof arg === 'object' && depth < 2) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(arg)) out[k] = safeLogArg(v, depth + 1);
+    return out;
+  }
+  return typeof arg === 'object' ? '[object]' : String(typeof arg);
+}
+
+/**
+ * Журнал Better Auth → порт Logger. Своим логгером Better Auth печатает ошибки Drizzle целиком, а их текст
+ * содержит параметры запроса (`where "session"."token" = $1 params: <токен>`). Поэтому: уровень warn и выше,
+ * у ошибок — только имя и причина, хвост `params:` вырезается из любых строк.
+ */
+export function betterAuthLogger(logger: Logger): BetterAuthLoggerOptions {
+  return {
+    level: 'warn',
+    disableColors: true,
+    log: (level, message, ...args) => {
+      const fields = args.length > 0 ? { args: args.map(a => safeLogArg(a)) } : undefined;
+      const text = `better-auth: ${scrub(String(message))}`;
+      if (level === 'error') logger.error(text, fields);
+      else if (level === 'warn') logger.warn(text, fields);
+    },
   };
 }
 
 /**
- * Better Auth на таблицах из @agent/db (спецификация 9). baseURL статический — адрес nginx; заголовкам прокси
- * доверяем: API наружу не публикуется. IP клиента — из X-Real-IP, который ставит nginx.
+ * Better Auth на таблицах из @agent/db (спецификация 9). baseURL статический — адрес nginx, поэтому заголовки
+ * прокси (x-forwarded-host/proto) не нужны и не включаются. IP клиента — из X-Real-IP, который ставит nginx.
  * Cookie сессии — умолчания Better Auth 1.7.15: HttpOnly, SameSite=Lax, Path=/; Secure и префикс __Secure-,
  * когда BETTER_AUTH_URL — https (проверяет интеграционный тест).
+ * Защиты включены всегда, а не по NODE_ENV=production, как в Better Auth по умолчанию: проверки Origin и CSRF —
+ * во всех окружениях (иначе под NODE_ENV=test их бы не было), rate limiting — везде, кроме test и development.
  */
-export function createBetterAuth(deps: { db: Db; config: Config; mailer: Mailer }) {
+export function createBetterAuth(deps: {
+  db: Db;
+  config: Config;
+  mailer: Mailer;
+  logger: Logger;
+  nodeEnv?: string | undefined;
+}) {
   const { auth } = deps.config;
   if (!auth.secret) throw new Error('BETTER_AUTH_SECRET is not set: generate one with `openssl rand -base64 32`');
+  const nodeEnv = 'nodeEnv' in deps ? deps.nodeEnv : process.env.NODE_ENV;
   return betterAuth({
     baseURL: auth.baseUrl,
     basePath: '/api/auth',
@@ -47,10 +95,18 @@ export function createBetterAuth(deps: { db: Db; config: Config; mailer: Mailer 
     plugins: [
       magicLink({
         expiresIn: MAGIC_LINK_TTL_SEC,
+        // В verification лежит хэш: утечка чтения базы не даёт войти по ещё живой ссылке.
+        storeToken: 'hashed',
         sendMagicLink: ({ email, url }) => deps.mailer.send(magicLinkMail(email, url)),
       }),
     ],
-    advanced: { trustedProxyHeaders: true, ipAddress: { ipAddressHeaders: ['x-real-ip'] } },
+    rateLimit: { enabled: !isLocalRuntime(nodeEnv) },
+    advanced: {
+      ipAddress: { ipAddressHeaders: ['x-real-ip'] },
+      disableOriginCheck: false,
+      disableCSRFCheck: false,
+    },
+    logger: betterAuthLogger(deps.logger),
     telemetry: { enabled: false },
   });
 }
@@ -83,13 +139,14 @@ export class BetterAuthGateway implements AuthGateway {
   }
 }
 
-/** Регистрирует auth (BetterAuthGateway) в контейнере с database, config и mailer: main.ts, интеграционные тесты. */
-export function registerAuth<C extends { database: { db: Db }; config: Config; mailer: Mailer }>(
+/** Регистрирует auth (BetterAuthGateway) в контейнере с database, config, mailer и logger: main.ts, интеграционные тесты. */
+export function registerAuth<C extends { database: { db: Db }; config: Config; mailer: Mailer; logger: Logger }>(
   container: AwilixContainer<C>,
 ): AwilixContainer<C & { auth: BetterAuthGateway }> {
   return container.register({
     auth: asFunction(
-      ({ database, config, mailer }: C) => new BetterAuthGateway(createBetterAuth({ db: database.db, config, mailer })),
+      ({ database, config, mailer, logger }: C) =>
+        new BetterAuthGateway(createBetterAuth({ db: database.db, config, mailer, logger })),
     ).singleton(),
   });
 }
