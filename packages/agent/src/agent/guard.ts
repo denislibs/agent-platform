@@ -9,7 +9,7 @@ import {
   type TaskRepository,
   type UnitOfWork,
 } from '@agent/core';
-import type { StopReason } from './outcome';
+import type { StageOutcome, StopReason } from './outcome';
 import { PROMPTS } from './prompts';
 
 export type GuardVerdict =
@@ -64,6 +64,12 @@ export class TaskGuard {
       { partial: true, stopReason: reason },
       reason,
     );
+  }
+
+  /** Лимит исчерпан: stopForLimit → finalize; если задачу тем временем отменили — stop. */
+  async stopForLimitOrStop(task: Task, reason: StopReason): Promise<StageOutcome> {
+    const stopped = await this.unlessStopped(task.id, () => this.stopForLimit(task, reason));
+    return stopped ? { next: 'finalize' } : { next: 'stop' };
   }
 
   /** finalizing из стадии без лимита (план исчерпан, finish): шаг status, currentKind = 'finalize'. */

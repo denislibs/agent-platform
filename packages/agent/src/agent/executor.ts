@@ -2,7 +2,6 @@ import {
   LlmError,
   type ChatMessage,
   type Clock,
-  type Role,
   type Sandbox,
   type SandboxProvider,
   type SearchProvider,
@@ -23,30 +22,10 @@ import type { StageOutcome } from './outcome';
 import { PROMPTS } from './prompts';
 import type { ToolExecutor } from './tool-executor';
 import { toMessages, type Compactor } from './transcript';
+import { isCompaction, isNote, trailingSilent, unappliedControl } from './turns';
 
 const SILENT_LIMIT = 3;
 const CALL_ERROR_LIMIT = 3;
-
-const isNote = (s: Step) => s.payload.type === 'message' && s.payload.kind === 'note';
-/** Шаги сжатия контекста (вызов-конспект и сам конспект): не ход исполнителя, в счётчиках не участвуют. */
-const isCompaction = (s: Step) =>
-  (s.payload.type === 'llm_call' && s.payload.purpose === 'summary') ||
-  (s.payload.type === 'message' && s.payload.kind === 'summary');
-
-/** Вызовы модели без инструментов подряд в конце ленты (заметки и шаги сжатия между ними не считаются). */
-export function trailingSilent(steps: readonly Step[]): number {
-  let n = 0;
-  for (let i = steps.length - 1; i >= 0; i--) {
-    const s = steps[i]!;
-    if (isNote(s) || isCompaction(s)) continue;
-    if (s.payload.type === 'llm_call' && s.payload.toolCalls.length === 0) {
-      n++;
-      continue;
-    }
-    break;
-  }
-  return n;
-}
 
 /** Неверные вызовы (error = call) подряд в конце ленты; вызовы модели, заметки и конспекты между ними не считаются. */
 export function trailingCallErrors(steps: readonly Step[]): number {
@@ -81,22 +60,6 @@ const ExecutorControlSchema = z.discriminatedUnion('kind', [
 ]);
 type ExecutorControl = z.infer<typeof ExecutorControlSchema>;
 
-/**
- * Сигнал роли (по schema), записанный в последнем ходе, но не применённый: job упал между записью
- * tool_result и переходом. Смотрим только хвост из результатов инструментов этой роли (шаги сжатия пропускаем):
- * любой другой шаг после них — вызов модели, ответ пользователя, заметка, новая попытка — значит, ход уже обработан.
- */
-export function unappliedControl<T>(steps: readonly Step[], agent: Role, schema: z.ZodType<T>): T | undefined {
-  for (let i = steps.length - 1; i >= 0; i--) {
-    const s = steps[i]!;
-    if (isCompaction(s)) continue;
-    if (s.payload.type !== 'tool_result' || s.agent !== agent) return undefined;
-    const parsed = schema.safeParse(s.payload.control);
-    if (parsed.success) return parsed.data;
-  }
-  return undefined;
-}
-
 type Step1 = { outcome?: StageOutcome; sandbox: Sandbox };
 
 export class ExecutorStage {
@@ -130,10 +93,7 @@ export class ExecutorStage {
     const { guard, config } = this.deps;
     const first = await guard.check(taskId);
     if (first.kind === 'stop') return { next: 'stop' };
-    if (first.kind === 'limit') {
-      await guard.stopForLimit(first.task, first.reason);
-      return { next: 'finalize' };
-    }
+    if (first.kind === 'limit') return guard.stopForLimitOrStop(first.task, first.reason);
     let task = first.task;
     if (task.status === 'waiting_user') {
       // Пауза другой стадии (планирования или проверки) или ответа ещё нет: этот job устарел или повторён.
@@ -153,10 +113,7 @@ export class ExecutorStage {
     for (let i = 0; i < config.limits.stepsPerJob; i++) {
       const verdict = await guard.check(taskId);
       if (verdict.kind === 'stop') return { next: 'stop' };
-      if (verdict.kind === 'limit') {
-        await guard.stopForLimit(verdict.task, verdict.reason);
-        return { next: 'finalize' };
-      }
+      if (verdict.kind === 'limit') return guard.stopForLimitOrStop(verdict.task, verdict.reason);
       task = verdict.task;
       const r = await this.step(task, sub, sandbox);
       sandbox = r.sandbox;

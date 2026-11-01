@@ -7,22 +7,19 @@ import {
   type FileStore,
   type Sandbox,
   type SandboxProvider,
-  type SearchProvider,
   type Step,
   type StepLog,
   type Subtask,
-  type SubtaskRepository,
   type Task,
-  type TaskRepository,
   type UnitOfWork,
 } from '@agent/core';
 import { SubtaskContractSchema, type Config } from '@agent/shared';
 import { z } from 'zod';
 import { planningTools } from '../tools';
-import { trailingSilent, unappliedControl } from './executor';
+import { trailingSilent, unappliedControl } from './turns';
 import type { ModelGateway } from './gateway';
 import type { TaskGuard } from './guard';
-import type { StageOutcome, StopReason } from './outcome';
+import type { StageOutcome } from './outcome';
 import { PROMPTS } from './prompts';
 import type { ToolExecutor } from './tool-executor';
 import { toMessages, type Compactor } from './transcript';
@@ -50,14 +47,11 @@ type PlanControl = z.infer<typeof PlanControlSchema>;
 const inputName = (f: FileRecord) => f.path.split('/').filter(Boolean).at(-1) ?? f.id;
 
 type PlannerDeps = {
-  tasks: TaskRepository;
-  subtasks: SubtaskRepository;
   steps: StepLog;
   files: FileRepository;
   fileStore: FileStore;
   uow: UnitOfWork;
   sandboxes: SandboxProvider;
-  search: SearchProvider;
   clock: Clock;
   config: Config;
   guard: TaskGuard;
@@ -81,10 +75,19 @@ export class PlannerStage {
   }
 
   private async planLoop(taskId: string): Promise<StageOutcome> {
-    const { guard, config, uow } = this.deps;
+    const { guard, config } = this.deps;
     const first = await guard.check(taskId);
     if (first.kind === 'stop') return { next: 'stop' };
-    if (first.kind === 'limit') return this.stopForLimit(first.task, first.reason);
+    if (first.kind === 'limit') {
+      // Из queued в finalizing перехода нет: сначала старт, иначе задача навсегда осталась бы в queued.
+      let limited = first.task;
+      if (limited.status === 'queued') {
+        const started = await this.start(limited);
+        if (!started) return { next: 'stop' };
+        limited = started;
+      }
+      return guard.stopForLimitOrStop(limited, first.reason);
+    }
     let task = first.task;
     if (task.status === 'waiting_user') {
       // Пауза другой стадии или ответа ещё нет: этот job устарел или повторён (как у исполнителя).
@@ -96,25 +99,9 @@ export class PlannerStage {
       task = resumed.value;
     }
     if (task.status === 'queued') {
-      const queued = task;
-      const started = await guard.unlessStopped(taskId, () =>
-        uow.run(async tx => {
-          const planning = await tx.tasks.transition(
-            queued.id,
-            'planning',
-            { currentKind: 'plan' },
-            { expectedFrom: 'queued' },
-          );
-          await tx.steps.append({
-            taskId: queued.id,
-            agent: 'system',
-            payload: { type: 'status', from: 'queued', to: 'planning' },
-          });
-          return planning;
-        }),
-      );
+      const started = await this.start(task);
       if (!started) return { next: 'stop' };
-      task = started.value;
+      task = started;
     }
     if (task.status !== 'planning') return { next: 'stop' };
 
@@ -126,7 +113,7 @@ export class PlannerStage {
     for (let i = 0; i < config.limits.stepsPerJob; i++) {
       const verdict = await guard.check(taskId);
       if (verdict.kind === 'stop') return { next: 'stop' };
-      if (verdict.kind === 'limit') return this.stopForLimit(verdict.task, verdict.reason);
+      if (verdict.kind === 'limit') return guard.stopForLimitOrStop(verdict.task, verdict.reason);
       task = verdict.task;
       const r = await this.step(task, sandbox);
       sandbox = r.sandbox;
@@ -171,7 +158,7 @@ export class PlannerStage {
       await steps.append({
         taskId: task.id,
         agent: 'system',
-        payload: { type: 'message', role: 'user', text: PROMPTS.useATool, kind: 'note' },
+        payload: { type: 'message', role: 'user', text: PROMPTS.planNudge, kind: 'note' },
       });
       return { sandbox };
     }
@@ -236,10 +223,25 @@ export class PlannerStage {
     return { next: 'stop' };
   }
 
-  /** Лимит исчерпан: finalizing с частичным результатом; если задачу тем временем отменили — stop. */
-  private async stopForLimit(task: Task, reason: StopReason): Promise<StageOutcome> {
-    const stopped = await this.deps.guard.unlessStopped(task.id, () => this.deps.guard.stopForLimit(task, reason));
-    return stopped ? { next: 'finalize' } : { next: 'stop' };
+  /** queued → planning (currentKind = 'plan') и шаг status одной транзакцией; undefined — задачу отменили. */
+  private async start(task: Task): Promise<Task | undefined> {
+    const started = await this.deps.guard.unlessStopped(task.id, () =>
+      this.deps.uow.run(async tx => {
+        const planning = await tx.tasks.transition(
+          task.id,
+          'planning',
+          { currentKind: 'plan' },
+          { expectedFrom: 'queued' },
+        );
+        await tx.steps.append({
+          taskId: task.id,
+          agent: 'system',
+          payload: { type: 'status', from: 'queued', to: 'planning' },
+        });
+        return planning;
+      }),
+    );
+    return started?.value;
   }
 
   private async copyInputs(task: Task, sandbox: Sandbox): Promise<void> {

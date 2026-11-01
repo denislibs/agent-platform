@@ -233,6 +233,15 @@ const cancelledDuring = (c: Cradle, taskId: string, name: string, args: unknown)
   return { toolCalls: [toolCall(name, args)] };
 };
 
+/** stopForLimit, перед которым пользователь успевает отменить задачу. */
+const cancelBeforeLimitStop = (c: Cradle) => {
+  const stopForLimit = c.guard.stopForLimit.bind(c.guard);
+  c.guard.stopForLimit = async (t, reason) => {
+    await c.tasks.transition(t.id, 'cancelled');
+    return stopForLimit(t, reason);
+  };
+};
+
 /** Подзадача в running с последним ходом исполнителя — вызов управляющего инструмента и его результат (сбой до перехода). */
 async function crashedAfterControl(c: Cradle, task: Task, control: Record<string, unknown>) {
   const sub = await subtaskOf(c, task.id);
@@ -354,6 +363,35 @@ describe('ExecutorStage — a task cancelled mid-run', () => {
     };
     expect(await c.executorStage.run(task.id)).toEqual({ next: 'stop' });
     expect((await c.tasks.get(task.id))?.status).toBe('cancelled');
+  });
+
+  test('a cancel racing the limit stop at the start of the job stops', async () => {
+    const c = setupAgent({ TASK_TOKEN_BUDGET: '100' });
+    const task = await planned(c);
+    await c.ledger.record({
+      userId: task.userId,
+      taskId: task.id,
+      model: 'm',
+      tokensIn: 100,
+      tokensOut: 0,
+      millicredits: 1,
+    });
+    cancelBeforeLimitStop(c);
+    expect(await c.executorStage.run(task.id)).toEqual({ next: 'stop' });
+    expect((await c.tasks.get(task.id))?.status).toBe('cancelled');
+    expect(c.llm.calls).toHaveLength(0);
+  });
+
+  test('a cancel racing the limit stop inside the loop stops', async () => {
+    const c = setupAgent({ TASK_TOKEN_BUDGET: '100', STEPS_PER_JOB: '3' });
+    c.sandboxes.handlers = ok;
+    const task = await planned(c);
+    // первый вызов тратит 110 токенов → лимит перед вторым шагом
+    c.llm.push(calls(['shell', { cmd: 'ls' }]));
+    cancelBeforeLimitStop(c);
+    expect(await c.executorStage.run(task.id)).toEqual({ next: 'stop' });
+    expect((await c.tasks.get(task.id))?.status).toBe('cancelled');
+    expect(c.llm.calls).toHaveLength(1);
   });
 });
 

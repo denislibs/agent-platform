@@ -139,6 +139,84 @@ describe('PlannerStage.plan', () => {
     const sandbox = (await c.sandboxes.get(`agent-sbx-${task.id}`))!;
     expect(text(await sandbox.readFile('inputs/notes.txt'))).toBe('hi');
   });
+
+  test('a queued task that hits a limit is started and finalised, not left queued', async () => {
+    const c = setupAgent();
+    const task = await seedTask(c, { millicredits: 5 });
+    // Баланс съела другая задача пользователя: на этой задаче токенов нет, лимит — кредиты.
+    await c.ledger.record({
+      userId: task.userId,
+      taskId: null,
+      model: 'm',
+      tokensIn: 0,
+      tokensOut: 0,
+      millicredits: 5,
+    });
+    expect(await c.plannerStage.plan(task.id)).toEqual({ next: 'finalize' });
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'finalizing', partial: true, stopReason: 'credits' });
+    const statuses = (await c.steps.list(task.id)).flatMap(s =>
+      s.payload.type === 'status' ? [[s.payload.from, s.payload.to]] : [],
+    );
+    expect(statuses).toEqual([
+      ['queued', 'planning'],
+      ['planning', 'finalizing'],
+    ]);
+    expect(c.llm.calls).toHaveLength(0);
+  });
+
+  test('the start writes a queued → planning status step', async () => {
+    const c = setupAgent();
+    const task = await seedTask(c);
+    c.llm.push(calls(['create_plan', { subtasks: [subtask('only')] }]));
+    await c.plannerStage.plan(task.id);
+    const statuses = (await c.steps.list(task.id)).flatMap(s => (s.payload.type === 'status' ? [s.payload] : []));
+    expect(statuses[0]).toMatchObject({ from: 'queued', to: 'planning' });
+  });
+
+  test('status steps are kept out of the model messages', async () => {
+    const c = setupAgent();
+    const task = await seedTask(c);
+    c.llm.push(calls(['ask_user', { question: 'Which CRMs?' }]));
+    await c.plannerStage.plan(task.id);
+    await c.steps.append({
+      taskId: task.id,
+      agent: 'user',
+      payload: { type: 'message', role: 'user', text: 'HubSpot' },
+    });
+    c.llm.push(calls(['create_plan', { subtasks: [subtask('compare')] }]));
+    await c.plannerStage.plan(task.id);
+    // queued → planning, planning → waiting_user, waiting_user → planning: ни один не попадает к модели.
+    expect((await c.steps.list(task.id)).filter(s => s.payload.type === 'status').length).toBeGreaterThanOrEqual(3);
+    const second = c.llm.calls[1]!.messages;
+    expect(second.map(m => m.role)).toEqual(['system', 'user', 'user', 'assistant', 'tool', 'user', 'user']);
+    expect(second.slice(2).map(m => m.content)).toEqual([
+      task.prompt,
+      null,
+      'the question was sent to the user; the task pauses until they answer',
+      'HubSpot',
+      `[system] ${PROMPTS.resumed}`,
+    ]);
+  });
+
+  test('no_plan records when the task finished', async () => {
+    const c = setupAgent({ STEPS_PER_JOB: '5' });
+    const task = await seedTask(c);
+    c.llm.push(say('hmm'), say('hmm'), say('hmm'));
+    await c.plannerStage.plan(task.id);
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'failed', finishedAt: c.clock.now() });
+  });
+
+  test('an answer without a tool gets the planning nudge, not the executor one', async () => {
+    const c = setupAgent({ STEPS_PER_JOB: '2' });
+    const task = await seedTask(c);
+    c.llm.push(say('hmm'), calls(['create_plan', { subtasks: [subtask('only')] }]));
+    expect(await c.plannerStage.plan(task.id)).toEqual({ next: 'execute' });
+    const notes = (await c.steps.list(task.id)).flatMap(s =>
+      s.payload.type === 'message' && s.payload.kind === 'note' ? [s.payload.text] : [],
+    );
+    expect(notes).toEqual([PROMPTS.planNudge]);
+    expect(c.llm.calls[1]!.messages.map(m => m.content)).toContain(`[system] ${PROMPTS.planNudge}`);
+  });
 });
 
 /** Ход модели, во время которого пользователь отменил задачу (in-memory transition меняет статус синхронно). */
