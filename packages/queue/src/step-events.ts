@@ -1,4 +1,4 @@
-import type { StepEvents } from '@agent/core';
+import { errorMessage, type Logger, type StepEvents } from '@agent/core';
 import type { RedisConnection } from './connection';
 
 type Handler = (lastSeq: number) => void;
@@ -30,7 +30,7 @@ export class ValkeyStepEvents implements StepEvents {
   private readonly channels = new Map<string, Channel>();
   private readonly publishTimeoutMs: number;
 
-  constructor(private readonly deps: { redis: RedisConnection; publishTimeoutMs?: number }) {
+  constructor(private readonly deps: { redis: RedisConnection; publishTimeoutMs?: number; logger?: Logger }) {
     this.publishTimeoutMs = deps.publishTimeoutMs ?? DEFAULT_PUBLISH_TIMEOUT_MS;
   }
 
@@ -58,7 +58,14 @@ export class ValkeyStepEvents implements StepEvents {
     }
     const entry: Handler = seq => onNotify(seq);
     channel.handlers.add(entry);
-    await channel.ready;
+    try {
+      await channel.ready;
+    } catch (err) {
+      // Не оставляем в карте канал с отклонённым SUBSCRIBE: иначе все следующие подписки задачи падали бы вечно.
+      channel.handlers.delete(entry);
+      if (channel.handlers.size === 0 && this.channels.get(name) === channel) this.channels.delete(name);
+      throw err;
+    }
     let done = false;
     return async () => {
       if (done) return;
@@ -82,10 +89,19 @@ export class ValkeyStepEvents implements StepEvents {
   private connection(): RedisConnection {
     if (!this.subscriber) {
       const sub = this.deps.redis.duplicate();
+      // Без слушателя ошибка соединения печатается как «Unhandled error event»; ioredis сам переподключается.
+      sub.on('error', err => this.deps.logger?.warn('step events subscriber error', { error: errorMessage(err) }));
       sub.on('message', (channel: string, message: string) => {
         const seq = Number(message);
         if (!Number.isSafeInteger(seq)) return;
-        for (const handler of this.channels.get(channel)?.handlers ?? []) handler(seq);
+        for (const handler of this.channels.get(channel)?.handlers ?? []) {
+          // Сбой одного обработчика не должен ни выйти в emit ioredis, ни лишить уведомления остальных.
+          try {
+            handler(seq);
+          } catch (err) {
+            this.deps.logger?.error('step events handler failed', { channel, seq, error: errorMessage(err) });
+          }
+        }
       });
       this.subscriber = sub;
     }

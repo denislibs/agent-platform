@@ -67,7 +67,7 @@ export function buildContainer(appConfig: Config, overrides: Overrides = {}): Ap
       .disposer(q => q.close()),
     taskLock: asFunction(({ redis }: Cradle) => new TaskLock({ redis })).singleton(),
     tasks: asClass(DrizzleTaskRepository).singleton(),
-    stepEvents: asFunction(({ redis }: Cradle) => new ValkeyStepEvents({ redis }))
+    stepEvents: asFunction(({ redis, logger }: Cradle) => new ValkeyStepEvents({ redis, logger }))
       .singleton()
       .disposer(events => events.close()),
     // Публикация после коммита: воркер и API получают её без изменений своего кода.

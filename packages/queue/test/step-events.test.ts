@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from 'bun:test';
 import IORedis from 'ioredis';
 import { loadConfig } from '@agent/shared';
-import { stepEventsContract } from '@agent/testing';
+import { CapturingLogger, stepEventsContract } from '@agent/testing';
 import { redisConnection, stepChannel, ValkeyStepEvents, type RedisConnection } from '../src';
 
 const url = loadConfig().valkeyUrl;
@@ -81,4 +81,76 @@ test('publish against an unreachable Valkey (offline queue) rejects within the b
   } finally {
     dead.disconnect();
   }
+});
+
+test('a throwing handler does not stop the other handlers of the task and is logged', async () => {
+  const logger = new CapturingLogger();
+  const logged = new ValkeyStepEvents({ redis, logger });
+  const uncaught: unknown[] = [];
+  const onUncaught = (err: unknown) => uncaught.push(err);
+  process.on('uncaughtException', onUncaught);
+  try {
+    const taskId = crypto.randomUUID();
+    const got: number[] = [];
+    const offBad = await logged.subscribe(taskId, () => {
+      throw new Error('boom');
+    });
+    const offGood = await logged.subscribe(taskId, seq => got.push(seq));
+    await logged.publish(taskId, 5);
+    for (let i = 0; i < 100 && got.length === 0; i++) await Bun.sleep(10);
+    expect(got).toEqual([5]);
+    expect(uncaught).toEqual([]);
+    expect(logger.entries.some(e => e.level === 'error' && e.message.includes('handler failed'))).toBe(true);
+    await offBad();
+    await offGood();
+  } finally {
+    process.off('uncaughtException', onUncaught);
+    await logged.close();
+  }
+});
+
+/** Подписочное соединение, чей первый SUBSCRIBE отклоняется. */
+function flakySubscriberRedis(): { redis: RedisConnection; subscribeCalls: string[] } {
+  const subscribeCalls: string[] = [];
+  const sub = {
+    on: () => sub,
+    subscribe: async (name: string) => {
+      subscribeCalls.push(name);
+      if (subscribeCalls.length === 1) throw new Error('subscribe failed');
+      return 1;
+    },
+    unsubscribe: async () => 0,
+    quit: async () => 'OK',
+  };
+  return { redis: { duplicate: () => sub } as unknown as RedisConnection, subscribeCalls };
+}
+
+test('a rejected SUBSCRIBE does not poison later subscriptions of the task', async () => {
+  const { redis: fake, subscribeCalls } = flakySubscriberRedis();
+  const flaky = new ValkeyStepEvents({ redis: fake });
+  const taskId = crypto.randomUUID();
+  await expect(flaky.subscribe(taskId, () => {})).rejects.toThrow('subscribe failed');
+  const off = await flaky.subscribe(taskId, () => {});
+  expect(subscribeCalls).toEqual([stepChannel(taskId), stepChannel(taskId)]);
+  await off();
+  await flaky.close();
+});
+
+test('subscriber connection errors are logged, not left unhandled', async () => {
+  const logger = new CapturingLogger();
+  const listeners: Record<string, (err: Error) => void> = {};
+  const sub = {
+    on: (event: string, fn: (err: Error) => void) => {
+      listeners[event] = fn;
+      return sub;
+    },
+    subscribe: async () => 1,
+    unsubscribe: async () => 0,
+    quit: async () => 'OK',
+  };
+  const logged = new ValkeyStepEvents({ redis: { duplicate: () => sub } as unknown as RedisConnection, logger });
+  await logged.subscribe(crypto.randomUUID(), () => {});
+  listeners.error?.(new Error('ECONNRESET'));
+  expect(logger.entries.some(e => e.level === 'warn' && JSON.stringify(e.fields).includes('ECONNRESET'))).toBe(true);
+  await logged.close();
 });
