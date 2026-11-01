@@ -75,6 +75,8 @@ services:
       postgres: { condition: service_healthy }
       valkey: { condition: service_healthy }
       garage: { condition: service_started }
+    # bun — PID 1: init подбирает осиротевшие дочерние процессы docker CLI.
+    init: true
     # docker.sock всё равно даёт root на хосте (backlog: прокси Docker API), но сам процесс лишних прав не получает.
     cap_drop: ['ALL']
     security_opt: ['no-new-privileges:true']
