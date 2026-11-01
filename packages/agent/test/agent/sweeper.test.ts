@@ -113,6 +113,65 @@ describe('Sweeper', () => {
     expect(c.queue.jobs.some(j => j.kind === 'finalize')).toBe(false);
   });
 
+  test('an answer committed after the task was picked is seen inside the transition: rolled back, no finalize', async () => {
+    const c = setupAgent({ ...env, WAIT_USER_TIMEOUT_MS: '60000' });
+    const answered = await planned(c);
+    const silent = await planned(c);
+    await c.guard.pause(answered, 'execute');
+    await c.guard.pause(silent, 'execute');
+    c.clock.advance(61_000);
+    // Ответ пришёл на границе тайм-аута: задача уже выбрана сборщиком, но переход ещё не начат.
+    const findStale = c.tasks.findStale.bind(c.tasks);
+    let answeredOnce = false;
+    c.tasks.findStale = async query => {
+      const found = await findStale(query);
+      if (!answeredOnce && query.staleForMs === 60_000) {
+        answeredOnce = true;
+        await c.steps.append({
+          taskId: answered.id,
+          agent: 'user',
+          payload: { type: 'message', role: 'user', text: 'EU' },
+        });
+      }
+      return found;
+    };
+    const before = await c.tasks.get(answered.id);
+
+    const r = await c.sweeper.sweep();
+    expect(r).toMatchObject({ timedOut: 1, failed: 0 });
+    // Переход откатился целиком: статус, partial и stopReason как были, из новых шагов — только ответ.
+    expect(await c.tasks.get(answered.id)).toMatchObject({
+      status: 'waiting_user',
+      partial: before!.partial,
+      stopReason: before!.stopReason,
+      lastSeq: before!.lastSeq + 1,
+    });
+    const steps = await c.steps.list(answered.id);
+    expect(steps.some(st => st.payload.type === 'status' && st.payload.to === 'finalizing')).toBe(false);
+    expect(await c.tasks.get(silent.id)).toMatchObject({ status: 'finalizing', stopReason: 'wait_timeout' });
+    expect(c.queue.jobs.map(j => [j.taskId, j.kind])).toEqual([[silent.id, 'finalize']]);
+  });
+
+  test('a timed-out task keeps its status step, partial and stopReason, and the finalize job is keyed after them', async () => {
+    const c = setupAgent({ ...env, WAIT_USER_TIMEOUT_MS: '60000' });
+    const task = await planned(c);
+    await c.guard.pause(task, 'execute');
+    c.clock.advance(61_000);
+    await c.sweeper.sweep();
+    const after = await c.tasks.get(task.id);
+    expect(after).toMatchObject({ status: 'finalizing', partial: true, stopReason: 'wait_timeout' });
+    expect(c.queue.jobs).toEqual([
+      { taskId: task.id, kind: 'finalize', key: jobKey(task.id, 'finalize', after!.lastSeq) },
+    ]);
+    const steps = await c.steps.list(task.id);
+    expect(steps.at(-1)?.payload).toEqual({
+      type: 'status',
+      from: 'waiting_user',
+      to: 'finalizing',
+      reason: 'wait_timeout',
+    });
+  });
+
   test('a task resumed right before the transition stays running; the others are still timed out', async () => {
     const c = setupAgent({ ...env, WAIT_USER_TIMEOUT_MS: '60000' });
     const resumed = await planned(c);
@@ -120,12 +179,13 @@ describe('Sweeper', () => {
     await c.tasks.transition(resumed.id, 'waiting_user', { currentKind: 'execute' });
     await c.tasks.transition(silent.id, 'waiting_user', { currentKind: 'execute' });
     c.clock.advance(61_000);
-    // Job возобновил первую задачу уже после проверки ответа, прямо перед переходом в finalizing.
-    const hasAnswer = c.guard.hasAnswer.bind(c.guard);
-    c.guard.hasAnswer = async id => {
-      const answered = await hasAnswer(id);
-      if (id === resumed.id) await c.tasks.transition(id, 'running', { currentKind: 'execute' });
-      return answered;
+    // Job возобновил первую задачу уже после выборки, прямо перед переходом в finalizing.
+    const findStale = c.tasks.findStale.bind(c.tasks);
+    c.tasks.findStale = async query => {
+      const found = await findStale(query);
+      if (query.statuses.includes('waiting_user') && found.some(t => t.id === resumed.id))
+        await c.tasks.transition(resumed.id, 'running', { currentKind: 'execute' });
+      return found;
     };
     const r = await c.sweeper.sweep();
     expect(r).toMatchObject({ timedOut: 1, failed: 0 });

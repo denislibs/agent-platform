@@ -120,32 +120,36 @@ describe('POST /api/tasks/:id/messages', () => {
     expect(t.c.queue.jobs.map(j => j.key)).toEqual([jobKey(task.id, 'execute', 3), jobKey(task.id, 'execute', 4)]);
   });
 
-  test('a reply that loses the race to the worker resuming the task is 409, and nothing stays recorded or queued', async () => {
-    const t = setupApi();
-    const { user, headers } = await t.signIn();
-    const task = await pausedTask(t, user.id);
-    const run = t.c.uow.run.bind(t.c.uow);
-    // Воркер успел снять паузу между проверкой статуса и записью ответа: после append задача уже running.
-    t.c.uow.run = <T>(fn: (tx: TxRepositories) => Promise<T>): Promise<T> =>
-      run(tx =>
-        fn({
-          ...tx,
-          steps: {
-            ...tx.steps,
-            append: async input => {
-              const step = await tx.steps.append(input);
-              await tx.tasks.transition(task.id, 'running', {}, { expectedFrom: 'waiting_user' });
-              return step;
+  // running — воркер снял паузу; finalizing — сборщик закрыл её по тайм-ауту ожидания (ответ ждал его блокировку).
+  test.each(['running', 'finalizing'] as const)(
+    'a reply that loses the race to a transition to %s is 409, and nothing stays recorded or queued',
+    async to => {
+      const t = setupApi();
+      const { user, headers } = await t.signIn();
+      const task = await pausedTask(t, user.id);
+      const run = t.c.uow.run.bind(t.c.uow);
+      // Статус сменился между проверкой и записью ответа: после append задача уже не waiting_user.
+      t.c.uow.run = <T>(fn: (tx: TxRepositories) => Promise<T>): Promise<T> =>
+        run(tx =>
+          fn({
+            ...tx,
+            steps: {
+              ...tx.steps,
+              append: async input => {
+                const step = await tx.steps.append(input);
+                await tx.tasks.transition(task.id, to, {}, { expectedFrom: 'waiting_user' });
+                return step;
+              },
             },
-          },
-        }),
-      );
-    const res = await t.call('POST', `/api/tasks/${task.id}/messages`, { headers, body: { text: 'EU only' } });
-    expect(res.status).toBe(409);
-    expect(await errorCode(res)).toBe('conflict');
-    expect(t.c.queue.jobs).toEqual([]);
-    expect((await t.c.tasks.get(task.id))?.lastSeq).toBe(2);
-  });
+          }),
+        );
+      const res = await t.call('POST', `/api/tasks/${task.id}/messages`, { headers, body: { text: 'EU only' } });
+      expect(res.status).toBe(409);
+      expect(await errorCode(res)).toBe('conflict');
+      expect(t.c.queue.jobs).toEqual([]);
+      expect((await t.c.tasks.get(task.id))?.lastSeq).toBe(2);
+    },
+  );
 });
 
 describe('POST /api/tasks/:id/cancel', () => {

@@ -8,7 +8,7 @@ import {
   type TaskRepository,
 } from '@agent/core';
 import { isTerminalTask, type Config, type JobKind } from '@agent/shared';
-import type { TaskGuard } from './guard';
+import { answeredAfterLastPause, type TaskGuard } from './guard';
 import { jobKey, kindForStatus } from './jobs';
 
 /** Итог одного прохода: сколько обработано и сколько элементов упало с ошибкой. */
@@ -90,15 +90,19 @@ export class Sweeper {
       staleForMs: config.limits.waitUserTimeoutMs,
     })) {
       try {
-        // Ответ пользователя не меняет статус: он лишь шаг, а паузу снимет job через guard.resume. Такую задачу не трогаем.
-        if (await guard.hasAnswer(task.id)) continue;
-        // Переход атомарен (expectedFrom: waiting_user): если задачу тем временем возобновили или отменили, он не пройдёт.
-        await guard.toFinalizing(
+        // Ответ пользователя не меняет статус: он лишь шаг, а паузу снимет job через guard.resume. Такую задачу
+        // не трогаем. Проверка — в транзакции перехода и после него: переход (expectedFrom: waiting_user) берёт
+        // блокировку строки задачи, которую ждёт запись ответа. Ответ, закоммиченный раньше, виден проверке, и
+        // переход откатывается; ответ после нашего коммита перечитает статус, увидит finalizing и получит 409.
+        // Если задачу тем временем возобновили или отменили, переход не пройдёт (InvalidTransitionError).
+        const finalizing = await guard.toFinalizing(
           task.id,
           'waiting_user',
           { partial: true, stopReason: 'wait_timeout' },
           'wait_timeout',
+          { unless: async tx => answeredAfterLastPause(await tx.steps.list(task.id)) },
         );
+        if (!finalizing) continue;
         // Ключ job — по lastSeq после перехода: в нём уже шаг status.
         const after = await tasks.get(task.id);
         if (!after) continue;
