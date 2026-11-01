@@ -1,8 +1,8 @@
 import {
-  InvalidTransitionError,
   LlmError,
   type ChatMessage,
   type Clock,
+  type Role,
   type Sandbox,
   type SandboxProvider,
   type SearchProvider,
@@ -82,16 +82,16 @@ const ExecutorControlSchema = z.discriminatedUnion('kind', [
 type ExecutorControl = z.infer<typeof ExecutorControlSchema>;
 
 /**
- * Сигнал report/ask_user, записанный в последнем ходе, но не применённый: job упал между записью
- * tool_result и переходом. Смотрим только хвост из результатов инструментов (шаги сжатия пропускаем):
+ * Сигнал роли (по schema), записанный в последнем ходе, но не применённый: job упал между записью
+ * tool_result и переходом. Смотрим только хвост из результатов инструментов этой роли (шаги сжатия пропускаем):
  * любой другой шаг после них — вызов модели, ответ пользователя, заметка, новая попытка — значит, ход уже обработан.
  */
-export function unappliedControl(steps: readonly Step[]): ExecutorControl | undefined {
+export function unappliedControl<T>(steps: readonly Step[], agent: Role, schema: z.ZodType<T>): T | undefined {
   for (let i = steps.length - 1; i >= 0; i--) {
     const s = steps[i]!;
     if (isCompaction(s)) continue;
-    if (s.payload.type !== 'tool_result' || s.agent !== 'executor') return undefined;
-    const parsed = ExecutorControlSchema.safeParse(s.payload.control);
+    if (s.payload.type !== 'tool_result' || s.agent !== agent) return undefined;
+    const parsed = schema.safeParse(s.payload.control);
     if (parsed.success) return parsed.data;
   }
   return undefined;
@@ -141,7 +141,7 @@ export class ExecutorStage {
       if (task.currentKind && task.currentKind !== 'execute') return { next: 'wait_user' };
       if (!(await guard.hasAnswer(taskId))) return { next: 'wait_user' };
       const paused = task;
-      const resumed = await this.unlessStopped(taskId, () => guard.resume(paused));
+      const resumed = await guard.unlessStopped(taskId, () => guard.resume(paused));
       if (!resumed) return { next: 'stop' };
       task = resumed.value;
     }
@@ -172,7 +172,9 @@ export class ExecutorStage {
     if (subs.some(s => s.status === 'reviewing')) return { next: 'review' };
     const pending = subs.find(s => s.status === 'pending');
     if (!pending) {
-      const moved = await this.unlessStopped(task.id, () => this.deps.guard.toFinalizing(task.id, 'running'));
+      const moved = await this.deps.guard.unlessStopped(task.id, () =>
+        this.deps.guard.toFinalizing(task.id, 'running'),
+      );
       return moved ? { next: 'finalize' } : { next: 'stop' };
     }
     return this.deps.uow.run(async tx => {
@@ -234,7 +236,7 @@ export class ExecutorStage {
   private async step(task: Task, sub: Subtask, sandbox: Sandbox): Promise<Step1> {
     const { gateway, compactor, steps, config } = this.deps;
     const history = await this.history(task, sub);
-    const unapplied = unappliedControl(history);
+    const unapplied = unappliedControl(history, 'executor', ExecutorControlSchema);
     if (unapplied) return { outcome: await this.applyControl(task, sub, unapplied), sandbox };
     const forceReport = attemptCalls(history) >= config.limits.maxExecutorSteps;
     const tools: readonly Tool[] = forceReport ? [reportTool] : executorTools;
@@ -311,7 +313,7 @@ export class ExecutorStage {
       const report = { summary: control.summary, files: control.files, issues: control.issues };
       return this.toReview(task, sub, 'reviewing', report);
     }
-    const paused = await this.unlessStopped(task.id, () => this.deps.guard.pause(task, 'execute'));
+    const paused = await this.deps.guard.unlessStopped(task.id, () => this.deps.guard.pause(task, 'execute'));
     return paused ? { next: 'wait_user' } : { next: 'stop' };
   }
 
@@ -330,19 +332,5 @@ export class ExecutorStage {
       return true;
     });
     return moved ? { next: 'review' } : { next: 'stop' };
-  }
-
-  /**
-   * Переход задачи, который мог проиграть гонку с отменой: InvalidTransitionError при задаче,
-   * которую guard.check теперь останавливает, — это stop (undefined); иначе ошибка пробрасывается.
-   */
-  private async unlessStopped<T>(taskId: string, act: () => Promise<T>): Promise<{ value: T } | undefined> {
-    try {
-      return { value: await act() };
-    } catch (err) {
-      if (err instanceof InvalidTransitionError && (await this.deps.guard.check(taskId)).kind === 'stop')
-        return undefined;
-      throw err;
-    }
   }
 }

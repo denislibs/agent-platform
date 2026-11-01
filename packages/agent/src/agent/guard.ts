@@ -1,5 +1,14 @@
 import { isTerminalTask, type Config, type JobKind, type TaskStatus } from '@agent/shared';
-import type { Clock, CreditLedger, StepLog, Task, TaskPatch, TaskRepository, UnitOfWork } from '@agent/core';
+import {
+  InvalidTransitionError,
+  type Clock,
+  type CreditLedger,
+  type StepLog,
+  type Task,
+  type TaskPatch,
+  type TaskRepository,
+  type UnitOfWork,
+} from '@agent/core';
 import type { StopReason } from './outcome';
 import { PROMPTS } from './prompts';
 
@@ -32,6 +41,19 @@ export class TaskGuard {
     if (task.activeMs >= taskWallTimeMs) return { kind: 'limit', task, reason: 'wall_time' };
     if ((await this.deps.ledger.balance(task.userId)) <= 0) return { kind: 'limit', task, reason: 'credits' };
     return { kind: 'ok', task };
+  }
+
+  /**
+   * Переход задачи, который мог проиграть гонку с отменой: InvalidTransitionError при задаче,
+   * которую check теперь останавливает, — это stop (undefined); иначе ошибка пробрасывается.
+   */
+  async unlessStopped<T>(taskId: string, act: () => Promise<T>): Promise<{ value: T } | undefined> {
+    try {
+      return { value: await act() };
+    } catch (err) {
+      if (err instanceof InvalidTransitionError && (await this.check(taskId)).kind === 'stop') return undefined;
+      throw err;
+    }
   }
 
   /** planning|running|waiting_user → finalizing, partial = true, stopReason; шаг status. */

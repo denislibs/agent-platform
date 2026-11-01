@@ -29,5 +29,6 @@ export const PROMPTS = {
   ].join('\n'),
   useATool: 'Use a tool to make progress. When the subtask is done, call report.',
   stepLimit: 'You have reached the step limit for this subtask. Call report now with what you have.',
+  decide: 'Call one decision tool: accept, revise, replan or finish.',
   resumed: 'The user answered (see the previous message). Files in /workspace are kept; the browser session was reset.',
 } as const;
