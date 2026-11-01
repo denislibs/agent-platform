@@ -160,10 +160,12 @@ export class Compactor {
     const text = result.content?.trim();
     // Пустой конспект заменил бы историю ничем: оставляем как есть (вызов уже оплачен и записан).
     if (!text) return history;
+    // Конспект пишется от роли, которая сжимала: проверка планировщика идёт с тем же subtaskId, что и
+    // исполнитель, и только по agent её конспект отделяется от истории исполнителя.
     const summaryStep = await this.deps.steps.append({
       taskId: task.id,
       subtaskId,
-      agent: 'system',
+      agent: role,
       payload: {
         type: 'message',
         role: 'assistant',

@@ -1,4 +1,5 @@
 import {
+  InvalidTransitionError,
   LlmError,
   type ChatMessage,
   type Clock,
@@ -14,6 +15,7 @@ import {
   type UnitOfWork,
 } from '@agent/core';
 import type { Config, SubtaskReport } from '@agent/shared';
+import { z } from 'zod';
 import { executorTools, fileListTool, reportTool, type Tool } from '../tools';
 import type { ModelGateway } from './gateway';
 import type { TaskGuard } from './guard';
@@ -67,6 +69,34 @@ export function attemptCalls(steps: readonly Step[]): number {
   return steps.slice(start + 1).filter(s => s.payload.type === 'llm_call' && !isCompaction(s)).length;
 }
 
+/** Сигналы, которые стадия применяет сама; другие (create_plan, accept…) исполнителю не выдаются. */
+const ExecutorControlSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('report'),
+    summary: z.string(),
+    files: z.array(z.string()).default([]),
+    issues: z.array(z.string()).default([]),
+  }),
+  z.object({ kind: z.literal('ask_user'), question: z.string() }),
+]);
+type ExecutorControl = z.infer<typeof ExecutorControlSchema>;
+
+/**
+ * Сигнал report/ask_user, записанный в последнем ходе, но не применённый: job упал между записью
+ * tool_result и переходом. Смотрим только хвост из результатов инструментов (шаги сжатия пропускаем):
+ * любой другой шаг после них — вызов модели, ответ пользователя, заметка, новая попытка — значит, ход уже обработан.
+ */
+export function unappliedControl(steps: readonly Step[]): ExecutorControl | undefined {
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const s = steps[i]!;
+    if (isCompaction(s)) continue;
+    if (s.payload.type !== 'tool_result' || s.agent !== 'executor') return undefined;
+    const parsed = ExecutorControlSchema.safeParse(s.payload.control);
+    if (parsed.success) return parsed.data;
+  }
+  return undefined;
+}
+
 type Step1 = { outcome?: StageOutcome; sandbox: Sandbox };
 
 export class ExecutorStage {
@@ -104,7 +134,15 @@ export class ExecutorStage {
       await guard.stopForLimit(first.task, first.reason);
       return { next: 'finalize' };
     }
-    let task = first.task.status === 'waiting_user' ? await guard.resume(first.task) : first.task;
+    let task = first.task;
+    if (task.status === 'waiting_user') {
+      // Пауза другой стадии (планирования или проверки): её снимает та стадия, а этот job устарел.
+      if (task.currentKind && task.currentKind !== 'execute') return { next: task.currentKind };
+      const paused = task;
+      const resumed = await this.unlessStopped(taskId, () => guard.resume(paused));
+      if (!resumed) return { next: 'stop' };
+      task = resumed.value;
+    }
     if (task.status !== 'running') return { next: 'stop' };
     const picked = await this.pickSubtask(task);
     if ('next' in picked) return picked;
@@ -132,8 +170,8 @@ export class ExecutorStage {
     if (subs.some(s => s.status === 'reviewing')) return { next: 'review' };
     const pending = subs.find(s => s.status === 'pending');
     if (!pending) {
-      await this.deps.guard.toFinalizing(task.id, 'running');
-      return { next: 'finalize' };
+      const moved = await this.unlessStopped(task.id, () => this.deps.guard.toFinalizing(task.id, 'running'));
+      return moved ? { next: 'finalize' } : { next: 'stop' };
     }
     return this.deps.uow.run(async tx => {
       const started = await tx.subtasks.transition(pending.id, 'running', {}, { expectedFrom: 'pending' });
@@ -194,6 +232,8 @@ export class ExecutorStage {
   private async step(task: Task, sub: Subtask, sandbox: Sandbox): Promise<Step1> {
     const { gateway, compactor, steps, config } = this.deps;
     const history = await this.history(task, sub);
+    const unapplied = unappliedControl(history);
+    if (unapplied) return { outcome: await this.applyControl(task, sub, unapplied), sandbox };
     const forceReport = attemptCalls(history) >= config.limits.maxExecutorSteps;
     const tools: readonly Tool[] = forceReport ? [reportTool] : executorTools;
     const tail: ChatMessage[] = forceReport ? [{ role: 'user', content: PROMPTS.stepLimit }] : [];
@@ -245,13 +285,8 @@ export class ExecutorStage {
       sandbox,
     });
     const control = exec.control;
-    if (control?.kind === 'report') {
-      const report = { summary: control.summary, files: control.files, issues: control.issues };
-      return { outcome: await this.toReview(task, sub, 'reviewing', report), sandbox: exec.sandbox };
-    }
-    if (control?.kind === 'ask_user') {
-      await this.deps.guard.pause(task, 'execute');
-      return { outcome: { next: 'wait_user' }, sandbox: exec.sandbox };
+    if (control?.kind === 'report' || control?.kind === 'ask_user') {
+      return { outcome: await this.applyControl(task, sub, control), sandbox: exec.sandbox };
     }
     const subSteps = (await steps.list(task.id, { subtaskId: sub.id })).filter(s => s.agent !== 'planner');
     if (trailingCallErrors(subSteps) >= CALL_ERROR_LIMIT) {
@@ -259,22 +294,53 @@ export class ExecutorStage {
         .filter(s => s.payload.type === 'tool_result' && s.payload.error === 'call')
         .slice(-CALL_ERROR_LIMIT)
         .map(s => (s.payload.type === 'tool_result' ? s.payload.output : ''));
-      const report = { summary: 'The executor made 3 invalid tool calls in a row.', files: [], issues: errors };
+      const report = {
+        summary: `The executor made ${CALL_ERROR_LIMIT} invalid tool calls in a row.`,
+        files: [],
+        issues: errors,
+      };
       return { outcome: await this.toReview(task, sub, 'failed', report), sandbox: exec.sandbox };
     }
     return { sandbox: exec.sandbox };
   }
 
+  private async applyControl(task: Task, sub: Subtask, control: ExecutorControl): Promise<StageOutcome> {
+    if (control.kind === 'report') {
+      const report = { summary: control.summary, files: control.files, issues: control.issues };
+      return this.toReview(task, sub, 'reviewing', report);
+    }
+    const paused = await this.unlessStopped(task.id, () => this.deps.guard.pause(task, 'execute'));
+    return paused ? { next: 'wait_user' } : { next: 'stop' };
+  }
+
+  /** Подзадача уходит на проверку (или падает); если задачу тем временем отменили, ничего не меняется. */
   private async toReview(
     task: Task,
     sub: Subtask,
     to: 'reviewing' | 'failed',
     report: SubtaskReport,
   ): Promise<StageOutcome> {
-    await this.deps.uow.run(async tx => {
+    const moved = await this.deps.uow.run(async tx => {
+      const current = await tx.tasks.get(task.id);
+      if (current?.status !== 'running') return false;
       await tx.subtasks.transition(sub.id, to, { report }, { expectedFrom: 'running' });
       await tx.tasks.update(task.id, { currentKind: 'review' });
+      return true;
     });
-    return { next: 'review' };
+    return moved ? { next: 'review' } : { next: 'stop' };
+  }
+
+  /**
+   * Переход задачи, который мог проиграть гонку с отменой: InvalidTransitionError при задаче,
+   * которую guard.check теперь останавливает, — это stop (undefined); иначе ошибка пробрасывается.
+   */
+  private async unlessStopped<T>(taskId: string, act: () => Promise<T>): Promise<{ value: T } | undefined> {
+    try {
+      return { value: await act() };
+    } catch (err) {
+      if (err instanceof InvalidTransitionError && (await this.deps.guard.check(taskId)).kind === 'stop')
+        return undefined;
+      throw err;
+    }
   }
 }

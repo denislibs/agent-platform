@@ -229,6 +229,25 @@ describe('Compactor', () => {
     expectPaired(toMessages(out));
   });
 
+  test('the summary step is written under the role that compacted, and still renders as the summary', async () => {
+    const c = setupAgent({ PLANNER_CONTEXT_TOKENS: '1000000', EXECUTOR_CONTEXT_TOKENS: '1000000' });
+    const task = await seedTask(c);
+    for (const role of ['planner', 'executor'] as const) {
+      c.llm.push(say(`S-${role}`));
+      const out = await c.compactor.compact({
+        task,
+        subtaskId: null,
+        role,
+        head: [],
+        history: history(10),
+        force: true,
+      });
+      // Конспект проверки планировщика с тем же subtaskId не должен попадать в историю исполнителя (фильтр по agent).
+      expect(out[0]).toMatchObject({ agent: role, payload: { kind: 'summary', text: `S-${role}` } });
+      expect(toMessages(out)[0]).toEqual({ role: 'user', content: `[Summary of earlier steps]\nS-${role}` });
+    }
+  });
+
   test('force compacts even under the threshold; too short a history is left alone', async () => {
     const c = setupAgent({ EXECUTOR_CONTEXT_TOKENS: '1000000' });
     const task = await seedTask(c);

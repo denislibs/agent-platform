@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { LlmError } from '@agent/core';
+import { LlmError, type ChatResult, type Task } from '@agent/core';
+import { toolCall } from '@agent/testing';
 import { PROMPTS } from '../../src';
-import { calls, planned, say, setupAgent } from './fixtures';
+import { calls, planned, say, seedTask, setupAgent } from './fixtures';
+
+type Cradle = ReturnType<typeof setupAgent>;
 
 const ok = { exec: (cmd: string) => ({ stdout: `ran ${cmd}`, stderr: '', exitCode: 0, timedOut: false }) };
 const subtaskOf = async (c: ReturnType<typeof setupAgent>, taskId: string) => (await c.subtasks.list(taskId))[0]!;
@@ -221,5 +224,195 @@ describe('ExecutorStage', () => {
     });
     await c.executorStage.run(task.id);
     expect((await c.tasks.get(task.id))?.activeMs).toBe(700);
+  });
+});
+
+/** Ход модели, во время которого пользователь отменил задачу (in-memory transition меняет статус синхронно). */
+const cancelledDuring = (c: Cradle, taskId: string, name: string, args: unknown) => (): Partial<ChatResult> => {
+  void c.tasks.transition(taskId, 'cancelled');
+  return { toolCalls: [toolCall(name, args)] };
+};
+
+/** Подзадача в running с последним ходом исполнителя — вызов управляющего инструмента и его результат (сбой до перехода). */
+async function crashedAfterControl(c: Cradle, task: Task, control: Record<string, unknown>) {
+  const sub = await subtaskOf(c, task.id);
+  await c.subtasks.transition(sub.id, 'running');
+  const base = { taskId: task.id, subtaskId: sub.id, agent: 'executor' as const };
+  await c.steps.append({
+    ...base,
+    agent: 'system',
+    payload: { type: 'message', role: 'user', text: 'Start this subtask.', kind: 'attempt_start' },
+  });
+  const { kind, ...args } = control;
+  await c.steps.append({
+    ...base,
+    payload: {
+      type: 'llm_call',
+      model: 'm',
+      content: null,
+      toolCalls: [{ id: 'k', name: String(kind), args }],
+      finishReason: 'tool_calls',
+    },
+  });
+  await c.steps.append({
+    ...base,
+    payload: { type: 'tool_result', toolCallId: 'k', name: String(kind), ok: true, output: 'ok', control },
+  });
+  return sub;
+}
+
+describe('ExecutorStage — history', () => {
+  test('task messages count only after the subtask started; planner steps on the subtask are left out', async () => {
+    const c = setupAgent({ STEPS_PER_JOB: '1' });
+    c.sandboxes.handlers = ok;
+    const task = await planned(c);
+    await c.steps.append({ taskId: task.id, agent: 'user', payload: { type: 'message', role: 'user', text: 'EARLY' } });
+    c.llm.push(calls(['shell', { cmd: 'ls' }]));
+    expect(await c.executorStage.run(task.id)).toEqual({ next: 'execute' });
+    const sub = await subtaskOf(c, task.id);
+    const own = await c.steps.list(task.id, { subtaskId: sub.id });
+    await c.steps.append({ taskId: task.id, agent: 'user', payload: { type: 'message', role: 'user', text: 'LATE' } });
+    await c.steps.append({
+      taskId: task.id,
+      agent: 'system',
+      payload: { type: 'message', role: 'user', text: PROMPTS.resumed, kind: 'note' },
+    });
+    // Проверка планировщика (план 3c, Task 8) пишет свои шаги и свой конспект с тем же subtaskId.
+    await c.steps.append({
+      taskId: task.id,
+      subtaskId: sub.id,
+      agent: 'planner',
+      payload: { type: 'llm_call', model: 'm', content: 'PLANNER THOUGHT', toolCalls: [], finishReason: 'stop' },
+    });
+    await c.steps.append({
+      taskId: task.id,
+      subtaskId: sub.id,
+      agent: 'planner',
+      payload: {
+        type: 'message',
+        role: 'assistant',
+        text: 'PLANNER SUMMARY',
+        kind: 'summary',
+        coversUpToSeq: own.at(-1)!.seq,
+      },
+    });
+    c.llm.push(calls(['report', { summary: 'done' }]));
+    expect(await c.executorStage.run(task.id)).toEqual({ next: 'review' });
+    const contents = c.llm.calls[1]!.messages.map(m => m.content ?? '');
+    expect(contents.join('\n')).not.toContain('EARLY');
+    expect(contents.join('\n')).not.toContain('PLANNER');
+    expect(contents).toContain('Start this subtask.');
+    expect(contents.some(m => m.includes('ran ls'))).toBe(true);
+    expect(contents).toContain('LATE');
+    expect(contents).toContain(`[system] ${PROMPTS.resumed}`);
+  });
+});
+
+describe('ExecutorStage — a task cancelled mid-run', () => {
+  test('ask_user on a task cancelled during the model call stops without pausing', async () => {
+    const c = setupAgent();
+    const task = await planned(c);
+    c.llm.push(cancelledDuring(c, task.id, 'ask_user', { question: 'Which region?' }));
+    expect(await c.executorStage.run(task.id)).toEqual({ next: 'stop' });
+    expect((await c.tasks.get(task.id))?.status).toBe('cancelled');
+  });
+
+  test('report on a task cancelled during the model call stops and leaves the subtask alone', async () => {
+    const c = setupAgent();
+    const task = await planned(c);
+    c.llm.push(cancelledDuring(c, task.id, 'report', { summary: 'built' }));
+    expect(await c.executorStage.run(task.id)).toEqual({ next: 'stop' });
+    expect(await subtaskOf(c, task.id)).toMatchObject({ status: 'running', report: null });
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'cancelled', currentKind: 'execute' });
+  });
+
+  test('a cancel racing the resume stops', async () => {
+    const c = setupAgent();
+    const task = await planned(c);
+    await c.guard.pause(task, 'execute');
+    const resume = c.guard.resume.bind(c.guard);
+    c.guard.resume = async t => {
+      await c.tasks.transition(t.id, 'cancelled');
+      return resume(t);
+    };
+    expect(await c.executorStage.run(task.id)).toEqual({ next: 'stop' });
+    expect(c.llm.calls).toHaveLength(0);
+  });
+
+  test('a cancel racing the move to finalizing stops', async () => {
+    const c = setupAgent();
+    const task = await planned(c);
+    const sub = await subtaskOf(c, task.id);
+    await c.subtasks.transition(sub.id, 'running');
+    await c.subtasks.transition(sub.id, 'reviewing', { report: { summary: 's', files: [], issues: [] } });
+    await c.subtasks.transition(sub.id, 'accepted');
+    const toFinalizing = c.guard.toFinalizing.bind(c.guard);
+    c.guard.toFinalizing = async (id, ...rest) => {
+      await c.tasks.transition(id, 'cancelled');
+      return toFinalizing(id, ...rest);
+    };
+    expect(await c.executorStage.run(task.id)).toEqual({ next: 'stop' });
+    expect((await c.tasks.get(task.id))?.status).toBe('cancelled');
+  });
+});
+
+describe('ExecutorStage — recovery and stale jobs', () => {
+  test('a report recorded before a crash is applied without calling the model', async () => {
+    const c = setupAgent();
+    const task = await planned(c);
+    await crashedAfterControl(c, task, { kind: 'report', summary: 'built', files: ['outputs/a.md'], issues: [] });
+    expect(await c.executorStage.run(task.id)).toEqual({ next: 'review' });
+    expect(c.llm.calls).toHaveLength(0);
+    expect(await subtaskOf(c, task.id)).toMatchObject({
+      status: 'reviewing',
+      report: { summary: 'built', files: ['outputs/a.md'], issues: [] },
+    });
+    expect((await c.tasks.get(task.id))?.currentKind).toBe('review');
+  });
+
+  test('an ask_user recorded before a crash pauses without calling the model', async () => {
+    const c = setupAgent();
+    const task = await planned(c);
+    await crashedAfterControl(c, task, { kind: 'ask_user', question: 'Which region?' });
+    expect(await c.executorStage.run(task.id)).toEqual({ next: 'wait_user' });
+    expect(c.llm.calls).toHaveLength(0);
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'waiting_user', currentKind: 'execute' });
+  });
+
+  test('a control followed by a new attempt (revise) is not replayed', async () => {
+    const c = setupAgent();
+    const task = await planned(c);
+    const sub = await crashedAfterControl(c, task, { kind: 'report', summary: 'first', files: [], issues: [] });
+    await c.subtasks.transition(sub.id, 'reviewing', { report: { summary: 'first', files: [], issues: [] } });
+    await c.subtasks.transition(sub.id, 'running');
+    await c.steps.append({
+      taskId: task.id,
+      subtaskId: sub.id,
+      agent: 'system',
+      payload: { type: 'message', role: 'user', text: 'Revise: add totals.', kind: 'attempt_start' },
+    });
+    c.llm.push(calls(['report', { summary: 'second' }]));
+    expect(await c.executorStage.run(task.id)).toEqual({ next: 'review' });
+    expect(c.llm.calls).toHaveLength(1);
+    expect((await subtaskOf(c, task.id)).report?.summary).toBe('second');
+  });
+
+  test('a stale execute job does not consume a planner pause', async () => {
+    const c = setupAgent();
+    const task = await seedTask(c);
+    await c.tasks.transition(task.id, 'planning', { currentKind: 'plan' });
+    await c.tasks.transition(task.id, 'waiting_user', { currentKind: 'plan' });
+    expect(await c.executorStage.run(task.id)).toEqual({ next: 'plan' });
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'waiting_user', currentKind: 'plan' });
+    expect(c.llm.calls).toHaveLength(0);
+  });
+
+  test('a stale execute job does not consume a review pause either', async () => {
+    const c = setupAgent();
+    const task = await planned(c);
+    await c.tasks.transition(task.id, 'waiting_user', { currentKind: 'review' });
+    expect(await c.executorStage.run(task.id)).toEqual({ next: 'review' });
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'waiting_user', currentKind: 'review' });
+    expect(c.llm.calls).toHaveLength(0);
   });
 });
