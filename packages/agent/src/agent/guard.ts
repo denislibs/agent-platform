@@ -18,7 +18,7 @@ export type GuardVerdict =
   | { kind: 'stop' }
   /** Задача уже в finalizing (устаревший или повторный job): лимиты не проверяются, дальше finalize. */
   | { kind: 'finalizing' }
-  | { kind: 'limit'; task: Task; reason: Exclude<StopReason, 'no_plan'> };
+  | { kind: 'limit'; task: Task; reason: 'token_budget' | 'wall_time' | 'credits' };
 
 /** Бюджет токенов считается исчерпанным при 95 %: 5 % оставлены на попытку finish (спецификация 4.4). */
 const BUDGET_SHARE = 0.95;

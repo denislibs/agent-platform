@@ -30,8 +30,23 @@ describe('loadConfig', () => {
       taskWallTimeMs: 7_200_000,
       maxActiveTasksPerUser: 2,
       stepsPerJob: 5,
-      workerConcurrency: 4,
       waitUserTimeoutMs: 86_400_000,
+    });
+  });
+
+  test('worker and db settings have defaults', () => {
+    const c = loadConfig(base);
+    expect(c.worker).toEqual({
+      queuePrefix: 'bull',
+      jobAttempts: 3,
+      concurrency: 4,
+      sweepEveryMs: 60_000,
+      staleTaskMs: 120_000,
+    });
+    expect(c.db).toEqual({ lockTimeoutMs: 10_000 });
+    expect(loadConfig({ ...base, QUEUE_PREFIX: 'test-1', DB_LOCK_TIMEOUT_MS: '2500' })).toMatchObject({
+      worker: { queuePrefix: 'test-1' },
+      db: { lockTimeoutMs: 2500 },
     });
   });
 
