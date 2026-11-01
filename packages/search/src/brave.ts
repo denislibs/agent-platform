@@ -7,28 +7,24 @@ export interface BraveConfig {
   timeoutMs?: number;
 }
 
+const BraveResultSchema = z.object({ title: z.string(), url: z.string(), description: z.string().nullish() });
 const BraveResponseSchema = z.object({
-  web: z
-    .object({
-      results: z.array(z.object({ title: z.string(), url: z.string(), description: z.string().optional() })),
-    })
-    .optional(),
+  web: z.object({ results: z.array(z.unknown()) }).optional(),
 });
 
-const ENTITIES: Record<string, string> = {
-  '&lt;': '<',
-  '&gt;': '>',
-  '&quot;': '"',
-  '&#39;': "'",
-  '&nbsp;': ' ',
-  '&amp;': '&',
-};
+const NAMED: Record<string, string> = { lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', amp: '&' };
 
-/** Убирает теги, декодирует частые сущности ровно один раз, схлопывает пробелы. */
+/** Убирает теги, декодирует именованные и числовые сущности один раз, снова убирает теги, схлопывает пробелы. */
 export function stripHtml(s: string): string {
-  return s
+  const decoded = s.replace(/<[^>]*>/g, '').replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => {
+    if (e[0] === '#') {
+      const code = e[1]?.toLowerCase() === 'x' ? Number.parseInt(e.slice(2), 16) : Number.parseInt(e.slice(1), 10);
+      return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+    }
+    return NAMED[e.toLowerCase()] ?? m;
+  });
+  return decoded
     .replace(/<[^>]*>/g, '')
-    .replace(/&(?:lt|gt|quot|#39|nbsp|amp);/g, m => ENTITIES[m] ?? m)
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -39,8 +35,10 @@ export class BraveSearchProvider implements SearchProvider {
   async search(query: string, opts: SearchOptions = {}): Promise<SearchResult[]> {
     const q = query.trim();
     if (!q) throw new SearchError('invalid_query', 'query is empty');
-    const count = Math.min(Math.max(opts.count ?? 8, 1), 20);
-    const url = new URL('/res/v1/web/search', this.cfg.baseUrl ?? 'https://api.search.brave.com');
+    const n = Number.isFinite(opts.count) ? Math.trunc(opts.count as number) : 8;
+    const count = Math.min(Math.max(n, 1), 20);
+    const base = new URL(this.cfg.baseUrl ?? 'https://api.search.brave.com');
+    const url = new URL(`${base.pathname.replace(/\/$/, '')}/res/v1/web/search`, base);
     url.searchParams.set('q', q);
     url.searchParams.set('count', String(count));
 
@@ -56,12 +54,24 @@ export class BraveSearchProvider implements SearchProvider {
     if (res.status === 429) throw new SearchError('rate_limited', 'search rate limit exceeded', true);
     if (!res.ok) throw new SearchError('unavailable', `search failed with status ${res.status}`, res.status >= 500);
 
-    const parsed = BraveResponseSchema.safeParse(await res.json().catch(() => null));
+    let body: unknown;
+    try {
+      body = JSON.parse(await res.text());
+    } catch (err) {
+      const name = (err as Error).name;
+      if (name === 'TimeoutError' || name === 'AbortError') {
+        throw new SearchError('unavailable', 'search response timed out', true);
+      }
+      throw new SearchError('unavailable', 'search returned an unexpected response');
+    }
+    const parsed = BraveResponseSchema.safeParse(body);
     if (!parsed.success) throw new SearchError('unavailable', 'search returned an unexpected response');
-    return (parsed.data.web?.results ?? []).slice(0, count).map(r => ({
-      title: stripHtml(r.title),
-      url: r.url,
-      snippet: stripHtml(r.description ?? ''),
-    }));
+    return (parsed.data.web?.results ?? [])
+      .flatMap(r => {
+        const ok = BraveResultSchema.safeParse(r);
+        return ok.success ? [ok.data] : [];
+      })
+      .slice(0, count)
+      .map(r => ({ title: stripHtml(r.title), url: r.url, snippet: stripHtml(r.description ?? '') }));
   }
 }

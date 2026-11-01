@@ -35,6 +35,10 @@ describe('loadConfig', () => {
     });
   });
 
+  test('BRAVE_BASE_URL must be a URL', () => {
+    expect(() => loadConfig({ ...base, BRAVE_BASE_URL: 'not a url' })).toThrow(/BRAVE_BASE_URL/);
+  });
+
   test('limits can be overridden and are coerced to numbers', () => {
     expect(loadConfig({ ...base, MAX_SUBTASKS: '5' }).limits.maxSubtasks).toBe(5);
   });

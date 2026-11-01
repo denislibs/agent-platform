@@ -42,7 +42,7 @@ const EnvSchema = z.object({
     .default('4g'),
   SANDBOX_PIDS: positiveInt(512),
   BRAVE_API_KEY: z.preprocess(v => (v === '' ? undefined : v), z.string().min(1).optional()),
-  BRAVE_BASE_URL: z.string().min(1).default('https://api.search.brave.com'),
+  BRAVE_BASE_URL: z.url().default('https://api.search.brave.com'),
 });
 
 export type Config = ReturnType<typeof loadConfig>;
