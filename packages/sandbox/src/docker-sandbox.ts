@@ -515,7 +515,10 @@ export class DockerSandboxProvider implements SandboxProvider {
     if (!info) ({ info, created, volumeCreated } = await this.runContainer(taskId, name));
     // После runContainer тоже: имя мог занять не параллельный create, а чужой контейнер.
     if (!info.labeled) {
-      throw new Error(`container ${name} exists but was not created by the sandbox provider (no ${LABEL} label)`);
+      throw new SandboxError(
+        'foreign_container',
+        `container ${name} exists but was not created by the sandbox provider (no ${LABEL} label)`,
+      );
     }
     const sandbox = new DockerSandbox(name, taskId, info.containerId, this.cli, this.settings);
     try {

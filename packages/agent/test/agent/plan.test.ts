@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { LlmError, type ChatResult, type Task } from '@agent/core';
 import { toolCall } from '@agent/testing';
 import { PROMPTS } from '../../src';
-import { calls, say, seedTask, setupAgent } from './fixtures';
+import { calls, planned, say, seedTask, setupAgent } from './fixtures';
 
 type Cradle = ReturnType<typeof setupAgent>;
 
@@ -402,6 +402,24 @@ describe('PlannerStage.plan — recovery and stale jobs', () => {
     await c.tasks.transition(task.id, 'running', { currentKind: 'execute' });
     expect(await c.plannerStage.plan(task.id)).toEqual({ next: 'stop' });
     expect(c.llm.calls).toHaveLength(0);
+  });
+
+  test('a plan job that finds the task running rewrites a missing plan.md', async () => {
+    const c = setupAgent();
+    const task = await planned(c, ['a', 'b']);
+    expect(await c.plannerStage.plan(task.id)).toEqual({ next: 'stop' });
+    const sandbox = (await c.sandboxes.get(`agent-sbx-${task.id}`))!;
+    expect(new TextDecoder().decode(await sandbox.readFile('plan.md'))).toContain('2. b');
+    expect(c.llm.calls).toHaveLength(0);
+  });
+
+  test('a plan job on a running task keeps an existing plan.md', async () => {
+    const c = setupAgent();
+    const task = await planned(c, ['a', 'b']);
+    const sandbox = await c.sandboxes.create(task.id);
+    await sandbox.writeFile('plan.md', 'edited by the model');
+    expect(await c.plannerStage.plan(task.id)).toEqual({ next: 'stop' });
+    expect(new TextDecoder().decode(await sandbox.readFile('plan.md'))).toBe('edited by the model');
   });
 });
 

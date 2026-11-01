@@ -73,6 +73,16 @@ describe('ResultComposer', () => {
     expect((await c.tasks.get(task.id))?.result).toBe('Composed');
   });
 
+  test('a second compose after a reply without finish does not call the model again', async () => {
+    const c = setupAgent();
+    const task = await finalizing(c);
+    c.llm.push(say('no finish'));
+    const first = await c.composer.compose(task.id);
+    const second = await c.composer.compose(task.id);
+    expect(second).toEqual(first);
+    expect(c.llm.calls).toHaveLength(1);
+  });
+
   test('when the model does not finish, the answer falls back to the accepted reports', async () => {
     const c = setupAgent();
     const task = await finalizing(c, { partial: true });
