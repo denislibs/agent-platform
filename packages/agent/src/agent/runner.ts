@@ -1,4 +1,5 @@
 import {
+  InvalidTransitionError,
   LlmError,
   type AgentJob,
   type Clock,
@@ -17,6 +18,20 @@ import type { PlannerStage } from './planner';
 
 /** Сколько символов сообщения ошибки попадает в шаг status при failed. */
 const REASON_LIMIT = 200;
+
+/** Управляющий символ или одиночный суррогат: jsonb в Postgres не примет NUL и невалидный UTF-16. */
+const isUnsafeChar = (ch: string): boolean => {
+  const code = ch.charCodeAt(0);
+  return code < 0x20 || code === 0x7f || (ch.length === 1 && code >= 0xd800 && code <= 0xdfff);
+};
+
+/** Причина для шага status: без управляющих символов, срез по кодовым точкам, а не по UTF-16. */
+function reasonOf(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return Array.from(message, ch => (isUnsafeChar(ch) ? ' ' : ch))
+    .slice(0, REASON_LIMIT)
+    .join('');
+}
 
 /** Один job воркера (спецификация 8): стадия → исход → следующий job, пауза или уборка песочницы. */
 export class JobRunner {
@@ -47,28 +62,37 @@ export class JobRunner {
     return outcome;
   }
 
-  /** Попытки job исчерпаны (или ошибка неисправимая): задача → failed, если job всё ещё её. */
+  /**
+   * Попытки job исчерпаны (или ошибка неисправимая): задача → failed, если job всё ещё её.
+   * Ограничение: в AgentJob нет seq, поэтому исчерпанный старый job валит задачу, даже если есть новый job того же kind.
+   */
   async onExhausted(job: AgentJob, error: unknown): Promise<void> {
     const task = await this.deps.tasks.get(job.taskId);
     if (!task || isTerminalTask(task.status)) return;
     // Устаревший job или задача ждёт пользователя: валить её не за что.
     if (kindForStatus(task.status, task.currentKind) !== job.kind) return;
-    const reason = (error instanceof Error ? error.message : String(error)).slice(0, REASON_LIMIT);
-    await this.deps.guard.unlessStopped(task.id, () =>
-      this.deps.uow.run(async tx => {
-        await tx.tasks.transition(
-          task.id,
-          'failed',
-          { stopReason: 'job_failed', finishedAt: this.deps.clock.now() },
-          { expectedFrom: task.status },
-        );
-        await tx.steps.append({
-          taskId: task.id,
-          agent: 'system',
-          payload: { type: 'status', from: task.status, to: 'failed', reason },
-        });
-      }),
-    );
+    const reason = reasonOf(error);
+    try {
+      await this.deps.guard.unlessStopped(task.id, () =>
+        this.deps.uow.run(async tx => {
+          await tx.tasks.transition(
+            task.id,
+            'failed',
+            { stopReason: 'job_failed', finishedAt: this.deps.clock.now() },
+            { expectedFrom: task.status },
+          );
+          await tx.steps.append({
+            taskId: task.id,
+            agent: 'system',
+            payload: { type: 'status', from: task.status, to: 'failed', reason },
+          });
+        }),
+      );
+    } catch (err) {
+      // Задача ушла дальше между чтением и переходом: её ведёт другой job, ни задачу, ни песочницу не трогаем.
+      if (err instanceof InvalidTransitionError) return;
+      throw err;
+    }
     await this.destroySandbox(task.id);
   }
 
@@ -112,6 +136,10 @@ export class JobRunner {
   }
 
   private async destroySandbox(taskId: string): Promise<void> {
-    await (await this.deps.sandboxes.get(sandboxIdFor(taskId)))?.destroy();
+    try {
+      await (await this.deps.sandboxes.get(sandboxIdFor(taskId)))?.destroy();
+    } catch {
+      // Работа job сделана, повтор бесполезен: осиротевшую песочницу завершённой задачи уберёт сборщик.
+    }
   }
 }

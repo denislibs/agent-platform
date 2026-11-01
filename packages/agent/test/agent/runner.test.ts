@@ -161,5 +161,66 @@ describe('JobRunner', () => {
       );
       expect((await c.tasks.get(task.id))?.status).toBe('failed');
     });
+
+    test('fails a queued task whose plan job is exhausted', async () => {
+      const c = setupAgent();
+      const seeded = await seedTask(c);
+      // TaskIntake ставит currentKind 'plan'; у queued без него kind всё равно plan.
+      const task = await c.tasks.update(seeded.id, { currentKind: null });
+      expect(task).toMatchObject({ status: 'queued', currentKind: null });
+      await fail(c, { taskId: task.id, kind: 'plan' });
+      expect(await c.tasks.get(task.id)).toMatchObject({ status: 'failed', stopReason: 'job_failed' });
+    });
+
+    test('a task that moves on before the transition is left alone, with its sandbox', async () => {
+      const c = setupAgent();
+      const task = await planned(c);
+      await c.sandboxes.create(task.id);
+      // Между чтением задачи и переходом другой job переводит её в finalizing.
+      const run = c.uow.run.bind(c.uow);
+      c.uow.run = (async (fn: Parameters<typeof run>[0]) => {
+        c.uow.run = run;
+        await c.tasks.transition(task.id, 'finalizing', { currentKind: 'finalize' });
+        return run(fn);
+      }) as typeof c.uow.run;
+      await fail(c, { taskId: task.id, kind: 'execute' });
+      expect((await c.tasks.get(task.id))?.status).toBe('finalizing');
+      expect(await c.sandboxes.get(`agent-sbx-${task.id}`)).toBeDefined();
+    });
+
+    test('the reason has no control characters and is cut by code point', async () => {
+      const c = setupAgent();
+      const task = await planned(c);
+      // Эмодзи занимает UTF-16 позиции 199–200: срез по единицам UTF-16 разрезал бы суррогатную пару.
+      const message = `\u0000${'a'.repeat(198)}😀tail`;
+      await c.runner.onExhausted({ taskId: task.id, kind: 'execute' }, new Error(message));
+      const payload = (await c.steps.list(task.id)).at(-1)?.payload;
+      expect(payload).toMatchObject({ type: 'status', to: 'failed', reason: ` ${'a'.repeat(198)}😀` });
+    });
+  });
+
+  test('a failing sandbox destroy does not fail a stop job', async () => {
+    const c = setupAgent();
+    const task = await planned(c);
+    await c.sandboxes.create(task.id);
+    await c.tasks.transition(task.id, 'cancelled');
+    const sandbox = (await c.sandboxes.get(`agent-sbx-${task.id}`))!;
+    sandbox.destroy = async () => {
+      throw new Error('docker down');
+    };
+    expect(await c.runner.run({ taskId: task.id, kind: 'execute' })).toEqual({ next: 'stop' });
+  });
+
+  test('a non-retryable model error on a task already finalizing queues finalize', async () => {
+    const c = setupAgent();
+    const task = await planned(c);
+    // Модель отказала, а задача тем временем уже в finalizing (например, её перевёл другой job).
+    c.llm.chat = async () => {
+      await c.tasks.transition(task.id, 'finalizing', { currentKind: 'finalize' });
+      throw new LlmError('bad_request', 'tools invalid', false);
+    };
+    expect(await c.runner.run({ taskId: task.id, kind: 'execute' })).toEqual({ next: 'finalize' });
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'finalizing', partial: false, stopReason: null });
+    expect(c.queue.jobs.map(j => j.kind)).toEqual(['finalize']);
   });
 });
