@@ -635,3 +635,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - **План 5 (ui-kit)** не зависит от этого плана.
 - **План 6 (веб):** сервис `web` за тем же nginx (`/` → Vite dev server с HMR через WebSocket, в продакшене — статика). Клиент API — по схемам из `packages/shared/src/api.ts`. CORS бакета Garage для `PUT` с `http://localhost:8080`. `EventSource` закрывается по событию `end`, дубли по `seq` отбрасываются.
 - **До закрытой беты** (backlog): почтовый провайдер для magic link, TLS и продакшен-адреса (`BETTER_AUTH_URL` на https даёт `Secure`-cookie), rate limiting на `/api/auth/*` и создание задач.
+
+**Итоги выполнения (2026-11-02).** План выполнен. Стек `bun run stack:up` отдаёт приложение на `http://localhost:8080`. Через nginx проверены magic link, `admin:grant` в контейнере, задача и SSE без буферизации (первое событие через 0,04 с, `: ping` через 15 с, после отмены — `end`, и `curl` завершился). Подделанный `X-Real-IP` не обходит rate limiting Better Auth. Песочница не достаёт ни порт 8080, ни контейнеры `api` и `nginx`. Что сделано сверх плана:
+- `API_HOST: 0.0.0.0` в сервисе `api`. Без этого API слушал бы только loopback контейнера, и nginx до него не достучался бы.
+- `X-Forwarded-For $remote_addr` (а не `$proxy_add_x_forwarded_for`). Кроме того, `Forwarded`, `X-Forwarded-Port`, `X-Forwarded-Prefix` и `X-Forwarded-Server` от клиента вырезаются.
+- Заголовки безопасности и CSP заглушки. Ошибки самого nginx (413, 502–504) на `/api/` отдаются в JSON-конверте API.
+- У `api` — `user: bun`, у обоих сервисов — `read_only` и tmpfs `/tmp`.
+- У nginx `depends_on.api.restart: true`: `compose restart api` перезапускает и nginx, который резолвит имя `api` один раз при старте.
+- Заметки для плана 6 — в [дорожной карте](2026-10-31-roadmap.md), «итоги плана 4b».

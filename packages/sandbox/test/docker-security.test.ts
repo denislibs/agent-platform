@@ -4,6 +4,7 @@ import { loadConfig } from '@agent/shared';
 import { DockerCli, DockerError, DockerSandboxProvider, type CliResult, type RunOptions } from '../src';
 import { requireSandboxImage } from './helpers';
 import {
+  APP_PORT,
   EXPECTED_HOST_ALIASES,
   HTTP_PAYLOAD,
   INFRA_PORTS,
@@ -132,8 +133,11 @@ describe('network isolation', () => {
       cfg.network,
     ]);
     expect(gateway).toMatch(/^\d+\.\d+\.\d+\.\d+$/);
+    // Порт приложения проверяется, когда стек поднят (bun run stack:up): с одним infra:up он закрыт и на хосте.
+    const appUp = (await hostReply('127.0.0.1', APP_PORT, HTTP_PAYLOAD)).length > 0;
+    const hostPorts = [...Object.values(INFRA_PORTS), ...(appUp ? [APP_PORT] : [])];
     for (const host of [...EXPECTED_HOST_ALIASES, ORBSTACK_HOST_IP, gateway]) {
-      for (const port of Object.values(INFRA_PORTS)) targets.push({ host, port });
+      for (const port of hostPorts) targets.push({ host, port });
     }
     // Сами контейнеры инфраструктуры по их IP в соседней сети Docker (на OrbStack сети друг друга видят).
     const infra = await infraContainers();
@@ -321,6 +325,8 @@ const INFRA_SERVICES: Record<string, { port: number; payload: string }> = {
   postgres: { port: 5432, payload: PAYLOAD_BY_PORT[INFRA_PORTS.postgres] ?? '' },
   valkey: { port: 6379, payload: PAYLOAD_BY_PORT[INFRA_PORTS.valkey] ?? '' },
   garage: { port: 3900, payload: HTTP_PAYLOAD },
+  api: { port: 3000, payload: HTTP_PAYLOAD },
+  nginx: { port: 8080, payload: HTTP_PAYLOAD },
 };
 
 /** IP и внутренние порты контейнеров инфраструктуры (compose-проект agent-dev). */

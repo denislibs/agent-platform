@@ -47,6 +47,7 @@ services:
     profiles: ['app']
     # Образ собирает сервис worker (bun run backend:build).
     image: agent-backend:dev
+    pull_policy: never # образ собирает сервис worker
     command: ['bun', 'packages/db/src/migrate.ts']
     # Миграциям нужен только DATABASE_URL: секреты из .env сюда не передаются.
     environment:
@@ -82,6 +83,70 @@ services:
     security_opt: ['no-new-privileges:true']
     restart: unless-stopped
     stop_grace_period: 60s
+
+  api:
+    profiles: ['app']
+    # Образ собирает сервис worker (bun run backend:build); команда — API.
+    image: agent-backend:dev
+    pull_policy: never # образ собирает сервис worker
+    command: ['bun', 'packages/api/src/main.ts']
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgres://agent:agent@postgres:5432/agent
+      VALKEY_URL: redis://valkey:6379
+      S3_ENDPOINT: http://garage:3900
+      # Presigned URL открывает браузер на хосте: опубликованный порт Garage.
+      S3_PUBLIC_ENDPOINT: http://localhost:53900
+      BETTER_AUTH_URL: http://localhost:8080
+      # Внутри контейнера — на всех интерфейсах сети compose (по умолчанию API слушает только loopback).
+      API_HOST: 0.0.0.0
+      API_PORT: '3000'
+    # Наружу не публикуется: только через nginx.
+    expose: ['3000']
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      postgres: { condition: service_healthy }
+      valkey: { condition: service_healthy }
+      garage: { condition: service_started }
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'bun',
+          '-e',
+          "fetch('http://127.0.0.1:3000/api/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    init: true
+    # Не root (пользователь bun образа oven/bun), корень только для чтения: API ничего не пишет на диск.
+    user: bun
+    read_only: true
+    tmpfs: ['/tmp']
+    # docker.sock не нужен: API не управляет песочницами.
+    cap_drop: ['ALL']
+    security_opt: ['no-new-privileges:true']
+    restart: unless-stopped
+    stop_grace_period: 15s
+
+  nginx:
+    profiles: ['app']
+    image: nginxinc/nginx-unprivileged:1.28-alpine
+    # Единственный опубликованный порт стека приложения, только на loopback хоста.
+    ports: ['127.0.0.1:8080:8080']
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    # upstream в OSS nginx резолвит имя api один раз при старте: ждём, пока API здоров. restart: true —
+    # `compose restart api` перезапускает и nginx. Пересоздание api через up nginx не трогает: если после него
+    # /api/ отвечает 503 (сменился IP), — `docker compose -f docker/compose.yml --profile app restart nginx`.
+    depends_on:
+      api: { condition: service_healthy, restart: true }
+    read_only: true
+    tmpfs: ['/tmp']
+    cap_drop: ['ALL']
+    security_opt: ['no-new-privileges:true']
+    restart: unless-stopped
 
 volumes:
   pgdata:

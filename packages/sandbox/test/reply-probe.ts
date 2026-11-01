@@ -8,6 +8,9 @@ import type { Sandbox } from '@agent/core';
 
 export const INFRA_PORTS = { postgres: 55432, valkey: 56379, garage: 53900 } as const;
 
+/** Опубликованный порт nginx стека приложения (bun run stack:up). Без стека он закрыт — проверяется, если открыт. */
+export const APP_PORT = 8080;
+
 /** Every name OrbStack / Docker Desktop hand containers for the host. The provider pins them all to 127.0.0.1. */
 export const EXPECTED_HOST_ALIASES = [
   'host.docker.internal',

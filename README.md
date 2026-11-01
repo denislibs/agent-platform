@@ -21,19 +21,37 @@ bun test                    # all tests (needs infra)
 bun run test:unit           # fast tests, no Docker needed
 ```
 
-## Worker
+## Docker stack
 
 ```bash
 bun run worker              # worker locally, on the infra from infra:up
-bun run stack:up            # infra and worker in Docker (profile app); stack:down stops them
+bun run stack:up            # infra + migrate + worker + api + nginx (profile app); stack:down stops them
+bun run stack:logs          # follow api, worker and nginx logs
 ```
+
+The app is served on `http://localhost:8080` only (nginx): `/api/` goes to the API, `/` is a placeholder until the web app.
+The API container is not published and has no Docker access. It needs `BETTER_AUTH_SECRET` in `.env`.
+Magic links show up in `bun run stack:logs` until a mail provider is configured (backlog).
+Grant credits inside the stack: `docker compose -f docker/compose.yml --profile app exec api bun packages/api/src/admin-grant.ts <email> <credits>`.
+
+`.env` for the stack: `BETTER_AUTH_SECRET` (API, `openssl rand -base64 32`) and the four `LITELLM_*` / `*_MODEL` values
+(worker, below). Compose sets the in-network addresses itself (`DATABASE_URL`, `VALKEY_URL`, `S3_ENDPOINT`), plus
+`BETTER_AUTH_URL=http://localhost:8080` and `S3_PUBLIC_ENDPOINT=http://localhost:53900` (the Garage port published by
+`infra:up`, which the browser uses for presigned URLs). `NODE_ENV` is unset in the containers, so Better Auth rate limiting is on.
+
+nginx overwrites `X-Real-IP` and `X-Forwarded-*` with its own values (clients cannot spoof the IP that rate limiting
+counts), streams SSE unbuffered with a 1 h read timeout, rejects bodies over 1 MB with the API's JSON error
+(files go straight to S3) and adds `nosniff`, `Referrer-Policy`, `X-Frame-Options` and a deny-all CSP for the placeholder.
+`api` and `nginx` run as non-root users with a read-only root filesystem, no capabilities and `no-new-privileges`.
+The sandbox isolation test (`packages/sandbox/test/docker-security.test.ts`) also probes port 8080 through every host
+name and the `api` / `nginx` containers by IP; run it after `bun run stack:up` for the full check.
 
 The worker needs the sandbox image (`bun run sandbox:build`) and `LITELLM_BASE_URL`, `LITELLM_API_KEY`,
 `PLANNER_MODEL`, `EXECUTOR_MODEL` in `.env`: they are optional in the config schema (the API does without them),
 but the worker creates the LiteLLM client at startup and refuses to start when any is missing.
-In Docker it applies migrations on start and manages sandboxes through the host `/var/run/docker.sock`
-(root-equivalent on the host: development and closed beta only, production uses E2B).
-`bun run backend:build` builds only the `agent-backend:dev` image.
+In Docker the one-shot `migrate` service applies migrations before the worker and the API start; the worker manages
+sandboxes through the host `/var/run/docker.sock` (root-equivalent on the host: development and closed beta only,
+production uses E2B). `bun run backend:build` builds only the `agent-backend:dev` image, shared by `migrate`, `worker` and `api`.
 
 Docker sandbox tests (`packages/sandbox`) need the image from `bun run sandbox:build`.
 The sandbox isolation (non-root, no capabilities, own network, limits) is for development and the closed beta;
@@ -63,13 +81,14 @@ Sandbox network isolation:
 NODE_ENV=development BETTER_AUTH_URL=http://localhost:3000 bun run api   # Hono API on 127.0.0.1:3000, on the infra from infra:up
 ```
 
-Until nginx arrives (plan 4b), the browser talks to the API directly, so local runs set `BETTER_AUTH_URL=http://localhost:3000`
+In the Docker stack the browser reaches the API through nginx on `http://localhost:8080` (see Docker stack). Run outside
+Docker, the browser talks to the API directly, so local runs set `BETTER_AUTH_URL=http://localhost:3000`
 (the app's origin: sign-in callbacks, cookies and the CSRF check of mutating requests compare against it) and
 `NODE_ENV=development`. The API reads from `.env`:
 
 - `DATABASE_URL`, `VALKEY_URL`, `S3_*` (`S3_PUBLIC_ENDPOINT` — the S3 address the browser can reach);
 - `BETTER_AUTH_SECRET` — required, at least 32 characters: `openssl rand -base64 32`;
-- `BETTER_AUTH_URL` — the app's public origin (default `http://localhost:8080`, the nginx of plan 4b);
+- `BETTER_AUTH_URL` — the app's public origin (default `http://localhost:8080`, the stack's nginx);
 - optional: `API_HOST`, `API_PORT`, `UPLOAD_MAX_BYTES`, `SSE_HEARTBEAT_MS` (≤ 120000), `SSE_MAX_STREAM_MS`,
   `GOOGLE_*` / `GITHUB_*`.
 
@@ -105,3 +124,11 @@ Local runs use `NODE_ENV=development`. Any other value, unset included, counts a
 is on and the API warns at startup while magic links still go to the log. Origin and CSRF checks are on everywhere.
 The Better Auth integration tests (`packages/api/test/integration`) run on Postgres from `infra:up`
 and are not part of `test:unit`.
+
+Credits are granted by hand during the beta (the user must have signed in once):
+
+```bash
+bun run admin:grant someone@example.com 10        # 10 credits = 10000 millicredits; up to 3 decimals
+```
+
+In the Docker stack run it inside the `api` container (see Docker stack).
