@@ -7,3 +7,4 @@ export * from './tool-executor';
 export * from './turns';
 export * from './executor';
 export * from './planner';
+export * from './composer';
