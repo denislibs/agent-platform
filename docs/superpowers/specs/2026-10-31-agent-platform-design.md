@@ -283,9 +283,11 @@ interface Sandbox {
 - `jobId = ${taskId}:${kind}:${stepSeq}` — повторная постановка того же продолжения
   не создаёт дубль.
 - **Порядок:** шаг сначала записывается в Postgres, потом ставится следующий job.
-- **Сборщик** (repeatable job, раз в минуту): задачи в `planning` / `running` /
+- **Сборщик** (repeatable job, раз в минуту): задачи в `queued` / `planning` / `running` /
   `finalizing` без активного job и без обновлений дольше 2 минут ставятся заново
-  с `kind` из `tasks.current_kind`.
+  с `kind` из `tasks.current_kind` (у новой задачи это `plan`: его ставит приём задачи,
+  на случай если job не поставился после коммита). Решает наличие активного job,
+  а не только давность: один вызов модели с повторами может идти дольше 2 минут.
 - **Отмена:** `POST /api/tasks/:id/cancel` ставит `cancelled`. Воркер проверяет
   статус перед каждым шагом и выходит; песочница уничтожается сборщиком.
 - Valkey: `appendonly yes`, `appendfsync everysec`, `maxmemory-policy noeviction`.
@@ -294,7 +296,7 @@ interface Sandbox {
 ## 9. Схема данных
 
 ```
-users            id, email, name, image, credits (int), created_at
+users            id, email, name, image, millicredits (bigint), created_at
                  (+ таблицы Better Auth: accounts, sessions, verifications)
 
 tasks            id, user_id, prompt, status, partial (bool), stop_reason,
@@ -316,7 +318,7 @@ files            id, task_id, user_id, kind ('input' | 'output'), path,
                  storage_key, size, mime, created_at
 
 usage_events     id, user_id, task_id, model, tokens_in, tokens_out,
-                 credits, created_at
+                 millicredits, created_at
 ```
 
 ## 10. API и стриминг
@@ -342,10 +344,11 @@ usage_events     id, user_id, task_id, model, tokens_in, tokens_out,
 ## 11. Кредиты
 
 - Цена модели за 1M входных и выходных токенов задаётся в конфиге в кредитах.
-- После каждого вызова модели — `usage_events` и атомарное списание с `users.credits`.
+- Деньги хранятся целыми милликредитами (1 кредит = 1000), стоимость вызова округляется вверх.
+- После каждого вызова модели — `usage_events` и атомарное списание с `users.millicredits`.
 - Задача не создаётся при балансе ≤ 0. Если баланс кончился во время выполнения —
   финализация с частичным результатом.
-- Начисление в бете: `bun run admin:grant <email> <credits>`.
+- Начисление в бете: `bun run admin:grant <email> <credits>` (кредиты; CLI переводит в милликредиты ×1000 и проверяет, что получилось целое).
 
 ## 12. Фронтенд
 
