@@ -92,4 +92,25 @@ describe('TaskGuard', () => {
     await c.guard.addActiveTime(task.id, new Date(c.clock.now().getTime() - 500));
     expect((await c.tasks.get(task.id))?.activeMs).toBe(2000);
   });
+
+  test('hasAnswer: only a user message after the latest pause counts', async () => {
+    const c = setupAgent();
+    const task = await seedTask(c); // первый шаг — запрос пользователя, он до паузы
+    const running = await c.tasks.transition(task.id, 'planning', { currentKind: 'plan' });
+    expect(await c.guard.hasAnswer(task.id)).toBe(false);
+    await c.guard.pause(running, 'plan');
+    expect(await c.guard.hasAnswer(task.id)).toBe(false);
+    await c.steps.append({
+      taskId: task.id,
+      agent: 'system',
+      payload: { type: 'message', role: 'user', text: 'not an answer', kind: 'note' },
+    });
+    expect(await c.guard.hasAnswer(task.id)).toBe(false);
+    await c.steps.append({ taskId: task.id, agent: 'user', payload: { type: 'message', role: 'user', text: 'EU' } });
+    expect(await c.guard.hasAnswer(task.id)).toBe(true);
+    // Вторая пауза: прежний ответ к ней не относится.
+    const resumed = await c.guard.resume((await c.tasks.get(task.id))!);
+    await c.guard.pause(resumed, 'plan');
+    expect(await c.guard.hasAnswer(task.id)).toBe(false);
+  });
 });

@@ -136,8 +136,10 @@ export class ExecutorStage {
     }
     let task = first.task;
     if (task.status === 'waiting_user') {
-      // Пауза другой стадии (планирования или проверки): её снимает та стадия, а этот job устарел.
-      if (task.currentKind && task.currentKind !== 'execute') return { next: task.currentKind };
+      // Пауза другой стадии (планирования или проверки) или ответа ещё нет: этот job устарел или повторён.
+      // wait_user ничего не ставит в очередь — нужную стадию поставит пришедший ответ (API, план 4).
+      if (task.currentKind && task.currentKind !== 'execute') return { next: 'wait_user' };
+      if (!(await guard.hasAnswer(taskId))) return { next: 'wait_user' };
       const paused = task;
       const resumed = await this.unlessStopped(taskId, () => guard.resume(paused));
       if (!resumed) return { next: 'stop' };

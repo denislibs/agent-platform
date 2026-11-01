@@ -1,5 +1,5 @@
 import { isTerminalTask, type Config, type JobKind, type TaskStatus } from '@agent/shared';
-import type { Clock, CreditLedger, Task, TaskPatch, TaskRepository, UnitOfWork } from '@agent/core';
+import type { Clock, CreditLedger, StepLog, Task, TaskPatch, TaskRepository, UnitOfWork } from '@agent/core';
 import type { StopReason } from './outcome';
 import { PROMPTS } from './prompts';
 
@@ -16,6 +16,7 @@ export class TaskGuard {
   constructor(
     private readonly deps: {
       tasks: TaskRepository;
+      steps: StepLog;
       ledger: CreditLedger;
       uow: UnitOfWork;
       clock: Clock;
@@ -72,6 +73,17 @@ export class TaskGuard {
         payload: { type: 'status', from: task.status, to: 'waiting_user' },
       });
     });
+  }
+
+  /**
+   * Пришёл ли ответ на последнюю паузу: сообщение пользователя после последнего шага status → waiting_user.
+   * Без такого шага паузы не было — и ответа нет. Повторный или дублирующий job без ответа паузу не снимает.
+   */
+  async hasAnswer(taskId: string): Promise<boolean> {
+    const steps = await this.deps.steps.list(taskId);
+    const pausedAt = steps.findLastIndex(s => s.payload.type === 'status' && s.payload.to === 'waiting_user');
+    if (pausedAt === -1) return false;
+    return steps.slice(pausedAt + 1).some(s => s.agent === 'user' && s.payload.type === 'message');
   }
 
   /** Ответ пользователя пришёл: обратно в planning или running, и заметка для модели. */

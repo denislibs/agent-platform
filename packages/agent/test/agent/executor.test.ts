@@ -330,6 +330,7 @@ describe('ExecutorStage — a task cancelled mid-run', () => {
     const c = setupAgent();
     const task = await planned(c);
     await c.guard.pause(task, 'execute');
+    await c.steps.append({ taskId: task.id, agent: 'user', payload: { type: 'message', role: 'user', text: 'EU' } });
     const resume = c.guard.resume.bind(c.guard);
     c.guard.resume = async t => {
       await c.tasks.transition(t.id, 'cancelled');
@@ -397,12 +398,25 @@ describe('ExecutorStage — recovery and stale jobs', () => {
     expect((await subtaskOf(c, task.id)).report?.summary).toBe('second');
   });
 
+  test('a duplicate run right after ask_user, with no answer yet, keeps waiting', async () => {
+    const c = setupAgent();
+    const task = await planned(c);
+    c.llm.push(calls(['ask_user', { question: 'Which region?' }]));
+    expect(await c.executorStage.run(task.id)).toEqual({ next: 'wait_user' });
+    const before = (await c.steps.list(task.id)).length;
+    expect(await c.executorStage.run(task.id)).toEqual({ next: 'wait_user' });
+    expect(c.llm.calls).toHaveLength(1);
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'waiting_user', currentKind: 'execute' });
+    expect(await c.steps.list(task.id)).toHaveLength(before);
+  });
+
   test('a stale execute job does not consume a planner pause', async () => {
     const c = setupAgent();
     const task = await seedTask(c);
     await c.tasks.transition(task.id, 'planning', { currentKind: 'plan' });
     await c.tasks.transition(task.id, 'waiting_user', { currentKind: 'plan' });
-    expect(await c.executorStage.run(task.id)).toEqual({ next: 'plan' });
+    // wait_user ничего не ставит в очередь: стадию по ответу поставит API ответа (план 4).
+    expect(await c.executorStage.run(task.id)).toEqual({ next: 'wait_user' });
     expect(await c.tasks.get(task.id)).toMatchObject({ status: 'waiting_user', currentKind: 'plan' });
     expect(c.llm.calls).toHaveLength(0);
   });
@@ -411,7 +425,7 @@ describe('ExecutorStage — recovery and stale jobs', () => {
     const c = setupAgent();
     const task = await planned(c);
     await c.tasks.transition(task.id, 'waiting_user', { currentKind: 'review' });
-    expect(await c.executorStage.run(task.id)).toEqual({ next: 'review' });
+    expect(await c.executorStage.run(task.id)).toEqual({ next: 'wait_user' });
     expect(await c.tasks.get(task.id)).toMatchObject({ status: 'waiting_user', currentKind: 'review' });
     expect(c.llm.calls).toHaveLength(0);
   });
