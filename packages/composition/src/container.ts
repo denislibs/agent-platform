@@ -20,6 +20,7 @@ import {
   type DbHandle,
 } from '@agent/db';
 import { createLlm } from '@agent/llm';
+import { BullJobQueue, redisConnection, type RedisConnection } from '@agent/queue';
 import { DockerSandboxProvider } from '@agent/sandbox';
 import { BraveSearchProvider, UnavailableSearchProvider } from '@agent/search';
 import type { Config } from '@agent/shared';
@@ -28,6 +29,7 @@ import { S3FileStore } from '@agent/storage';
 export interface Cradle extends Ports, AgentServices {
   config: Config;
   database: DbHandle;
+  redis: RedisConnection;
 }
 
 export type AppContainer = AwilixContainer<Cradle>;
@@ -45,6 +47,12 @@ export function buildContainer(appConfig: Config, overrides: Overrides = {}): Ap
     )
       .singleton()
       .disposer(handle => handle.close()),
+    redis: asFunction(({ config }: Cradle) => redisConnection(config.valkeyUrl))
+      .singleton()
+      .disposer(r => r.quit().then(() => undefined)),
+    queue: asFunction(({ redis, config }: Cradle) => new BullJobQueue({ redis, config }))
+      .singleton()
+      .disposer(q => q.close()),
     tasks: asClass(DrizzleTaskRepository).singleton(),
     steps: asClass(DrizzleStepLog).singleton(),
     subtasks: asClass(DrizzleSubtaskRepository).singleton(),

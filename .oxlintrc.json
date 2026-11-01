@@ -1,7 +1,10 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["typescript", "unicorn", "import", "oxc"],
-  "categories": { "correctness": "error", "suspicious": "warn" },
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn"
+  },
   "rules": {
     "no-console": "off",
     "typescript/no-explicit-any": "warn"
@@ -72,6 +75,22 @@
               {
                 "name": "@agent/agent",
                 "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "@agent/queue",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "@agent/worker",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "bullmq",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "ioredis",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
               }
             ],
             "patterns": [
@@ -88,7 +107,11 @@
                   "@agent/composition/**",
                   "@agent/sandbox/**",
                   "@agent/search/**",
-                  "@agent/agent/**"
+                  "@agent/agent/**",
+                  "@agent/queue/**",
+                  "@agent/worker/**",
+                  "bullmq/**",
+                  "ioredis/**"
                 ],
                 "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
               }
@@ -147,6 +170,18 @@
               {
                 "name": "awilix",
                 "message": "awilix is allowed in @agent/agent only in src/register.ts: services take their dependencies as one constructor object."
+              },
+              {
+                "name": "@agent/queue",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "@agent/worker",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "ioredis",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
               }
             ],
             "patterns": [
@@ -161,7 +196,10 @@
                   "@agent/storage/**",
                   "@agent/sandbox/**",
                   "@agent/search/**",
-                  "@agent/composition/**"
+                  "@agent/composition/**",
+                  "@agent/queue/**",
+                  "@agent/worker/**",
+                  "ioredis/**"
                 ],
                 "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
               },
@@ -220,6 +258,18 @@
               {
                 "name": "@agent/composition",
                 "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "@agent/queue",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "@agent/worker",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "ioredis",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
               }
             ],
             "patterns": [
@@ -234,7 +284,10 @@
                   "@agent/storage/**",
                   "@agent/sandbox/**",
                   "@agent/search/**",
-                  "@agent/composition/**"
+                  "@agent/composition/**",
+                  "@agent/queue/**",
+                  "@agent/worker/**",
+                  "ioredis/**"
                 ],
                 "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
               }
