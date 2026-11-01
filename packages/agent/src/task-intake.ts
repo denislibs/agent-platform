@@ -11,7 +11,7 @@ export interface NewTaskInput {
 /**
  * Приём новой задачи (спецификация 4.1, шаг 1): проверка лимитов, задача в статусе queued, первый шаг
  * с запросом пользователя и привязка входных файлов — одной транзакцией. Постановку job `plan`
- * после коммита добавляет план 3c.
+ * после коммита добавляет план 3d.
  */
 export class TaskIntake {
   constructor(private readonly deps: { uow: UnitOfWork; config: Config }) {}

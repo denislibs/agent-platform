@@ -20,7 +20,7 @@ export function parseToolCall(id: string, name: string, rawArgs: string): ToolCa
 
 /**
  * Клиент LiteLLM. SDK сам повторяет 408/409/429/5xx и сетевые сбои (maxRetries, по умолчанию 4 — спецификация 7);
- * после этого наружу уходит LlmError с retryable, по которому план 3c решает, повторять ли job.
+ * после этого наружу уходит LlmError с retryable, по которому план 3d решает, повторять ли job.
  */
 export function createLlm(cfg: LlmConfig): Llm {
   const client = new OpenAI({
