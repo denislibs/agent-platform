@@ -53,7 +53,7 @@ export function createLlm(cfg: LlmConfig): Llm {
       } catch (err) {
         throw toLlmError(err, model) ?? err;
       }
-      const choice = res.choices[0];
+      const choice = res.choices?.[0];
       if (!choice) throw new LlmError('unavailable', `${model}: the response has no choices`, true);
       const toolCalls = (choice.message.tool_calls ?? []).flatMap(tc =>
         tc.type === 'function' ? [parseToolCall(tc.id, tc.function.name, tc.function.arguments)] : [],

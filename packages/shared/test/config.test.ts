@@ -30,8 +30,23 @@ describe('loadConfig', () => {
       taskWallTimeMs: 7_200_000,
       maxActiveTasksPerUser: 2,
       stepsPerJob: 5,
-      workerConcurrency: 4,
       waitUserTimeoutMs: 86_400_000,
+    });
+  });
+
+  test('worker and db settings have defaults', () => {
+    const c = loadConfig(base);
+    expect(c.worker).toEqual({
+      queuePrefix: 'bull',
+      jobAttempts: 3,
+      concurrency: 4,
+      sweepEveryMs: 60_000,
+      staleTaskMs: 120_000,
+    });
+    expect(c.db).toEqual({ lockTimeoutMs: 10_000 });
+    expect(loadConfig({ ...base, QUEUE_PREFIX: 'test-1', DB_LOCK_TIMEOUT_MS: '2500' })).toMatchObject({
+      worker: { queuePrefix: 'test-1' },
+      db: { lockTimeoutMs: 2500 },
     });
   });
 
@@ -69,6 +84,7 @@ describe('loadConfig', () => {
       cpus: 2,
       memory: '4g',
       pids: 512,
+      namespace: 'dev',
     });
     expect(c.search).toEqual({ braveApiKey: null, braveBaseUrl: 'https://api.search.brave.com' });
   });
@@ -81,10 +97,18 @@ describe('loadConfig', () => {
       SANDBOX_CPUS: '1.5',
       SANDBOX_MEMORY: '512m',
       SANDBOX_PIDS: '128',
+      SANDBOX_NAMESPACE: 'ns-x',
       BRAVE_API_KEY: 'brave-key',
       BRAVE_BASE_URL: 'http://localhost:9999',
     });
-    expect(c.sandbox).toEqual({ image: 'agent-sandbox:1', network: 'net-x', cpus: 1.5, memory: '512m', pids: 128 });
+    expect(c.sandbox).toEqual({
+      image: 'agent-sandbox:1',
+      network: 'net-x',
+      cpus: 1.5,
+      memory: '512m',
+      pids: 128,
+      namespace: 'ns-x',
+    });
     expect(c.search).toEqual({ braveApiKey: 'brave-key', braveBaseUrl: 'http://localhost:9999' });
   });
 

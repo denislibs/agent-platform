@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { LlmError } from '@agent/core';
 import { createLlm } from '@agent/llm';
+import { APIUserAbortError } from 'openai';
+import { toLlmError } from '../src/errors';
 import { completion, fakeOpenAI } from './fake-openai';
 
 let server: ReturnType<typeof fakeOpenAI> | undefined;
@@ -133,6 +135,28 @@ describe('errors', () => {
   test('other 400 → bad_request, not retryable', async () => {
     server = fakeOpenAI(status(400, 'tools[0].function.name is invalid'));
     await expectLlmError(ask(server.url), 'bad_request', false);
+  });
+
+  test('a 200 response with no choices field → unavailable, retryable', async () => {
+    server = fakeOpenAI(() => Response.json({ id: 'x', object: 'chat.completion', created: 0, model: 'm' }));
+    await expectLlmError(ask(server.url), 'unavailable', true);
+  });
+
+  test('409 → unavailable, retryable', async () => {
+    // SDK сам повторяет 409; retry-after-ms держит тест быстрым.
+    server = fakeOpenAI(() =>
+      Response.json({ error: { message: 'conflict' } }, { status: 409, headers: { 'retry-after-ms': '1' } }),
+    );
+    await expectLlmError(ask(server.url), 'unavailable', true);
+  });
+
+  test('413 → context_length, not retryable', async () => {
+    server = fakeOpenAI(status(413, 'request entity too large'));
+    await expectLlmError(ask(server.url), 'context_length', false);
+  });
+
+  test('an aborted request → unavailable, retryable', () => {
+    expect(toLlmError(new APIUserAbortError(), 'm')).toMatchObject({ code: 'unavailable', retryable: true });
   });
 
   test('unreachable endpoint → unavailable, retryable', async () => {

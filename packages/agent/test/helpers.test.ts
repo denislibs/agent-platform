@@ -31,6 +31,7 @@ describe('createAgentTestContainer', () => {
       'executorStage',
       'plannerStage',
       'composer',
+      'finalizer',
     ] as const) {
       expect(c[name]).toBeDefined();
     }

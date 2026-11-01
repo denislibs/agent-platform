@@ -48,16 +48,30 @@ export class ResultComposer {
 
   /**
    * Лимиты бюджета не проверяются: под эту попытку зарезервированы 5 %, а TaskGuard на finalizing вернул бы limit.
-   * Повторный вызов после сбоя подхватывает записанный finish и не обращается к модели.
+   * Повторный вызов после сбоя подхватывает записанный finish и не обращается к модели;
+   * так же, если модель уже отвечала без finish (см. attempted).
    */
   async compose(taskId: string): Promise<ComposedResult> {
     const task = await this.deps.tasks.get(taskId);
     if (!task || task.status !== 'finalizing') throw new Error(`task ${taskId} is not finalizing`);
     const sandbox = await this.deps.sandboxes.create(task.id);
     const accepted = (await this.deps.subtasks.list(task.id)).filter(s => s.status === 'accepted' && s.report);
-    let result = lastFinish(await this.deps.steps.list(task.id));
+    const history = await this.deps.steps.list(task.id);
+    let result = lastFinish(history);
 
-    if (!result) {
+    // Одна попытка на финализацию: llm_call планировщика уровня задачи после последнего перехода в finalizing
+    // значит, что модель уже отвечала (без finish) и оплачена. Повтор сразу отдаёт запасной ответ.
+    // Без шага status → finalizing попытки не было: иначе ответы планировщика с начала задачи сочлись бы за неё.
+    const since = history.findLastIndex(s => s.payload.type === 'status' && s.payload.to === 'finalizing');
+    const attempted =
+      since >= 0 &&
+      history
+        .slice(since + 1)
+        .some(
+          s => s.agent === 'planner' && s.subtaskId === null && s.payload.type === 'llm_call' && !s.payload.purpose,
+        );
+
+    if (!result && !attempted) {
       const context = [
         `Task: ${task.prompt}`,
         task.partial ? `The task stopped early (${task.stopReason ?? 'limit'}); answer with what was done.` : '',

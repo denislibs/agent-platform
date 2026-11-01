@@ -1,5 +1,6 @@
 import {
   LlmError,
+  NotFoundError,
   type ChatMessage,
   type Clock,
   type FileRecord,
@@ -171,6 +172,12 @@ export class PlannerStage {
       if (!started) return { next: 'stop' };
       task = started;
     }
+    if (task.status === 'running') {
+      // Job plan застал уже составленный план: сбой между переходом planning → running и записью plan.md
+      // оставил бы песочницу без плана. Запись восстанавливается из подзадач; существующий файл не трогаем.
+      await this.restorePlanFile(task);
+      return { next: 'stop' };
+    }
     if (task.status !== 'planning') return { next: 'stop' };
 
     let sandbox = await this.deps.sandboxes.create(task.id);
@@ -189,6 +196,16 @@ export class PlannerStage {
       if (r.outcome) return r.outcome;
     }
     return { next: 'plan' };
+  }
+
+  private async restorePlanFile(task: Task): Promise<void> {
+    const sandbox = await this.deps.sandboxes.create(task.id);
+    try {
+      await sandbox.readFile('plan.md');
+    } catch (err) {
+      if (!(err instanceof NotFoundError && err.entity === 'file')) throw err;
+      await sandbox.writeFile('plan.md', renderPlan(await this.deps.subtasks.list(task.id)));
+    }
   }
 
   /** Шаги планирования: уровень задачи (subtaskId = null), без шагов status. */

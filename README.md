@@ -21,6 +21,18 @@ bun test                    # all tests (needs infra)
 bun run test:unit           # fast tests, no Docker needed
 ```
 
+## Worker
+
+```bash
+bun run worker              # worker locally, on the infra from infra:up
+bun run stack:up            # infra and worker in Docker (profile app); stack:down stops them
+```
+
+The worker needs the sandbox image (`bun run sandbox:build`) and a non-empty `LITELLM_API_KEY` in `.env`.
+In Docker it applies migrations on start and manages sandboxes through the host `/var/run/docker.sock`
+(root-equivalent on the host: development and closed beta only, production uses E2B).
+`bun run backend:build` builds only the `agent-backend:dev` image.
+
 Docker sandbox tests (`packages/sandbox`) need the image from `bun run sandbox:build`.
 The sandbox isolation (non-root, no capabilities, own network, limits) is for development and the closed beta;
 public launch requires E2B or gVisor (see `backlog.md`).

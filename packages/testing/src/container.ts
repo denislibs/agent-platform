@@ -18,6 +18,7 @@ import {
   InMemorySubtaskRepository,
   InMemoryTaskRepository,
 } from './memory/repositories';
+import { InMemoryJobQueue } from './memory/queue';
 import { InMemorySandboxProvider } from './memory/sandbox';
 import { FakeSearchProvider } from './memory/search';
 import { InMemoryState } from './memory/state';
@@ -33,6 +34,7 @@ export interface TestCradle extends Ports {
   fileStore: InMemoryFileStore;
   sandboxes: InMemorySandboxProvider;
   search: FakeSearchProvider;
+  queue: InMemoryJobQueue;
 }
 
 export type TestOverrides = Partial<{ [K in keyof TestCradle]: Resolver<TestCradle[K]> }>;
@@ -59,6 +61,7 @@ export function createTestContainer(overrides: TestOverrides = {}): AwilixContai
     llm: asFunction(() => new ScriptedLlm()).singleton(),
     sandboxes: asFunction(() => new InMemorySandboxProvider()).singleton(),
     search: asFunction(() => new FakeSearchProvider()).singleton(),
+    queue: asFunction(() => new InMemoryJobQueue()).singleton(),
     ...overrides,
   });
   return container;

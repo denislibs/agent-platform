@@ -106,7 +106,7 @@ describe('runToolCall', () => {
 
   test('infrastructure errors propagate to the loop', async () => {
     const ctx = await toolContext();
-    const codes: SandboxErrorCode[] = ['not_running', 'browser_unavailable'];
+    const codes: SandboxErrorCode[] = ['not_running', 'browser_unavailable', 'foreign_container'];
     for (const err of [
       new NotFoundError('sandbox', 'agent-sbx-task-1'),
       new NotFoundError('task', 't1'),

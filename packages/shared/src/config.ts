@@ -36,8 +36,13 @@ const EnvSchema = z.object({
   TASK_WALL_TIME_MS: positiveInt(7_200_000),
   MAX_ACTIVE_TASKS_PER_USER: positiveInt(2),
   STEPS_PER_JOB: positiveInt(5),
-  WORKER_CONCURRENCY: positiveInt(4),
   WAIT_USER_TIMEOUT_MS: positiveInt(86_400_000),
+  QUEUE_PREFIX: z.string().min(1).default('bull'),
+  JOB_ATTEMPTS: positiveInt(3),
+  WORKER_CONCURRENCY: positiveInt(4),
+  SWEEP_EVERY_MS: positiveInt(60_000),
+  STALE_TASK_MS: positiveInt(120_000),
+  DB_LOCK_TIMEOUT_MS: positiveInt(10_000),
   SANDBOX_IMAGE: z.string().min(1).default('agent-sandbox:dev'),
   SANDBOX_NETWORK: z.string().min(1).default('agent-sandbox'),
   SANDBOX_CPUS: z.coerce.number().positive().default(2),
@@ -46,6 +51,8 @@ const EnvSchema = z.object({
     .regex(/^\d+[kmg]$/i, 'expected a Docker memory size like 4g or 512m')
     .default('4g'),
   SANDBOX_PIDS: positiveInt(512),
+  /** Пространство имён песочниц (метка agent.sandbox.ns): сборщик разработки и тестов не видит чужих песочниц. */
+  SANDBOX_NAMESPACE: z.string().min(1).default('dev'),
   BRAVE_API_KEY: z.preprocess(v => (v === '' ? undefined : v), z.string().min(1).optional()),
   BRAVE_BASE_URL: z.url().default('https://api.search.brave.com'),
 });
@@ -89,15 +96,23 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       taskWallTimeMs: e.TASK_WALL_TIME_MS,
       maxActiveTasksPerUser: e.MAX_ACTIVE_TASKS_PER_USER,
       stepsPerJob: e.STEPS_PER_JOB,
-      workerConcurrency: e.WORKER_CONCURRENCY,
       waitUserTimeoutMs: e.WAIT_USER_TIMEOUT_MS,
     },
+    worker: {
+      queuePrefix: e.QUEUE_PREFIX,
+      jobAttempts: e.JOB_ATTEMPTS,
+      concurrency: e.WORKER_CONCURRENCY,
+      sweepEveryMs: e.SWEEP_EVERY_MS,
+      staleTaskMs: e.STALE_TASK_MS,
+    },
+    db: { lockTimeoutMs: e.DB_LOCK_TIMEOUT_MS },
     sandbox: {
       image: e.SANDBOX_IMAGE,
       network: e.SANDBOX_NETWORK,
       cpus: e.SANDBOX_CPUS,
       memory: e.SANDBOX_MEMORY,
       pids: e.SANDBOX_PIDS,
+      namespace: e.SANDBOX_NAMESPACE,
     },
     search: {
       braveApiKey: e.BRAVE_API_KEY ?? null,

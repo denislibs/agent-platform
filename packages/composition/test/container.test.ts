@@ -13,6 +13,7 @@ import {
   runMigrations,
   user,
 } from '@agent/db';
+import { BullJobQueue, TaskLock } from '@agent/queue';
 import { DockerSandboxProvider } from '@agent/sandbox';
 import { BraveSearchProvider, UnavailableSearchProvider } from '@agent/search';
 import { S3FileStore } from '@agent/storage';
@@ -40,6 +41,8 @@ test('registers a real adapter for every port', () => {
   expect(c.files).toBeInstanceOf(DrizzleFileRepository);
   expect(c.uow).toBeInstanceOf(DrizzleUnitOfWork);
   expect(c.fileStore).toBeInstanceOf(S3FileStore);
+  expect(c.queue).toBeInstanceOf(BullJobQueue);
+  expect(c.taskLock).toBeInstanceOf(TaskLock);
   expect(c.clock).toBeInstanceOf(SystemClock);
   expect(c.ids).toBeInstanceOf(CryptoIds);
   expect(typeof c.llm.chat).toBe('function');
@@ -133,4 +136,13 @@ test('task intake enforces the active task limit against Postgres under concurre
   expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(2);
   for (const r of results) if (r.status === 'rejected') expect(r.reason).toBeInstanceOf(LimitExceededError);
   expect(await tasks.countActive(u!.id)).toBe(2);
+});
+
+test('dispose right after resolving the queue closes it and the redis connection cleanly', async () => {
+  const c = buildContainer(config);
+  const { redis, queue } = c.cradle;
+  expect(queue).toBeInstanceOf(BullJobQueue);
+  await c.dispose();
+  await Bun.sleep(200);
+  expect(redis.status).toBe('end');
 });

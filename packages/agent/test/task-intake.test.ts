@@ -79,4 +79,30 @@ describe('TaskIntake', () => {
     const { intake } = setup();
     await expect(intake.create({ userId: 'nobody', prompt: 'x' })).rejects.toBeInstanceOf(NotFoundError);
   });
+
+  test('the new task carries currentKind plan and its plan job is queued after commit', async () => {
+    const { intake, memory, queue } = setup();
+    const userId = memory.seedUser();
+    const task = await intake.create({ userId, prompt: 'x' });
+    expect(task.currentKind).toBe('plan');
+    expect(queue.jobs).toEqual([{ taskId: task.id, kind: 'plan', key: `${task.id}.plan.${task.lastSeq}` }]);
+  });
+
+  test('a refused task queues nothing', async () => {
+    const { intake, memory, queue } = setup({ MAX_ACTIVE_TASKS_PER_USER: '1' });
+    const userId = memory.seedUser();
+    await intake.create({ userId, prompt: 'first' });
+    await intake.create({ userId, prompt: 'second' }).catch(() => undefined);
+    expect(queue.jobs).toHaveLength(1);
+  });
+
+  test('if queueing fails the task still exists with currentKind plan, for the sweeper to pick up', async () => {
+    const { intake, memory, queue, tasks } = setup();
+    queue.enqueue = async () => {
+      throw new Error('valkey down');
+    };
+    const userId = memory.seedUser();
+    const task = await intake.create({ userId, prompt: 'x' });
+    expect(await tasks.get(task.id)).toMatchObject({ status: 'queued', currentKind: 'plan' });
+  });
 });

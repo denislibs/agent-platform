@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import type { Sandbox } from '@agent/core';
+import { SandboxError, type Sandbox } from '@agent/core';
 import { loadConfig } from '@agent/shared';
 import { DockerCli, DockerError, DockerSandboxProvider, type CliResult, type RunOptions } from '../src';
 import { requireSandboxImage } from './helpers';
@@ -201,7 +201,13 @@ describe('concurrent and foreign containers', () => {
     const taskId = crypto.randomUUID();
     await real.ok(['create', '--name', `agent-sbx-${taskId}`, cfg.image]);
     try {
-      await expect(provider.create(taskId)).rejects.toThrow(/no agent\.sandbox label/);
+      const err = await provider.create(taskId).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(SandboxError);
+      expect(err).toMatchObject({ code: 'foreign_container' });
+      expect((err as Error).message).toMatch(/no agent\.sandbox label/);
     } finally {
       await real.run(['rm', '-f', `agent-sbx-${taskId}`]);
       await real.run(['volume', 'rm', '-f', `agent-ws-${taskId}`]);

@@ -27,7 +27,9 @@ export type SandboxErrorCode =
   | 'not_running'
   | 'file_too_large'
   | 'not_a_file'
-  | 'fs_error';
+  | 'fs_error'
+  /** Контейнер с именем песочницы создан не провайдером: сбой инфраструктуры, модели не показывается. */
+  | 'foreign_container';
 
 export class SandboxError extends Error {
   constructor(

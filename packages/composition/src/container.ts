@@ -20,6 +20,7 @@ import {
   type DbHandle,
 } from '@agent/db';
 import { createLlm } from '@agent/llm';
+import { BullJobQueue, redisConnection, TaskLock, type RedisConnection } from '@agent/queue';
 import { DockerSandboxProvider } from '@agent/sandbox';
 import { BraveSearchProvider, UnavailableSearchProvider } from '@agent/search';
 import type { Config } from '@agent/shared';
@@ -28,6 +29,10 @@ import { S3FileStore } from '@agent/storage';
 export interface Cradle extends Ports, AgentServices {
   config: Config;
   database: DbHandle;
+  redis: RedisConnection;
+  // Воркеру нужен scheduleSweep, которого нет в порте JobQueue.
+  queue: BullJobQueue;
+  taskLock: TaskLock;
 }
 
 export type AppContainer = AwilixContainer<Cradle>;
@@ -40,16 +45,27 @@ export function buildContainer(appConfig: Config, overrides: Overrides = {}): Ap
     config: asValue(appConfig),
     clock: asFunction(() => new SystemClock()).singleton(),
     ids: asFunction(() => new CryptoIds()).singleton(),
-    database: asFunction(({ config }: Cradle) => createDb(config.databaseUrl))
+    database: asFunction(({ config }: Cradle) =>
+      createDb(config.databaseUrl, { lockTimeoutMs: config.db.lockTimeoutMs }),
+    )
       .singleton()
       .disposer(handle => handle.close()),
+    redis: asFunction(({ config }: Cradle) => redisConnection(config.valkeyUrl))
+      .singleton()
+      .disposer(r => r.quit().then(() => undefined)),
+    queue: asFunction(({ redis, config }: Cradle) => new BullJobQueue({ redis, config }))
+      .singleton()
+      .disposer(q => q.close()),
+    taskLock: asFunction(({ redis }: Cradle) => new TaskLock({ redis })).singleton(),
     tasks: asClass(DrizzleTaskRepository).singleton(),
     steps: asClass(DrizzleStepLog).singleton(),
     subtasks: asClass(DrizzleSubtaskRepository).singleton(),
     ledger: asClass(DrizzleCreditLedger).singleton(),
     files: asClass(DrizzleFileRepository).singleton(),
     // Через asFunction: в строгом PROXY-режиме обращение к незарегистрированному lockTimeoutMs бросило бы.
-    uow: asFunction(({ database }: Cradle) => new DrizzleUnitOfWork({ database })).singleton(),
+    uow: asFunction(
+      ({ database, config }: Cradle) => new DrizzleUnitOfWork({ database, lockTimeoutMs: config.db.lockTimeoutMs }),
+    ).singleton(),
     fileStore: asFunction(({ config }: Cradle) => new S3FileStore(config.s3)).singleton(),
     llm: asFunction(({ config }: Cradle) => createLlm(config.llm)).singleton(),
     sandboxes: asFunction(({ config }: Cradle) => new DockerSandboxProvider(config.sandbox)).singleton(),
