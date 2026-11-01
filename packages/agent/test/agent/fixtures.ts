@@ -28,3 +28,14 @@ export const calls = (...list: Array<[string, unknown]>): ScriptedTurn => ({
   toolCalls: list.map(([name, args]) => toolCall(name, args)),
   usage: { inputTokens: 100, outputTokens: 10 },
 });
+
+/** Задача в running с подзадачами в pending — как сразу после create_plan. */
+export async function planned(c: AgentTestCradle, goals: string[] = ['collect data']): Promise<Task> {
+  const task = await seedTask(c);
+  await c.tasks.transition(task.id, 'planning', { currentKind: 'plan' });
+  await c.subtasks.insertMany(
+    task.id,
+    goals.map(goal => ({ goal, context: '', doneCriteria: `${goal} done`, expectedOutputs: [] })),
+  );
+  return c.tasks.transition(task.id, 'running', { currentKind: 'execute' });
+}

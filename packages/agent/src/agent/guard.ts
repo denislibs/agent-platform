@@ -1,6 +1,7 @@
-import { isTerminalTask, type Config, type TaskStatus } from '@agent/shared';
+import { isTerminalTask, type Config, type JobKind, type TaskStatus } from '@agent/shared';
 import type { Clock, CreditLedger, Task, TaskPatch, TaskRepository, UnitOfWork } from '@agent/core';
 import type { StopReason } from './outcome';
+import { PROMPTS } from './prompts';
 
 export type GuardVerdict =
   | { kind: 'ok'; task: Task }
@@ -58,6 +59,37 @@ export class TaskGuard {
         agent: 'system',
         payload: { type: 'status', from: before.status, to: 'finalizing', ...(reason ? { reason } : {}) },
       });
+    });
+  }
+
+  /** ask_user: задача ждёт пользователя; currentKind — стадия, к которой вернуться (спецификация 4.2). */
+  async pause(task: Task, kind: JobKind): Promise<void> {
+    await this.deps.uow.run(async tx => {
+      await tx.tasks.transition(task.id, 'waiting_user', { currentKind: kind }, { expectedFrom: task.status });
+      await tx.steps.append({
+        taskId: task.id,
+        agent: 'system',
+        payload: { type: 'status', from: task.status, to: 'waiting_user' },
+      });
+    });
+  }
+
+  /** Ответ пользователя пришёл: обратно в planning или running, и заметка для модели. */
+  async resume(task: Task): Promise<Task> {
+    const to = task.currentKind === 'plan' ? 'planning' : 'running';
+    return this.deps.uow.run(async tx => {
+      const resumed = await tx.tasks.transition(task.id, to, {}, { expectedFrom: 'waiting_user' });
+      await tx.steps.append({
+        taskId: task.id,
+        agent: 'system',
+        payload: { type: 'status', from: 'waiting_user', to },
+      });
+      await tx.steps.append({
+        taskId: task.id,
+        agent: 'system',
+        payload: { type: 'message', role: 'user', text: PROMPTS.resumed, kind: 'note' },
+      });
+      return resumed;
     });
   }
 
