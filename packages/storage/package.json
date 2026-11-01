@@ -7,7 +7,9 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@agent/core": "workspace:*"
+    "@agent/core": "workspace:*",
+    "@aws-sdk/client-s3": "^3.1161.0",
+    "@aws-sdk/s3-request-presigner": "^3.1161.0"
   },
   "devDependencies": {
     "@agent/shared": "workspace:*",

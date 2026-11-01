@@ -10,6 +10,8 @@ const EnvSchema = z.object({
   DATABASE_URL: required,
   VALKEY_URL: required,
   S3_ENDPOINT: required,
+  /** Адрес S3 для браузера (presigned URL); не задан — S3_ENDPOINT. */
+  S3_PUBLIC_ENDPOINT: z.preprocess(blankAsUnset, z.url().optional()),
   S3_REGION: required,
   S3_BUCKET: required,
   S3_ACCESS_KEY_ID: required,
@@ -71,6 +73,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     valkeyUrl: e.VALKEY_URL,
     s3: {
       endpoint: e.S3_ENDPOINT,
+      publicEndpoint: e.S3_PUBLIC_ENDPOINT ?? e.S3_ENDPOINT,
       region: e.S3_REGION,
       bucket: e.S3_BUCKET,
       accessKeyId: e.S3_ACCESS_KEY_ID,

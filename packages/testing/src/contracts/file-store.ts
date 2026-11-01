@@ -65,10 +65,12 @@ export function fileStoreContract(
       expect(await store.exists(k)).toBe(false);
     });
 
-    test('presigned URLs are produced for a key', () => {
+    test('presigned URLs are produced for a key', async () => {
       const k = key('report.csv');
-      expect(store.presignGet(k, 60)).toContain('report.csv');
-      expect(store.presignPut(k, 'text/csv', 60)).toContain('report.csv');
+      expect(await store.presignGet(k, { downloadName: 'report.csv', expiresInSec: 60 })).toContain('report.csv');
+      expect(await store.presignPut(k, { contentType: 'text/csv', size: 10, expiresInSec: 60 })).toContain(
+        'report.csv',
+      );
     });
   });
 }

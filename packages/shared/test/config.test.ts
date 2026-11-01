@@ -34,6 +34,14 @@ describe('loadConfig', () => {
     });
   });
 
+  test('presigned URLs use S3_PUBLIC_ENDPOINT, falling back to S3_ENDPOINT', () => {
+    expect(loadConfig(base).s3.publicEndpoint).toBe(base.S3_ENDPOINT);
+    expect(loadConfig({ ...base, S3_PUBLIC_ENDPOINT: 'http://localhost:53900' }).s3.publicEndpoint).toBe(
+      'http://localhost:53900',
+    );
+    expect(loadConfig({ ...base, S3_PUBLIC_ENDPOINT: '' }).s3.publicEndpoint).toBe(base.S3_ENDPOINT);
+  });
+
   test('worker and db settings have defaults', () => {
     const c = loadConfig(base);
     expect(c.worker).toEqual({

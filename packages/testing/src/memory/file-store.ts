@@ -1,4 +1,4 @@
-import { NotFoundError, type FileStore } from '@agent/core';
+import { NotFoundError, type FileStore, type PresignGetOptions, type PresignPutOptions } from '@agent/core';
 
 export class InMemoryFileStore implements FileStore {
   readonly objects = new Map<string, { bytes: Uint8Array; contentType?: string | undefined }>();
@@ -31,11 +31,13 @@ export class InMemoryFileStore implements FileStore {
     this.objects.delete(key);
   }
 
-  presignGet(key: string, expiresInSec = 900): string {
-    return `memory://${key}?op=get&expires=${expiresInSec}`;
+  async presignGet(key: string, opts: PresignGetOptions = {}): Promise<string> {
+    const download = opts.downloadName === undefined ? '' : `&download=${encodeURIComponent(opts.downloadName)}`;
+    return `memory://${key}?op=get&expires=${opts.expiresInSec ?? 900}${download}`;
   }
 
-  presignPut(key: string, contentType: string, expiresInSec = 900): string {
-    return `memory://${key}?op=put&type=${encodeURIComponent(contentType)}&expires=${expiresInSec}`;
+  async presignPut(key: string, opts: PresignPutOptions): Promise<string> {
+    const type = encodeURIComponent(opts.contentType);
+    return `memory://${key}?op=put&type=${type}&size=${opts.size}&expires=${opts.expiresInSec ?? 900}`;
   }
 }

@@ -91,6 +91,14 @@
               {
                 "name": "ioredis",
                 "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "@aws-sdk/client-s3",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "@aws-sdk/s3-request-presigner",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
               }
             ],
             "patterns": [
@@ -111,7 +119,8 @@
                   "@agent/queue/**",
                   "@agent/worker/**",
                   "bullmq/**",
-                  "ioredis/**"
+                  "ioredis/**",
+                  "@aws-sdk/**"
                 ],
                 "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
               }
@@ -182,6 +191,14 @@
               {
                 "name": "ioredis",
                 "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "@aws-sdk/client-s3",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "@aws-sdk/s3-request-presigner",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
               }
             ],
             "patterns": [
@@ -199,7 +216,8 @@
                   "@agent/composition/**",
                   "@agent/queue/**",
                   "@agent/worker/**",
-                  "ioredis/**"
+                  "ioredis/**",
+                  "@aws-sdk/**"
                 ],
                 "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
               },
@@ -270,6 +288,14 @@
               {
                 "name": "ioredis",
                 "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "@aws-sdk/client-s3",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "@aws-sdk/s3-request-presigner",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
               }
             ],
             "patterns": [
@@ -287,7 +313,8 @@
                   "@agent/composition/**",
                   "@agent/queue/**",
                   "@agent/worker/**",
-                  "ioredis/**"
+                  "ioredis/**",
+                  "@aws-sdk/**"
                 ],
                 "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
               }
