@@ -19,6 +19,28 @@ describe('safeFileName', () => {
   test('a name made only of control characters is rejected', () => {
     expect(() => safeFileName('\u0001\u0002')).toThrow('invalid file name');
   });
+
+  test('format characters (bidi overrides, zero-width) and line separators are stripped', () => {
+    expect(safeFileName('report\u202Etxt.exe')).toBe('reporttxt.exe');
+    expect(safeFileName('a\u200Bb\u200D.csv')).toBe('ab.csv');
+    expect(safeFileName('a\u2028b\u2029.csv')).toBe('ab.csv');
+    expect(safeFileName('a\u0085b.csv')).toBe('ab.csv');
+    expect(() => safeFileName('\u200B\u202E')).toThrow('invalid file name');
+  });
+
+  test('leading dashes are stripped so the name is never read as an option', () => {
+    expect(safeFileName('-rf')).toBe('rf');
+    expect(safeFileName('--help.csv')).toBe('help.csv');
+    expect(safeFileName(' - -x.csv')).toBe('x.csv');
+    expect(safeFileName('a-b-.csv')).toBe('a-b-.csv');
+    expect(() => safeFileName('---')).toThrow('invalid file name');
+  });
+
+  test('the name is trimmed again after the length cap', () => {
+    const name = safeFileName(`${'a'.repeat(119)} b.txt`);
+    expect(name).toBe('a'.repeat(119));
+    expect(name).toBe(name.trim());
+  });
 });
 
 describe('baseName', () => {
@@ -138,6 +160,26 @@ describe('GET /api/files/:id', () => {
       `memory://tasks/${task.id}/outputs/charts/report.html?op=get&expires=900&download=report.html`,
     );
     expect(res.headers.get('cache-control')).toBe('no-store');
+  });
+
+  test('an input file whose object was never uploaded is 409 upload_incomplete, not a redirect to NoSuchKey', async () => {
+    const t = setupApi();
+    const { user, headers } = await t.signIn();
+    const storageKey = `inputs/${user.id}/${crypto.randomUUID()}/later.csv`;
+    const file = await t.c.files.insert({
+      userId: user.id,
+      kind: 'input',
+      path: 'later.csv',
+      storageKey,
+      size: 5,
+      mime: 'text/csv',
+    });
+    const res = await t.call('GET', `/api/files/${file.id}`, { headers });
+    expect(res.status).toBe(409);
+    expect(res.headers.get('location')).toBeNull();
+    expect(ApiErrorSchema.parse(await res.json()).error.code).toBe('upload_incomplete');
+    await t.c.fileStore.put(storageKey, 'a,b\n', 'text/csv');
+    expect((await t.call('GET', `/api/files/${file.id}`, { headers })).status).toBe(302);
   });
 
   test("another user's file, an unknown id and a malformed id are all 404", async () => {

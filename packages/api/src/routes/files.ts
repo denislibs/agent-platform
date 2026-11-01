@@ -39,6 +39,9 @@ export function fileRoutes(app: Hono<ApiEnv>, deps: ApiDeps): void {
   app.get('/api/files/:id', async c => {
     const file = await deps.files.get(c.req.param('id'));
     if (!file || file.userId !== c.get('user').id) throw new ApiError(404, 'not_found', 'file not found');
+    // Входной файл мог быть объявлен, но не загружен: ссылка на несуществующий объект вела бы на NoSuchKey.
+    if (file.kind === 'input' && !(await deps.fileStore.exists(file.storageKey)))
+      throw new ApiError(409, 'upload_incomplete', `${file.path} has not been uploaded yet`);
     const url = await deps.fileStore.presignGet(file.storageKey, { downloadName: baseName(file.path) });
     c.header('Cache-Control', 'no-store');
     return c.redirect(url, 302);

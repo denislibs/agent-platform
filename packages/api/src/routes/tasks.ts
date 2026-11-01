@@ -19,12 +19,17 @@ export function taskRoutes(app: Hono<ApiEnv>, deps: ApiDeps): void {
     const body = await parseJson(c, CreateTaskBodySchema);
     const fileIds = [...new Set(body.fileIds)];
     // Понятные ошибки до приёма задачи; гонку (файл привязали параллельно) TaskIntake ловит в транзакции.
+    const names = new Set<string>();
     for (const id of fileIds) {
       const file = await deps.files.get(id);
       if (!file || file.userId !== user.id || file.taskId !== null || file.kind !== 'input')
         throw new ApiError(404, 'not_found', 'file not found');
       if (!(await deps.fileStore.exists(file.storageKey)))
         throw new ApiError(409, 'upload_incomplete', `${file.path} has not been uploaded yet`);
+      // В песочнице все входные файлы лежат в inputs/<имя>: второй файл с тем же именем затёр бы первый.
+      if (names.has(file.path))
+        throw new ApiError(400, 'bad_request', `two attached files are named ${file.path}; rename one of them`);
+      names.add(file.path);
     }
     const task = await deps.intake.create({ userId: user.id, prompt: body.prompt, fileIds });
     const response: TaskEnvelope = { task: toTaskDetail(task) };

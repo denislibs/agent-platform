@@ -45,6 +45,24 @@ describe('POST /api/tasks', () => {
     expect(await t.c.tasks.listForUser(user.id)).toEqual([]);
   });
 
+  test('two files with the same name would overwrite each other in the sandbox: 400 naming the file, nothing created', async () => {
+    const t = setupApi();
+    const { user, headers } = await t.signIn();
+    const a = await uploaded(t, user.id, 'data.csv');
+    const b = await uploaded(t, user.id, 'data.csv');
+    const other = await uploaded(t, user.id, 'Data.csv');
+    const res = await t.call('POST', '/api/tasks', { headers, body: { prompt: 'x', fileIds: [a.id, other.id, b.id] } });
+    expect(res.status).toBe(400);
+    const body = ApiErrorSchema.parse(await res.json());
+    expect(body.error.code).toBe('bad_request');
+    expect(body.error.message).toContain('data.csv');
+    expect(t.c.queue.jobs).toEqual([]);
+    expect((await t.c.files.get(a.id))!.taskId).toBeNull();
+    // Имена, различающиеся регистром, — разные файлы.
+    const ok = await t.call('POST', '/api/tasks', { headers, body: { prompt: 'x', fileIds: [a.id, other.id] } });
+    expect(ok.status).toBe(201);
+  });
+
   test('a file whose upload never reached storage is 409 upload_incomplete', async () => {
     const t = setupApi();
     const { user, headers } = await t.signIn();
