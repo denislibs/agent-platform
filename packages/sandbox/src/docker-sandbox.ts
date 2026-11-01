@@ -32,7 +32,13 @@ const TASK_LABEL = 'agent.task';
 const BROWSERD_HEALTH = 'http://127.0.0.1:9230/health';
 const BROWSERD_ACTION = 'http://127.0.0.1:9230/action';
 const SAFE_TASK_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}$/;
-const DAEMON_ERROR = /^Error response from daemon/i;
+/**
+ * Ошибка самого клиента docker, а не команды в контейнере: ответ демона с ошибкой или демон недоступен
+ * (Docker/OrbStack не запущен, сокет не тот). Ищется в любом месте stderr: перед ней бывают предупреждения
+ * клиента. Совпадение перепроверяется через inspect — такой же текст может напечатать и сама команда.
+ */
+const DAEMON_ERROR =
+  /Error response from daemon|Cannot connect to the Docker daemon|failed to connect to the docker API|error during connect/i;
 /** curl: не удалось подключиться — browserd сейчас не слушает (например, перезапускается). */
 const CURL_COULDNT_CONNECT = 7;
 const NOT_RUNNING = /is not running|is paused|is restarting/i;

@@ -15,14 +15,19 @@ export function formatSnapshot(s: PageSnapshot): string {
   return lines.join('\n');
 }
 
-export const PAGE_CHANGED_PREFIX =
-  'The page changed while the action ran; the action may have completed. Current page:\n\n';
+const ACTION_ERROR_LIMIT = 300;
+
+/** Пометка перед снимком после сбоя click/type: исходная ошибка (до 300 символов) и что действие могло выполниться. */
+export function pageChangedPrefix(error: string): string {
+  const reason = error.length > ACTION_ERROR_LIMIT ? `${error.slice(0, ACTION_ERROR_LIMIT)}…` : error;
+  return `The action failed (${reason}); the page may have changed and the action may have completed. Current page:\n\n`;
+}
 
 /**
  * Действие браузера; на browser_failed (browserd мог перезапустить Chromium, страница могла уйти в навигацию):
  * open и scroll повторяются один раз — они идемпотентны. click и type не повторяются никогда: чаще всего сбой —
  * это навигация, начатая самим действием, и повтор отправил бы форму второй раз. Вместо повтора — снимок
- * текущей страницы с пометкой, что действие могло выполниться; не удался и снимок — модель видит исходную ошибку.
+ * текущей страницы с исходной ошибкой и пометкой, что действие могло выполниться; не удался и снимок — модель видит исходную ошибку.
  * browser_unavailable (сам browserd недоступен) не ловится: это инфраструктура, её обрабатывает цикл.
  */
 async function browse(action: BrowserAction, ctx: ToolContext): Promise<ToolOutcome> {
@@ -41,7 +46,7 @@ async function browse(action: BrowserAction, ctx: ToolContext): Promise<ToolOutc
       if (snapErr instanceof SandboxError && snapErr.code === 'browser_failed') throw err;
       throw snapErr;
     }
-    return pageOutcome(current, PAGE_CHANGED_PREFIX);
+    return pageOutcome(current, pageChangedPrefix(err.message));
   }
 }
 

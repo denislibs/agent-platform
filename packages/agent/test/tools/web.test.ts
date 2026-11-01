@@ -200,9 +200,28 @@ describe('browser tools', () => {
       expect(actions).toEqual([action, { type: 'snapshot', shot: '7-0' }]);
       expect(r.ok).toBe(true);
       expect(r.output).toBe(
-        `The page changed while the action ran; the action may have completed. Current page:\n\n${formatSnapshot(after)}`,
+        'The action failed (Execution context was destroyed); the page may have changed and the action may have ' +
+          `completed. Current page:\n\n${formatSnapshot(after)}`,
       );
     }
+  });
+
+  test('the original click error in the fallback prefix is capped at 300 characters', async () => {
+    let calls = 0;
+    const ctx = await toolContext({
+      handlers: {
+        browser: () => {
+          calls += 1;
+          if (calls === 1) throw new SandboxError('browser_failed', `boom ${'x'.repeat(1000)}`);
+          return page();
+        },
+      },
+    });
+    const r = await runToolCall(browserTools, call('browser_click', { id: 1 }), ctx);
+    expect(r.ok).toBe(true);
+    expect(r.output.startsWith(`The action failed (boom ${'x'.repeat(295)}…); the page may have changed`)).toBe(true);
+    expect(r.output).not.toContain('x'.repeat(296));
+    expect(r.output.endsWith(formatSnapshot(page()))).toBe(true);
   });
 
   test('when the follow-up snapshot also fails, the original click error is the result', async () => {
