@@ -4,6 +4,7 @@ import { errorMessage } from '@agent/core';
 import { requireUser } from './auth/middleware';
 import type { ApiDeps, ApiEnv } from './deps';
 import { mapError } from './errors';
+import { fileRoutes } from './routes/files';
 import { meRoutes } from './routes/me';
 import { taskActionRoutes } from './routes/task-actions';
 import { taskRoutes } from './routes/tasks';
@@ -51,5 +52,6 @@ export function createApp(deps: ApiDeps): Hono<ApiEnv> {
   meRoutes(app, deps);
   taskRoutes(app, deps);
   taskActionRoutes(app, deps);
+  fileRoutes(app, deps);
   return app;
 }

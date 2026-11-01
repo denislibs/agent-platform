@@ -91,6 +91,17 @@ describe('POST /api/tasks/:id/messages', () => {
     expect(res.status).toBe(404);
   });
 
+  test('a lone surrogate in the answer is 400, and nothing is written or queued', async () => {
+    const t = setupApi();
+    const { user, headers } = await t.signIn();
+    const task = await pausedTask(t, user.id);
+    const res = await t.call('POST', `/api/tasks/${task.id}/messages`, { headers, body: { text: 'EU\udc00' } });
+    expect(res.status).toBe(400);
+    expect(await errorCode(res)).toBe('bad_request');
+    expect((await t.c.tasks.get(task.id))!.lastSeq).toBe(2);
+    expect(t.c.queue.jobs).toEqual([]);
+  });
+
   test('two replies to the same pause are both accepted while the task waits, each keyed by its own lastSeq', async () => {
     const t = setupApi();
     const { user, headers } = await t.signIn();

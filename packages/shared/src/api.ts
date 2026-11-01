@@ -27,17 +27,32 @@ export const MAX_TASKS_PAGE = 100;
 /** Postgres `text` не хранит U+0000: такая строка дала бы 500 при записи, поэтому отсекается как 400 на входе. */
 export const noNul = (value: string): boolean => !value.includes('\u0000');
 const NO_NUL_MESSAGE = 'must not contain NUL characters';
+/** Непарный суррогат UTF-16 Postgres (text и jsonb) не принимает: 500 при записи, поэтому это 400 на входе. */
+export const wellFormed = (value: string): boolean => value.isWellFormed();
+const WELL_FORMED_MESSAGE = 'must be well-formed Unicode (no lone surrogates)';
 
 export const CreateTaskBodySchema = z.object({
-  prompt: z.string().trim().min(1).max(MAX_PROMPT_CHARS).refine(noNul, NO_NUL_MESSAGE),
+  prompt: z
+    .string()
+    .trim()
+    .min(1)
+    .max(MAX_PROMPT_CHARS)
+    .refine(noNul, NO_NUL_MESSAGE)
+    .refine(wellFormed, WELL_FORMED_MESSAGE),
   fileIds: z.array(z.uuid()).max(MAX_FILES_PER_TASK).default([]),
 });
 export const ReplyBodySchema = z.object({
-  text: z.string().trim().min(1).max(MAX_PROMPT_CHARS).refine(noNul, NO_NUL_MESSAGE),
+  text: z
+    .string()
+    .trim()
+    .min(1)
+    .max(MAX_PROMPT_CHARS)
+    .refine(noNul, NO_NUL_MESSAGE)
+    .refine(wellFormed, WELL_FORMED_MESSAGE),
 });
 /** contentType — без параметров (`text/csv`, не `text/csv; charset=utf-8`); неизвестный тип — application/octet-stream. */
 export const UploadBodySchema = z.object({
-  name: z.string().min(1).max(255).refine(noNul, NO_NUL_MESSAGE),
+  name: z.string().min(1).max(255).refine(noNul, NO_NUL_MESSAGE).refine(wellFormed, WELL_FORMED_MESSAGE),
   contentType: z
     .string()
     .max(127)

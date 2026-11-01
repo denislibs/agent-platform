@@ -233,6 +233,14 @@ describe('hardening', () => {
     expect(await errorCode(res)).toBe('bad_request');
   });
 
+  test('a lone surrogate in the prompt is 400 bad_request, not a Postgres failure', async () => {
+    const t = setupApi();
+    const { headers } = await t.signIn();
+    const res = await t.call('POST', '/api/tasks', { headers, body: { prompt: 'a\ud800b' } });
+    expect(res.status).toBe(400);
+    expect(await errorCode(res)).toBe('bad_request');
+  });
+
   test('every task route requires a session', async () => {
     const t = setupApi();
     for (const [method, path] of [

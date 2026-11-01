@@ -7,6 +7,7 @@ import {
   MAX_FILES_PER_TASK,
   ReplyBodySchema,
   UploadBodySchema,
+  wellFormed,
 } from '@agent/shared';
 
 describe('formatCredits', () => {
@@ -62,4 +63,14 @@ test('NUL characters are rejected in the prompt, the reply text and the upload n
   expect(ReplyBodySchema.safeParse({ text: 'a\u0000b' }).success).toBe(false);
   expect(UploadBodySchema.safeParse({ name: 'a\u0000.csv', contentType: 'text/csv', size: 1 }).success).toBe(false);
   expect(ReplyBodySchema.safeParse({ text: 'fine' }).success).toBe(true);
+});
+
+test('lone UTF-16 surrogates are rejected in the prompt, the reply text and the upload name', () => {
+  expect(CreateTaskBodySchema.safeParse({ prompt: 'a\ud800b' }).success).toBe(false);
+  expect(ReplyBodySchema.safeParse({ text: 'a\udc00' }).success).toBe(false);
+  expect(UploadBodySchema.safeParse({ name: 'a\ud83d.csv', contentType: 'text/csv', size: 1 }).success).toBe(false);
+  // Парный суррогат (эмодзи) — корректная строка.
+  expect(CreateTaskBodySchema.safeParse({ prompt: 'ok \ud83d\ude00' }).success).toBe(true);
+  expect(wellFormed('plain')).toBe(true);
+  expect(wellFormed('\ud800')).toBe(false);
 });
