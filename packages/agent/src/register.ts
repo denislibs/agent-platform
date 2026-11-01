@@ -3,6 +3,7 @@ import {
   Compactor,
   ExecutorStage,
   Finalizer,
+  JobRunner,
   ModelGateway,
   PlannerStage,
   ResultComposer,
@@ -21,6 +22,7 @@ export interface AgentServices {
   plannerStage: PlannerStage;
   composer: ResultComposer;
   finalizer: Finalizer;
+  runner: JobRunner;
 }
 
 /**
@@ -38,5 +40,6 @@ export function agentServices(): { [K in keyof AgentServices]: Resolver<AgentSer
     plannerStage: asClass(PlannerStage).singleton(),
     composer: asClass(ResultComposer).singleton(),
     finalizer: asClass(Finalizer).singleton(),
+    runner: asClass(JobRunner).singleton(),
   };
 }
