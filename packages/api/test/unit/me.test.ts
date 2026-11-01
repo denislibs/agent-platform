@@ -19,3 +19,11 @@ test('a negative balance is shown as is', async () => {
   const body = MeResponseSchema.parse(await (await t.call('GET', '/api/me', { headers })).json());
   expect(body.balance).toEqual({ millicredits: -250, credits: '-0.25' });
 });
+
+test('the profile is projected to id, email, name and image only', async () => {
+  const t = setupApi();
+  const { user } = await t.signIn();
+  const cookie = `session=${t.auth.signIn({ ...user, emailVerified: true, role: 'admin' } as typeof user)}`;
+  const body = (await (await t.call('GET', '/api/me', { headers: { cookie } })).json()) as { user: object };
+  expect(body.user).toEqual(user);
+});

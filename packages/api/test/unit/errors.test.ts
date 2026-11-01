@@ -1,4 +1,6 @@
 import { expect, test } from 'bun:test';
+import { HTTPException } from 'hono/http-exception';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { InvalidTransitionError, LimitExceededError, NotFoundError } from '@agent/core';
 import { ApiError, mapError } from '../../src';
 
@@ -27,6 +29,26 @@ test('an ApiError keeps its status, code and message; anything else is a bare 50
     body: { error: { code: 'upload_incomplete', message: 'upload a.csv first' } },
   });
   expect(mapError(new Error('/Users/me/secret'))).toEqual({
+    status: 500,
+    body: { error: { code: 'internal', message: 'internal error' } },
+  });
+});
+
+const secret = (status: ContentfulStatusCode) => new HTTPException(status, { message: '/Users/me/secret' });
+
+test('a Hono HTTPException maps by status with a fixed message, never its own text', () => {
+  expect(mapError(secret(400))).toEqual({
+    status: 400,
+    body: { error: { code: 'bad_request', message: 'bad request' } },
+  });
+  expect(mapError(secret(401)).body.error.code).toBe('unauthorized');
+  expect(mapError(secret(404)).body.error.code).toBe('not_found');
+  expect(mapError(secret(413))).toEqual({
+    status: 413,
+    body: { error: { code: 'payload_too_large', message: 'payload too large' } },
+  });
+  expect(mapError(secret(418))).toMatchObject({ status: 418, body: { error: { code: 'bad_request' } } });
+  expect(mapError(secret(503))).toEqual({
     status: 500,
     body: { error: { code: 'internal', message: 'internal error' } },
   });

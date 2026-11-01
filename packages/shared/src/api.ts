@@ -40,7 +40,7 @@ export const UploadBodySchema = z.object({
 });
 export const ListTasksQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(MAX_TASKS_PAGE).default(20),
-  before: z.string().min(1).optional(),
+  before: z.string().min(1).max(512).optional(),
 });
 
 // ── Ответы ──

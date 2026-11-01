@@ -1,3 +1,4 @@
+import { HTTPException } from 'hono/http-exception';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { InvalidTransitionError, LimitExceededError, NotFoundError } from '@agent/core';
 import type { ApiErrorBody, ApiErrorCode } from '@agent/shared';
@@ -27,5 +28,20 @@ export function mapError(err: unknown): { status: ContentfulStatusCode; body: Ap
       : { status: 429, body: body('too_many_active_tasks', err.message) };
   if (err instanceof InvalidTransitionError)
     return { status: 409, body: body('conflict', 'the task has changed its state; reload it') };
+  if (err instanceof HTTPException && err.status < 500) return mapHttpException(err.status);
   return { status: 500, body: body('internal', 'internal error') };
+}
+
+/** Исключения самого Hono (bodyLimit и др.): код по статусу, текст фиксированный, `err.message` не показываем. */
+function mapHttpException(status: ContentfulStatusCode): { status: ContentfulStatusCode; body: ApiErrorBody } {
+  switch (status) {
+    case 401:
+      return { status, body: body('unauthorized', 'sign in to continue') };
+    case 404:
+      return { status, body: body('not_found', 'not found') };
+    case 413:
+      return { status, body: body('payload_too_large', 'payload too large') };
+    default:
+      return { status, body: body('bad_request', 'bad request') };
+  }
 }

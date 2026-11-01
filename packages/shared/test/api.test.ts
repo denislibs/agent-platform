@@ -37,6 +37,8 @@ describe('API schemas', () => {
     expect(ListTasksQuerySchema.parse({ limit: '5', before: 'c' })).toEqual({ limit: 5, before: 'c' });
     expect(ListTasksQuerySchema.safeParse({ limit: '0' }).success).toBe(false);
     expect(ListTasksQuerySchema.safeParse({ limit: '101' }).success).toBe(false);
+    expect(ListTasksQuerySchema.safeParse({ before: 'x'.repeat(512) }).success).toBe(true);
+    expect(ListTasksQuerySchema.safeParse({ before: 'x'.repeat(513) }).success).toBe(false);
   });
 
   test('an upload declares a name, a plain mime type and a positive integer size', () => {
