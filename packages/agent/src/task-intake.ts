@@ -1,4 +1,4 @@
-import { LimitExceededError, type JobQueue, type Task, type UnitOfWork } from '@agent/core';
+import { errorMessage, LimitExceededError, type JobQueue, type Logger, type Task, type UnitOfWork } from '@agent/core';
 import type { Config } from '@agent/shared';
 import { jobKey } from './agent';
 
@@ -15,7 +15,7 @@ export interface NewTaskInput {
  * После коммита ставится job `plan`.
  */
 export class TaskIntake {
-  constructor(private readonly deps: { uow: UnitOfWork; config: Config; queue: JobQueue }) {}
+  constructor(private readonly deps: { uow: UnitOfWork; config: Config; queue: JobQueue; logger: Logger }) {}
 
   async create(input: NewTaskInput): Promise<Task> {
     const { userId, prompt } = input;
@@ -44,7 +44,12 @@ export class TaskIntake {
     // Шаг записан — теперь job (спецификация 8). Сбой постановки не теряет задачу: сборщик поставит plan сам.
     await this.deps.queue
       .enqueue({ taskId: created.id, kind: 'plan' }, jobKey(created.id, 'plan', created.lastSeq))
-      .catch(() => undefined);
+      .catch(err =>
+        this.deps.logger.warn('could not queue the plan job; the sweeper will retry', {
+          taskId: created.id,
+          error: errorMessage(err),
+        }),
+      );
     return created;
   }
 }

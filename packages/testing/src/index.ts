@@ -1,3 +1,4 @@
+export * from './capturing';
 export * from './fixed-clock';
 export * from './memory/state';
 export * from './memory/repositories';

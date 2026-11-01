@@ -73,6 +73,9 @@ describe('Sweeper', () => {
     const r = await c.sweeper.sweep();
     expect(r).toMatchObject({ destroyed: 2, failed: 1 });
     expect((await c.sandboxes.list()).map(s => s.taskId)).toEqual([a.id]);
+    expect(c.logger.entries).toMatchObject([
+      { level: 'warn', fields: { sandboxId: `agent-sbx-${a.id}`, taskId: a.id, error: 'docker is gone' } },
+    ]);
   });
 
   test('a task whose user already replied is not timed out: the job will resume it', async () => {
@@ -122,5 +125,6 @@ describe('Sweeper', () => {
     const r = await c.sweeper.sweep();
     expect(r).toMatchObject({ requeued: 1, failed: 1 });
     expect(c.queue.jobs.map(j => j.taskId)).toEqual([b.id]);
+    expect(c.logger.entries).toMatchObject([{ level: 'warn', fields: { taskId: a.id, error: 'valkey is gone' } }]);
   });
 });

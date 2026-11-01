@@ -1,4 +1,11 @@
-import { InvalidTransitionError, type JobQueue, type SandboxProvider, type TaskRepository } from '@agent/core';
+import {
+  errorMessage,
+  InvalidTransitionError,
+  type JobQueue,
+  type Logger,
+  type SandboxProvider,
+  type TaskRepository,
+} from '@agent/core';
 import { isTerminalTask, type Config } from '@agent/shared';
 import type { TaskGuard } from './guard';
 import { jobKey, kindForStatus } from './jobs';
@@ -23,6 +30,7 @@ export class Sweeper {
       queue: JobQueue;
       guard: TaskGuard;
       config: Config;
+      logger: Logger;
     },
   ) {}
 
@@ -51,8 +59,9 @@ export class Sweeper {
       try {
         await queue.enqueue({ taskId: task.id, kind }, jobKey(task.id, kind, task.lastSeq));
         result.count++;
-      } catch {
+      } catch (err) {
         result.failed++; // подхватит следующий проход
+        this.deps.logger.warn('sweeper could not re-queue a task', { taskId: task.id, error: errorMessage(err) });
       }
     }
     return result;
@@ -83,7 +92,12 @@ export class Sweeper {
         result.count++;
       } catch (err) {
         // Задачу уже ведёт другой job — это не сбой.
-        if (!(err instanceof InvalidTransitionError)) result.failed++;
+        if (err instanceof InvalidTransitionError) continue;
+        result.failed++;
+        this.deps.logger.warn('sweeper could not time out a waiting task', {
+          taskId: task.id,
+          error: errorMessage(err),
+        });
       }
     }
     return result;
@@ -101,8 +115,13 @@ export class Sweeper {
         if (!sandbox) continue;
         await sandbox.destroy();
         result.count++;
-      } catch {
+      } catch (err) {
         result.failed++; // следующий проход попробует снова
+        this.deps.logger.warn('sweeper could not destroy a sandbox', {
+          sandboxId: info.id,
+          taskId: info.taskId,
+          error: errorMessage(err),
+        });
       }
     }
     return result;

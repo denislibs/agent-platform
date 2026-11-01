@@ -97,12 +97,13 @@ describe('TaskIntake', () => {
   });
 
   test('if queueing fails the task still exists with currentKind plan, for the sweeper to pick up', async () => {
-    const { intake, memory, queue, tasks } = setup();
+    const { intake, memory, queue, tasks, logger } = setup();
     queue.enqueue = async () => {
       throw new Error('valkey down');
     };
     const userId = memory.seedUser();
     const task = await intake.create({ userId, prompt: 'x' });
     expect(await tasks.get(task.id)).toMatchObject({ status: 'queued', currentKind: 'plan' });
+    expect(logger.entries).toMatchObject([{ level: 'warn', fields: { taskId: task.id, error: 'valkey down' } }]);
   });
 });

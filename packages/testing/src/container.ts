@@ -9,6 +9,7 @@ import {
 } from 'awilix';
 import type { Ports } from '@agent/core';
 import type { Config } from '@agent/shared';
+import { CapturingLogger, CapturingMailer } from './capturing';
 import { FixedClock, SequentialIds } from './fixed-clock';
 import { InMemoryFileStore } from './memory/file-store';
 import {
@@ -35,6 +36,8 @@ export interface TestCradle extends Ports {
   sandboxes: InMemorySandboxProvider;
   search: FakeSearchProvider;
   queue: InMemoryJobQueue;
+  logger: CapturingLogger;
+  mailer: CapturingMailer;
 }
 
 export type TestOverrides = Partial<{ [K in keyof TestCradle]: Resolver<TestCradle[K]> }>;
@@ -62,6 +65,8 @@ export function createTestContainer(overrides: TestOverrides = {}): AwilixContai
     sandboxes: asFunction(() => new InMemorySandboxProvider()).singleton(),
     search: asFunction(() => new FakeSearchProvider()).singleton(),
     queue: asFunction(() => new InMemoryJobQueue()).singleton(),
+    logger: asFunction(() => new CapturingLogger()).singleton(),
+    mailer: asFunction(() => new CapturingMailer()).singleton(),
     ...overrides,
   });
   return container;

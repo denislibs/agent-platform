@@ -8,7 +8,7 @@ import {
   type Resolver,
 } from 'awilix';
 import { agentServices, type AgentServices } from '@agent/agent';
-import { CryptoIds, SystemClock, type Ports } from '@agent/core';
+import { ConsoleLogger, CryptoIds, LogMailer, SystemClock, type Ports } from '@agent/core';
 import {
   createDb,
   DrizzleCreditLedger,
@@ -74,6 +74,9 @@ export function buildContainer(appConfig: Config, overrides: Overrides = {}): Ap
         ? new BraveSearchProvider({ apiKey: config.search.braveApiKey, baseUrl: config.search.braveBaseUrl })
         : new UnavailableSearchProvider(),
     ).singleton(),
+    // Через asFunction: asClass передал бы конструктору cradle.
+    logger: asFunction(() => new ConsoleLogger()).singleton(),
+    mailer: asFunction(({ logger }: Cradle) => new LogMailer({ logger })).singleton(),
     ...agentServices(),
     ...overrides,
   });

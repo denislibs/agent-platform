@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, expect, test } from 'bun:test';
 import { asValue } from 'awilix';
-import { CryptoIds, LimitExceededError, SystemClock } from '@agent/core';
+import { ConsoleLogger, CryptoIds, LimitExceededError, LogMailer, SystemClock } from '@agent/core';
 import { ExecutorStage, PlannerStage, ResultComposer } from '@agent/agent';
 import { buildContainer, type AppContainer } from '@agent/composition';
 import {
@@ -45,6 +45,8 @@ test('registers a real adapter for every port', () => {
   expect(c.taskLock).toBeInstanceOf(TaskLock);
   expect(c.clock).toBeInstanceOf(SystemClock);
   expect(c.ids).toBeInstanceOf(CryptoIds);
+  expect(c.logger).toBeInstanceOf(ConsoleLogger);
+  expect(c.mailer).toBeInstanceOf(LogMailer);
   expect(typeof c.llm.chat).toBe('function');
   expect(c.config).toBe(config);
 });
