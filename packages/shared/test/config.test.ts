@@ -34,6 +34,14 @@ describe('loadConfig', () => {
     });
   });
 
+  test('presigned URLs use S3_PUBLIC_ENDPOINT, falling back to S3_ENDPOINT', () => {
+    expect(loadConfig(base).s3.publicEndpoint).toBe(base.S3_ENDPOINT);
+    expect(loadConfig({ ...base, S3_PUBLIC_ENDPOINT: 'http://localhost:53900' }).s3.publicEndpoint).toBe(
+      'http://localhost:53900',
+    );
+    expect(loadConfig({ ...base, S3_PUBLIC_ENDPOINT: '' }).s3.publicEndpoint).toBe(base.S3_ENDPOINT);
+  });
+
   test('worker and db settings have defaults', () => {
     const c = loadConfig(base);
     expect(c.worker).toEqual({
@@ -69,7 +77,22 @@ describe('loadConfig', () => {
   });
 
   test('lists every missing variable in one error', () => {
-    expect(() => loadConfig({})).toThrow(/DATABASE_URL.*LITELLM_API_KEY/s);
+    expect(() => loadConfig({})).toThrow(/DATABASE_URL.*S3_SECRET_ACCESS_KEY/s);
+  });
+
+  test('LiteLLM settings are optional (only the worker needs them); blank means unset', () => {
+    const {
+      LITELLM_BASE_URL: _url,
+      LITELLM_API_KEY: _key,
+      PLANNER_MODEL: _planner,
+      EXECUTOR_MODEL: _executor,
+      ...withoutLlm
+    } = base;
+    const c = loadConfig(withoutLlm);
+    expect(c.llm).toMatchObject({ baseURL: null, apiKey: null, models: { planner: null, executor: null } });
+    expect(loadConfig({ ...base, LITELLM_API_KEY: '' }).llm.apiKey).toBeNull();
+    expect(loadConfig({ ...base, LITELLM_API_KEY: '  ' }).llm.apiKey).toBeNull();
+    expect(loadConfig(base).llm).toMatchObject({ baseURL: 'http://llm/v1', apiKey: 'k' });
   });
 
   test('rejects non-positive limits', () => {
@@ -140,5 +163,38 @@ describe('loadConfig', () => {
 
   test('negative prices are rejected', () => {
     expect(() => loadConfig({ ...base, EXECUTOR_PRICE_IN: '-1' })).toThrow(/EXECUTOR_PRICE_IN/);
+  });
+
+  test('api and auth settings have defaults; OAuth apps are off without credentials', () => {
+    const c = loadConfig(base);
+    expect(c.api).toEqual({
+      host: '127.0.0.1',
+      port: 3000,
+      uploadMaxBytes: 52_428_800,
+      sseHeartbeatMs: 15_000,
+      sseMaxStreamMs: 900_000,
+    });
+    expect(loadConfig({ ...base, API_HOST: '0.0.0.0' }).api.host).toBe('0.0.0.0');
+    expect(c.auth).toEqual({ secret: null, baseUrl: 'http://localhost:8080', google: null, github: null });
+  });
+
+  test('an OAuth app needs both its client id and secret', () => {
+    const c = loadConfig({ ...base, GITHUB_CLIENT_ID: 'id', GITHUB_CLIENT_SECRET: 'secret', GOOGLE_CLIENT_ID: '' });
+    expect(c.auth.github).toEqual({ clientId: 'id', clientSecret: 'secret' });
+    expect(c.auth.google).toBeNull();
+    expect(() => loadConfig({ ...base, GOOGLE_CLIENT_ID: 'id' })).toThrow(/GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET/);
+  });
+
+  test('the SSE heartbeat is at most 2 minutes; the stream lifetime can be overridden', () => {
+    expect(loadConfig({ ...base, SSE_HEARTBEAT_MS: '120000' }).api.sseHeartbeatMs).toBe(120_000);
+    expect(() => loadConfig({ ...base, SSE_HEARTBEAT_MS: '120001' })).toThrow(/SSE_HEARTBEAT_MS/);
+    expect(() => loadConfig({ ...base, SSE_HEARTBEAT_MS: '0' })).toThrow(/SSE_HEARTBEAT_MS/);
+    expect(loadConfig({ ...base, SSE_MAX_STREAM_MS: '60000' }).api.sseMaxStreamMs).toBe(60_000);
+    expect(() => loadConfig({ ...base, SSE_MAX_STREAM_MS: '-1' })).toThrow(/SSE_MAX_STREAM_MS/);
+  });
+
+  test('the auth secret must be at least 32 characters', () => {
+    expect(() => loadConfig({ ...base, BETTER_AUTH_SECRET: 'short' })).toThrow(/BETTER_AUTH_SECRET/);
+    expect(loadConfig({ ...base, BETTER_AUTH_SECRET: 'x'.repeat(32) }).auth.secret).toBe('x'.repeat(32));
   });
 });

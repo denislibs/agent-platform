@@ -23,6 +23,12 @@ import type {
  *   обновлялась» не зависят от часов отдельных воркеров.
  */
 
+/** Позиция в списке задач пользователя: следующая страница начинается строго после этой задачи. */
+export interface TaskCursor {
+  createdAt: Date;
+  id: string;
+}
+
 /** Ожидаемый текущий статус (один или несколько) для защиты перехода от гонок. */
 export type ExpectedFrom<S extends string> = S | readonly S[];
 
@@ -46,8 +52,12 @@ export interface TaskRepository {
   update(id: string, patch: TaskPatch): Promise<Task>;
   /** Задачи пользователя в нефинальных статусах. */
   countActive(userId: string): Promise<number>;
-  /** Задачи пользователя, новые первыми (при равном createdAt — по id по убыванию); limit по умолчанию 50. */
-  listForUser(userId: string, opts?: { limit?: number }): Promise<Task[]>;
+  /**
+   * Задачи пользователя, новые первыми: по createdAt с точностью до миллисекунды, при равенстве — по id по убыванию;
+   * limit по умолчанию 50. before — курсор: только задачи строго после него в этом порядке. Кривой id курсора
+   * ведёт себя как неизвестный: пустой список.
+   */
+  listForUser(userId: string, opts?: { limit?: number; before?: TaskCursor }): Promise<Task[]>;
   /**
    * Задачи в статусах statuses, не обновлявшиеся дольше staleForMs по часам хранилища, старые первыми;
    * limit по умолчанию 100. Для сборщика зависших задач (спецификация 8). Запись шага тоже обновляет задачу.

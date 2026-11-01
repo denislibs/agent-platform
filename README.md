@@ -13,7 +13,7 @@ Backend architecture: ports & adapters, DI with awilix, TDD (spec section 3.1).
 
 ```bash
 bun install
-cp .env.example .env        # fill LITELLM_BASE_URL and LITELLM_API_KEY
+cp .env.example .env        # fill LITELLM_BASE_URL and LITELLM_API_KEY (worker), BETTER_AUTH_SECRET (API)
 bun run infra:up && bun run infra:wait
 bun run sandbox:build       # agent sandbox image (Chromium + Python + Node), takes a few minutes
 bun run db:migrate
@@ -28,7 +28,9 @@ bun run worker              # worker locally, on the infra from infra:up
 bun run stack:up            # infra and worker in Docker (profile app); stack:down stops them
 ```
 
-The worker needs the sandbox image (`bun run sandbox:build`) and a non-empty `LITELLM_API_KEY` in `.env`.
+The worker needs the sandbox image (`bun run sandbox:build`) and `LITELLM_BASE_URL`, `LITELLM_API_KEY`,
+`PLANNER_MODEL`, `EXECUTOR_MODEL` in `.env`: they are optional in the config schema (the API does without them),
+but the worker creates the LiteLLM client at startup and refuses to start when any is missing.
 In Docker it applies migrations on start and manages sandboxes through the host `/var/run/docker.sock`
 (root-equivalent on the host: development and closed beta only, production uses E2B).
 `bun run backend:build` builds only the `agent-backend:dev` image.
@@ -54,3 +56,52 @@ Sandbox network isolation:
   must report `RESULT: host services are not reachable`. A Linux production host additionally needs
   `DOCKER-USER` egress rules that drop traffic from the sandbox network to the host gateway, the infra networks
   and `169.254.169.254` (cloud metadata).
+
+## API
+
+```bash
+NODE_ENV=development BETTER_AUTH_URL=http://localhost:3000 bun run api   # Hono API on 127.0.0.1:3000, on the infra from infra:up
+```
+
+Until nginx arrives (plan 4b), the browser talks to the API directly, so local runs set `BETTER_AUTH_URL=http://localhost:3000`
+(the app's origin: sign-in callbacks, cookies and the CSRF check of mutating requests compare against it) and
+`NODE_ENV=development`. The API reads from `.env`:
+
+- `DATABASE_URL`, `VALKEY_URL`, `S3_*` (`S3_PUBLIC_ENDPOINT` — the S3 address the browser can reach);
+- `BETTER_AUTH_SECRET` — required, at least 32 characters: `openssl rand -base64 32`;
+- `BETTER_AUTH_URL` — the app's public origin (default `http://localhost:8080`, the nginx of plan 4b);
+- optional: `API_HOST`, `API_PORT`, `UPLOAD_MAX_BYTES`, `SSE_HEARTBEAT_MS` (≤ 120000), `SSE_MAX_STREAM_MS`,
+  `GOOGLE_*` / `GITHUB_*`.
+
+The API does not need `LITELLM_*` or the models; the worker refuses to start without them.
+
+Sign-in methods:
+
+- magic link — always on; without a mail provider the link is written to the API log (`mail not sent … logged instead`);
+- Google / GitHub — on when both `*_CLIENT_ID` and `*_CLIENT_SECRET` are set; the OAuth callback URL is
+  `<BETTER_AUTH_URL>/api/auth/callback/google` (or `/github`), `BETTER_AUTH_URL` defaults to `http://localhost:8080`.
+
+Endpoints (spec section 10; request and response schemas: `packages/shared/src/api.ts`):
+
+| Method     | Path                      |                                                                                                                                      |
+| ---------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `*`        | `/api/auth/*`             | Better Auth                                                                                                                          |
+| GET        | `/api/me`                 | profile and balance (`millicredits`, `credits` as a string)                                                                          |
+| POST       | `/api/uploads`            | declare an input file → presigned PUT for exactly `size` bytes (≤ `UPLOAD_MAX_BYTES`)                                                |
+| POST / GET | `/api/tasks`              | create (`{ prompt, fileIds }`) / list (`?limit=`, `?before=<nextCursor>`)                                                            |
+| GET        | `/api/tasks/:id`          | task, subtasks, files                                                                                                                |
+| GET        | `/api/tasks/:id/events`   | SSE: `step` events (`id` = seq, resume with `Last-Event-ID` or `?after=`), `: ping`, final `end`; `stream_error` on a server failure |
+| POST       | `/api/tasks/:id/messages` | answer the agent's question (task in `waiting_user`)                                                                                 |
+| POST       | `/api/tasks/:id/cancel`   | cancel                                                                                                                               |
+| GET        | `/api/files/:id`          | redirect to a presigned download (always as an attachment)                                                                           |
+
+A stream lives at most `SSE_MAX_STREAM_MS` (15 min): it then closes without `end`, and EventSource reconnects with
+`Last-Event-ID`, passing the session check again.
+
+Errors are `{ "error": { "code", "message" } }`; `/api/auth/*` answers in Better Auth's own `{ "message", "code" }`.
+Presigned URLs use `S3_PUBLIC_ENDPOINT` — the S3 address the browser can reach.
+
+Local runs use `NODE_ENV=development`. Any other value, unset included, counts as production: Better Auth rate limiting
+is on and the API warns at startup while magic links still go to the log. Origin and CSRF checks are on everywhere.
+The Better Auth integration tests (`packages/api/test/integration`) run on Postgres from `infra:up`
+and are not part of `test:unit`.

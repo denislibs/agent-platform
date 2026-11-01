@@ -1,11 +1,22 @@
-import { LimitExceededError, type JobQueue, type Task, type UnitOfWork } from '@agent/core';
+import {
+  errorMessage,
+  LimitExceededError,
+  NotFoundError,
+  type JobQueue,
+  type Logger,
+  type Task,
+  type UnitOfWork,
+} from '@agent/core';
 import type { Config } from '@agent/shared';
 import { jobKey } from './agent';
 
 export interface NewTaskInput {
   userId: string;
   prompt: string;
-  /** Загруженные заранее входные файлы (POST /api/uploads); чужие и уже привязанные молча пропускаются. */
+  /**
+   * Загруженные заранее входные файлы (POST /api/uploads). Повторы схлопываются; чужой, неизвестный или уже
+   * привязанный файл — NotFoundError('file'), задача не создаётся.
+   */
   fileIds?: string[];
 }
 
@@ -15,11 +26,11 @@ export interface NewTaskInput {
  * После коммита ставится job `plan`.
  */
 export class TaskIntake {
-  constructor(private readonly deps: { uow: UnitOfWork; config: Config; queue: JobQueue }) {}
+  constructor(private readonly deps: { uow: UnitOfWork; config: Config; queue: JobQueue; logger: Logger }) {}
 
   async create(input: NewTaskInput): Promise<Task> {
     const { userId, prompt } = input;
-    const fileIds = input.fileIds ?? [];
+    const fileIds = [...new Set(input.fileIds ?? [])];
     const maxActive = this.deps.config.limits.maxActiveTasksPerUser;
     const created = await this.deps.uow.run(async tx => {
       await tx.lockUser(userId);
@@ -35,7 +46,11 @@ export class TaskIntake {
         agent: 'user',
         payload: { type: 'message', role: 'user', text: prompt },
       });
-      if (fileIds.length > 0) await tx.files.attachToTask(fileIds, userId, task.id);
+      if (fileIds.length > 0) {
+        const attached = await tx.files.attachToTask(fileIds, userId, task.id);
+        // Чужой, неизвестный или уже привязанный файл: откат всей транзакции, задача не создаётся.
+        if (attached !== fileIds.length) throw new NotFoundError('file', fileIds.join(','));
+      }
       await tx.tasks.update(task.id, { currentKind: 'plan' });
       const fresh = await tx.tasks.get(task.id);
       if (!fresh) throw new Error(`task ${task.id} vanished inside its own transaction`);
@@ -44,7 +59,12 @@ export class TaskIntake {
     // Шаг записан — теперь job (спецификация 8). Сбой постановки не теряет задачу: сборщик поставит plan сам.
     await this.deps.queue
       .enqueue({ taskId: created.id, kind: 'plan' }, jobKey(created.id, 'plan', created.lastSeq))
-      .catch(() => undefined);
+      .catch(err =>
+        this.deps.logger.warn('could not queue the plan job; the sweeper will retry', {
+          taskId: created.id,
+          error: errorMessage(err),
+        }),
+      );
     return created;
   }
 }

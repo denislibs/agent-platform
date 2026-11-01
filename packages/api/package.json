@@ -1,0 +1,26 @@
+{
+  "name": "@agent/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@agent/agent": "workspace:*",
+    "@agent/composition": "workspace:*",
+    "@agent/core": "workspace:*",
+    "@agent/db": "workspace:*",
+    "@agent/shared": "workspace:*",
+    "awilix": "^13",
+    "better-auth": "1.7.15",
+    "hono": "4.13.16",
+    "zod": "^4"
+  },
+  "devDependencies": {
+    "@agent/queue": "workspace:*",
+    "@agent/testing": "workspace:*",
+    "bullmq": "5.81.5",
+    "drizzle-orm": "^0.45.1"
+  }
+}

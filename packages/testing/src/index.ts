@@ -1,3 +1,4 @@
+export * from './capturing';
 export * from './fixed-clock';
 export * from './memory/state';
 export * from './memory/repositories';
@@ -13,3 +14,5 @@ export * from './memory/search';
 export * from './memory/queue';
 export * from './memory/unit-of-work';
 export * from './test-config';
+export * from './memory/step-events';
+export * from './contracts/step-events';

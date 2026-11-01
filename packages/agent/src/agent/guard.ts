@@ -3,10 +3,12 @@ import {
   InvalidTransitionError,
   type Clock,
   type CreditLedger,
+  type Step,
   type StepLog,
   type Task,
   type TaskPatch,
   type TaskRepository,
+  type TxRepositories,
   type UnitOfWork,
 } from '@agent/core';
 import type { StageOutcome, StopReason } from './outcome';
@@ -19,6 +21,19 @@ export type GuardVerdict =
   /** Задача уже в finalizing (устаревший или повторный job): лимиты не проверяются, дальше finalize. */
   | { kind: 'finalizing' }
   | { kind: 'limit'; task: Task; reason: 'token_budget' | 'wall_time' | 'credits' };
+
+/**
+ * Есть ли в ленте ответ на последнюю паузу: сообщение пользователя после последнего шага status → waiting_user.
+ * Без такого шага паузы не было — и ответа нет.
+ */
+export function answeredAfterLastPause(steps: readonly Step[]): boolean {
+  const pausedAt = steps.findLastIndex(s => s.payload.type === 'status' && s.payload.to === 'waiting_user');
+  if (pausedAt === -1) return false;
+  return steps.slice(pausedAt + 1).some(s => s.agent === 'user' && s.payload.type === 'message');
+}
+
+/** Откат перехода по условию `unless` в toFinalizing; наружу не выходит. */
+class TransitionVetoed extends Error {}
 
 /** Бюджет токенов считается исчерпанным при 95 %: 5 % оставлены на попытку finish (спецификация 4.4). */
 const BUDGET_SHARE = 0.95;
@@ -75,23 +90,36 @@ export class TaskGuard {
     return stopped ? { next: 'finalize' } : { next: 'stop' };
   }
 
-  /** finalizing из стадии без лимита (план исчерпан, finish): шаг status, currentKind = 'finalize'. */
+  /**
+   * finalizing из стадии без лимита (план исчерпан, finish): шаг status, currentKind = 'finalize'.
+   * `unless` — условие отказа, проверяемое в той же транзакции ПОСЛЕ перехода: переход уже взял блокировку строки
+   * задачи, поэтому запись, которая её ждёт (ответ пользователя), либо видна условию, либо пойдёт после коммита
+   * и увидит finalizing. Условие истинно — всё откатывается. Результат — совершён ли переход.
+   */
   async toFinalizing(
     taskId: string,
     from: TaskStatus | readonly TaskStatus[],
     patch: TaskPatch = {},
     reason?: string,
-  ): Promise<void> {
-    await this.deps.uow.run(async tx => {
-      const before = await tx.tasks.get(taskId);
-      if (!before) return;
-      await tx.tasks.transition(taskId, 'finalizing', { ...patch, currentKind: 'finalize' }, { expectedFrom: from });
-      await tx.steps.append({
-        taskId,
-        agent: 'system',
-        payload: { type: 'status', from: before.status, to: 'finalizing', ...(reason ? { reason } : {}) },
+    opts: { unless?: (tx: TxRepositories) => Promise<boolean> } = {},
+  ): Promise<boolean> {
+    try {
+      return await this.deps.uow.run(async tx => {
+        const before = await tx.tasks.get(taskId);
+        if (!before) return false;
+        await tx.tasks.transition(taskId, 'finalizing', { ...patch, currentKind: 'finalize' }, { expectedFrom: from });
+        if (opts.unless && (await opts.unless(tx))) throw new TransitionVetoed();
+        await tx.steps.append({
+          taskId,
+          agent: 'system',
+          payload: { type: 'status', from: before.status, to: 'finalizing', ...(reason ? { reason } : {}) },
+        });
+        return true;
       });
-    });
+    } catch (err) {
+      if (err instanceof TransitionVetoed) return false;
+      throw err;
+    }
   }
 
   /** ask_user: задача ждёт пользователя; currentKind — стадия, к которой вернуться (спецификация 4.2). */
@@ -107,14 +135,11 @@ export class TaskGuard {
   }
 
   /**
-   * Пришёл ли ответ на последнюю паузу: сообщение пользователя после последнего шага status → waiting_user.
-   * Без такого шага паузы не было — и ответа нет. Повторный или дублирующий job без ответа паузу не снимает.
+   * Пришёл ли ответ на последнюю паузу (answeredAfterLastPause). Повторный или дублирующий job без ответа
+   * паузу не снимает.
    */
   async hasAnswer(taskId: string): Promise<boolean> {
-    const steps = await this.deps.steps.list(taskId);
-    const pausedAt = steps.findLastIndex(s => s.payload.type === 'status' && s.payload.to === 'waiting_user');
-    if (pausedAt === -1) return false;
-    return steps.slice(pausedAt + 1).some(s => s.agent === 'user' && s.payload.type === 'message');
+    return answeredAfterLastPause(await this.deps.steps.list(taskId));
   }
 
   /** Ответ пользователя пришёл: обратно в planning или running, и заметка для модели. */

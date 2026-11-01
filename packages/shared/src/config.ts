@@ -5,19 +5,34 @@ const positiveInt = (def: number) => z.coerce.number().int().positive().default(
 /** Пустая или пробельная строка — «не задано»: иначе z.coerce превратит '' в 0 и модель станет бесплатной. */
 const blankAsUnset = (v: unknown) => (typeof v === 'string' && v.trim() === '' ? undefined : v);
 const price = (def: number) => z.preprocess(blankAsUnset, z.coerce.number().nonnegative().finite().default(def));
+const optionalText = z.preprocess(blankAsUnset, z.string().min(1).optional());
+
+/** OAuth-приложение включено, только если заданы и id, и секрет; половина пары — ошибка конфига. */
+function oauthApp(name: string, clientId: string | undefined, clientSecret: string | undefined) {
+  if (!clientId && !clientSecret) return null;
+  if (!clientId || !clientSecret)
+    throw new Error(`Invalid environment: ${name}_CLIENT_ID and ${name}_CLIENT_SECRET must be set together`);
+  return { clientId, clientSecret };
+}
 
 const EnvSchema = z.object({
   DATABASE_URL: required,
   VALKEY_URL: required,
   S3_ENDPOINT: required,
+  /** Адрес S3 для браузера (presigned URL); не задан — S3_ENDPOINT. */
+  S3_PUBLIC_ENDPOINT: z.preprocess(blankAsUnset, z.url().optional()),
   S3_REGION: required,
   S3_BUCKET: required,
   S3_ACCESS_KEY_ID: required,
   S3_SECRET_ACCESS_KEY: required,
-  LITELLM_BASE_URL: required,
-  LITELLM_API_KEY: required,
-  PLANNER_MODEL: required,
-  EXECUTOR_MODEL: required,
+  /**
+   * LiteLLM нужен только воркеру, поэтому в схеме эти четыре значения необязательны (как BETTER_AUTH_SECRET для API):
+   * API стартует без них, а воркер не стартует — createLlm бросает, и main.ts воркера создаёт клиент сразу.
+   */
+  LITELLM_BASE_URL: optionalText,
+  LITELLM_API_KEY: optionalText,
+  PLANNER_MODEL: optionalText,
+  EXECUTOR_MODEL: optionalText,
   /** Цены моделей в кредитах за 1M токенов (спецификация 11). */
   PLANNER_PRICE_IN: price(30),
   PLANNER_PRICE_OUT: price(120),
@@ -55,6 +70,27 @@ const EnvSchema = z.object({
   SANDBOX_NAMESPACE: z.string().min(1).default('dev'),
   BRAVE_API_KEY: z.preprocess(v => (v === '' ? undefined : v), z.string().min(1).optional()),
   BRAVE_BASE_URL: z.url().default('https://api.search.brave.com'),
+  /** Адрес, на котором слушает API: loopback; в Docker — 0.0.0.0, порт наружу не публикуется (план 4b). */
+  API_HOST: z.string().min(1).default('127.0.0.1'),
+  API_PORT: positiveInt(3000),
+  /** Лимит входного файла; 50 МиБ — как лимит чтения файла песочницы. */
+  UPLOAD_MAX_BYTES: positiveInt(52_428_800),
+  /** Не дольше 2 мин: idleTimeout Bun — двойной интервал, а его предел — 255 с. */
+  SSE_HEARTBEAT_MS: z.coerce.number().int().positive().max(120_000).default(15_000),
+  /**
+   * Наибольшая длительность одного SSE-потока: потом он закрывается без end, EventSource переподключается
+   * и снова проходит проверку сессии (отозванная сессия перестаёт получать шаги).
+   */
+  SSE_MAX_STREAM_MS: positiveInt(900_000),
+  BETTER_AUTH_SECRET: z.preprocess(
+    blankAsUnset,
+    z.string().min(32, 'at least 32 characters (openssl rand -base64 32)').optional(),
+  ),
+  BETTER_AUTH_URL: z.url().default('http://localhost:8080'),
+  GOOGLE_CLIENT_ID: optionalText,
+  GOOGLE_CLIENT_SECRET: optionalText,
+  GITHUB_CLIENT_ID: optionalText,
+  GITHUB_CLIENT_SECRET: optionalText,
 });
 
 export type Config = ReturnType<typeof loadConfig>;
@@ -71,15 +107,16 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     valkeyUrl: e.VALKEY_URL,
     s3: {
       endpoint: e.S3_ENDPOINT,
+      publicEndpoint: e.S3_PUBLIC_ENDPOINT ?? e.S3_ENDPOINT,
       region: e.S3_REGION,
       bucket: e.S3_BUCKET,
       accessKeyId: e.S3_ACCESS_KEY_ID,
       secretAccessKey: e.S3_SECRET_ACCESS_KEY,
     },
     llm: {
-      baseURL: e.LITELLM_BASE_URL,
-      apiKey: e.LITELLM_API_KEY,
-      models: { planner: e.PLANNER_MODEL, executor: e.EXECUTOR_MODEL },
+      baseURL: e.LITELLM_BASE_URL ?? null,
+      apiKey: e.LITELLM_API_KEY ?? null,
+      models: { planner: e.PLANNER_MODEL ?? null, executor: e.EXECUTOR_MODEL ?? null },
       contextTokens: { planner: e.PLANNER_CONTEXT_TOKENS, executor: e.EXECUTOR_CONTEXT_TOKENS },
       toolChoice: e.LLM_TOOL_CHOICE,
     },
@@ -117,6 +154,19 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     search: {
       braveApiKey: e.BRAVE_API_KEY ?? null,
       braveBaseUrl: e.BRAVE_BASE_URL,
+    },
+    api: {
+      host: e.API_HOST,
+      port: e.API_PORT,
+      uploadMaxBytes: e.UPLOAD_MAX_BYTES,
+      sseHeartbeatMs: e.SSE_HEARTBEAT_MS,
+      sseMaxStreamMs: e.SSE_MAX_STREAM_MS,
+    },
+    auth: {
+      secret: e.BETTER_AUTH_SECRET ?? null,
+      baseUrl: e.BETTER_AUTH_URL,
+      google: oauthApp('GOOGLE', e.GOOGLE_CLIENT_ID, e.GOOGLE_CLIENT_SECRET),
+      github: oauthApp('GITHUB', e.GITHUB_CLIENT_ID, e.GITHUB_CLIENT_SECRET),
     },
   };
 }

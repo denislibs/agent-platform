@@ -7,7 +7,7 @@
   ],
   "scripts": {
     "test": "bun test",
-    "test:unit": "bun test packages/shared packages/core packages/testing packages/llm packages/search packages/agent",
+    "test:unit": "bun test packages/shared packages/core packages/testing packages/llm packages/search packages/agent packages/api/test/unit",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "oxlint",
     "format": "prettier --write .",
@@ -21,6 +21,7 @@
     "db:generate": "cd packages/db && bunx --bun drizzle-kit generate",
     "db:migrate": "bun packages/db/src/migrate.ts",
     "worker": "bun packages/worker/src/main.ts",
+    "api": "bun packages/api/src/main.ts",
     "backend:build": "docker compose -f docker/compose.yml --profile app build worker",
     "stack:up": "docker compose -f docker/compose.yml --profile app up -d --build",
     "stack:down": "docker compose -f docker/compose.yml --profile app down"

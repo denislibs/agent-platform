@@ -7,8 +7,9 @@ import {
   type AwilixContainer,
   type Resolver,
 } from 'awilix';
-import type { Ports } from '@agent/core';
+import { PublishingStepLog, PublishingUnitOfWork, type Ports } from '@agent/core';
 import type { Config } from '@agent/shared';
+import { CapturingLogger, CapturingMailer } from './capturing';
 import { FixedClock, SequentialIds } from './fixed-clock';
 import { InMemoryFileStore } from './memory/file-store';
 import {
@@ -22,6 +23,7 @@ import { InMemoryJobQueue } from './memory/queue';
 import { InMemorySandboxProvider } from './memory/sandbox';
 import { FakeSearchProvider } from './memory/search';
 import { InMemoryState } from './memory/state';
+import { InMemoryStepEvents } from './memory/step-events';
 import { InMemoryUnitOfWork } from './memory/unit-of-work';
 import { ScriptedLlm } from './scripted-llm';
 import { testConfig } from './test-config';
@@ -35,6 +37,9 @@ export interface TestCradle extends Ports {
   sandboxes: InMemorySandboxProvider;
   search: FakeSearchProvider;
   queue: InMemoryJobQueue;
+  logger: CapturingLogger;
+  mailer: CapturingMailer;
+  stepEvents: InMemoryStepEvents;
 }
 
 export type TestOverrides = Partial<{ [K in keyof TestCradle]: Resolver<TestCradle[K]> }>;
@@ -52,16 +57,25 @@ export function createTestContainer(overrides: TestOverrides = {}): AwilixContai
     ids: asFunction(() => new SequentialIds()).singleton(),
     memory: asFunction(({ clock, ids }: TestCradle) => new InMemoryState({ clock, ids })).singleton(),
     tasks: asClass(InMemoryTaskRepository).singleton(),
-    steps: asClass(InMemoryStepLog).singleton(),
+    stepEvents: asFunction(() => new InMemoryStepEvents()).singleton(),
+    steps: asFunction(
+      ({ memory, stepEvents, logger }: TestCradle) =>
+        new PublishingStepLog({ inner: new InMemoryStepLog({ memory }), events: stepEvents, logger }),
+    ).singleton(),
     subtasks: asClass(InMemorySubtaskRepository).singleton(),
     ledger: asClass(InMemoryCreditLedger).singleton(),
     files: asClass(InMemoryFileRepository).singleton(),
-    uow: asClass(InMemoryUnitOfWork).singleton(),
+    uow: asFunction(
+      ({ memory, stepEvents, logger }: TestCradle) =>
+        new PublishingUnitOfWork({ inner: new InMemoryUnitOfWork({ memory }), events: stepEvents, logger }),
+    ).singleton(),
     fileStore: asClass(InMemoryFileStore).singleton(),
     llm: asFunction(() => new ScriptedLlm()).singleton(),
     sandboxes: asFunction(() => new InMemorySandboxProvider()).singleton(),
     search: asFunction(() => new FakeSearchProvider()).singleton(),
     queue: asFunction(() => new InMemoryJobQueue()).singleton(),
+    logger: asFunction(() => new CapturingLogger()).singleton(),
+    mailer: asFunction(() => new CapturingMailer()).singleton(),
     ...overrides,
   });
   return container;

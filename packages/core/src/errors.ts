@@ -85,3 +85,8 @@ export class LlmError extends Error {
     this.name = 'LlmError';
   }
 }
+
+/** Текст ошибки для журнала и шагов: message у Error, строка у всего остального. */
+export function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}

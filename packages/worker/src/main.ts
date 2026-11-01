@@ -4,6 +4,8 @@ import { startWorker } from './worker';
 
 const config = loadConfig();
 const container = buildContainer(config);
+// Сразу, а не на первом job: без LITELLM_* воркер не должен стартовать (в схеме конфига они необязательны ради API).
+void container.cradle.llm;
 const worker = await startWorker(container.cradle);
 console.log(`[worker] ready: queue prefix ${config.worker.queuePrefix}, concurrency ${config.worker.concurrency}`);
 

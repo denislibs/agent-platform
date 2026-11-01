@@ -91,6 +91,26 @@
               {
                 "name": "ioredis",
                 "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "@aws-sdk/client-s3",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "@aws-sdk/s3-request-presigner",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "hono",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "better-auth",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "@agent/api",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
               }
             ],
             "patterns": [
@@ -111,7 +131,11 @@
                   "@agent/queue/**",
                   "@agent/worker/**",
                   "bullmq/**",
-                  "ioredis/**"
+                  "ioredis/**",
+                  "@aws-sdk/**",
+                  "hono/**",
+                  "better-auth/**",
+                  "@agent/api/**"
                 ],
                 "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
               }
@@ -182,6 +206,26 @@
               {
                 "name": "ioredis",
                 "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "@aws-sdk/client-s3",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "@aws-sdk/s3-request-presigner",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "hono",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "better-auth",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "@agent/api",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
               }
             ],
             "patterns": [
@@ -199,7 +243,11 @@
                   "@agent/composition/**",
                   "@agent/queue/**",
                   "@agent/worker/**",
-                  "ioredis/**"
+                  "ioredis/**",
+                  "@aws-sdk/**",
+                  "hono/**",
+                  "better-auth/**",
+                  "@agent/api/**"
                 ],
                 "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
               },
@@ -270,6 +318,26 @@
               {
                 "name": "ioredis",
                 "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "@aws-sdk/client-s3",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "@aws-sdk/s3-request-presigner",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "hono",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "better-auth",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "@agent/api",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
               }
             ],
             "patterns": [
@@ -287,9 +355,266 @@
                   "@agent/composition/**",
                   "@agent/queue/**",
                   "@agent/worker/**",
-                  "ioredis/**"
+                  "ioredis/**",
+                  "@aws-sdk/**",
+                  "hono/**",
+                  "better-auth/**",
+                  "@agent/api/**"
                 ],
                 "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/api/src/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "bullmq",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "ioredis",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "openai",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "@agent/llm",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "@agent/sandbox",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "@agent/search",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "@agent/queue",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "@agent/worker",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "drizzle-orm",
+                "message": "@agent/api reaches infrastructure only through ports from the container: S3 is @agent/storage, the database is the repositories (spec 3.1)."
+              },
+              {
+                "name": "@agent/storage",
+                "message": "@agent/api reaches infrastructure only through ports from the container: S3 is @agent/storage, the database is the repositories (spec 3.1)."
+              },
+              {
+                "name": "@aws-sdk/client-s3",
+                "message": "@agent/api reaches infrastructure only through ports from the container: S3 is @agent/storage, the database is the repositories (spec 3.1)."
+              },
+              {
+                "name": "@aws-sdk/s3-request-presigner",
+                "message": "@agent/api reaches infrastructure only through ports from the container: S3 is @agent/storage, the database is the repositories (spec 3.1)."
+              },
+              {
+                "name": "@agent/db",
+                "message": "@agent/db and @agent/composition are allowed in @agent/api only in src/auth/better-auth.ts and src/main.ts: routes take ports as one object."
+              },
+              {
+                "name": "@agent/composition",
+                "message": "@agent/db and @agent/composition are allowed in @agent/api only in src/auth/better-auth.ts and src/main.ts: routes take ports as one object."
+              },
+              {
+                "name": "awilix",
+                "message": "awilix is allowed in @agent/api only in src/auth/better-auth.ts and src/main.ts: routes take their dependencies as one object."
+              }
+            ],
+            "patterns": [
+              {
+                "group": [
+                  "bullmq/**",
+                  "ioredis/**",
+                  "openai/**",
+                  "@agent/llm/**",
+                  "@agent/sandbox/**",
+                  "@agent/search/**",
+                  "@agent/queue/**",
+                  "@agent/worker/**"
+                ],
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "group": ["drizzle-orm/**", "@agent/storage/**", "@aws-sdk/**"],
+                "message": "@agent/api reaches infrastructure only through ports from the container: S3 is @agent/storage, the database is the repositories (spec 3.1)."
+              },
+              {
+                "group": ["@agent/db/**", "@agent/composition/**"],
+                "message": "@agent/db and @agent/composition are allowed in @agent/api only in src/auth/better-auth.ts and src/main.ts: routes take ports as one object."
+              },
+              {
+                "group": ["awilix/**"],
+                "message": "awilix is allowed in @agent/api only in src/auth/better-auth.ts and src/main.ts: routes take their dependencies as one object."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/api/src/auth/better-auth.ts", "packages/api/src/main.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "bullmq",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "ioredis",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "openai",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "@agent/llm",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "@agent/sandbox",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "@agent/search",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "@agent/queue",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "@agent/worker",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "drizzle-orm",
+                "message": "@agent/api reaches infrastructure only through ports from the container: S3 is @agent/storage, the database is the repositories (spec 3.1)."
+              },
+              {
+                "name": "@agent/storage",
+                "message": "@agent/api reaches infrastructure only through ports from the container: S3 is @agent/storage, the database is the repositories (spec 3.1)."
+              },
+              {
+                "name": "@aws-sdk/client-s3",
+                "message": "@agent/api reaches infrastructure only through ports from the container: S3 is @agent/storage, the database is the repositories (spec 3.1)."
+              },
+              {
+                "name": "@aws-sdk/s3-request-presigner",
+                "message": "@agent/api reaches infrastructure only through ports from the container: S3 is @agent/storage, the database is the repositories (spec 3.1)."
+              }
+            ],
+            "patterns": [
+              {
+                "group": [
+                  "bullmq/**",
+                  "ioredis/**",
+                  "openai/**",
+                  "@agent/llm/**",
+                  "@agent/sandbox/**",
+                  "@agent/search/**",
+                  "@agent/queue/**",
+                  "@agent/worker/**"
+                ],
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "group": ["drizzle-orm/**", "@agent/storage/**", "@aws-sdk/**"],
+                "message": "@agent/api reaches infrastructure only through ports from the container: S3 is @agent/storage, the database is the repositories (spec 3.1)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "packages/shared/**",
+        "packages/db/**",
+        "packages/queue/**",
+        "packages/storage/**",
+        "packages/llm/**",
+        "packages/sandbox/**",
+        "packages/search/**",
+        "packages/composition/**",
+        "packages/worker/**",
+        "packages/testing/**"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "hono",
+                "message": "hono and better-auth live only in @agent/api (spec 3.1)."
+              },
+              {
+                "name": "better-auth",
+                "message": "hono and better-auth live only in @agent/api (spec 3.1)."
+              },
+              {
+                "name": "@aws-sdk/client-s3",
+                "message": "@aws-sdk/* lives only in @agent/storage (spec 3.1)."
+              },
+              {
+                "name": "@aws-sdk/s3-request-presigner",
+                "message": "@aws-sdk/* lives only in @agent/storage (spec 3.1)."
+              }
+            ],
+            "patterns": [
+              {
+                "group": ["hono/**", "better-auth/**"],
+                "message": "hono and better-auth live only in @agent/api (spec 3.1)."
+              },
+              {
+                "group": ["@aws-sdk/**"],
+                "message": "@aws-sdk/* lives only in @agent/storage (spec 3.1)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/storage/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "hono",
+                "message": "hono and better-auth live only in @agent/api (spec 3.1)."
+              },
+              {
+                "name": "better-auth",
+                "message": "hono and better-auth live only in @agent/api (spec 3.1)."
+              }
+            ],
+            "patterns": [
+              {
+                "group": ["hono/**", "better-auth/**"],
+                "message": "hono and better-auth live only in @agent/api (spec 3.1)."
               }
             ]
           }

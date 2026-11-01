@@ -8,7 +8,15 @@ import {
   type Resolver,
 } from 'awilix';
 import { agentServices, type AgentServices } from '@agent/agent';
-import { CryptoIds, SystemClock, type Ports } from '@agent/core';
+import {
+  ConsoleLogger,
+  CryptoIds,
+  LogMailer,
+  PublishingStepLog,
+  PublishingUnitOfWork,
+  SystemClock,
+  type Ports,
+} from '@agent/core';
 import {
   createDb,
   DrizzleCreditLedger,
@@ -20,7 +28,7 @@ import {
   type DbHandle,
 } from '@agent/db';
 import { createLlm } from '@agent/llm';
-import { BullJobQueue, redisConnection, TaskLock, type RedisConnection } from '@agent/queue';
+import { BullJobQueue, redisConnection, TaskLock, ValkeyStepEvents, type RedisConnection } from '@agent/queue';
 import { DockerSandboxProvider } from '@agent/sandbox';
 import { BraveSearchProvider, UnavailableSearchProvider } from '@agent/search';
 import type { Config } from '@agent/shared';
@@ -33,6 +41,7 @@ export interface Cradle extends Ports, AgentServices {
   // Воркеру нужен scheduleSweep, которого нет в порте JobQueue.
   queue: BullJobQueue;
   taskLock: TaskLock;
+  stepEvents: ValkeyStepEvents;
 }
 
 export type AppContainer = AwilixContainer<Cradle>;
@@ -58,13 +67,25 @@ export function buildContainer(appConfig: Config, overrides: Overrides = {}): Ap
       .disposer(q => q.close()),
     taskLock: asFunction(({ redis }: Cradle) => new TaskLock({ redis })).singleton(),
     tasks: asClass(DrizzleTaskRepository).singleton(),
-    steps: asClass(DrizzleStepLog).singleton(),
+    stepEvents: asFunction(({ redis, logger }: Cradle) => new ValkeyStepEvents({ redis, logger }))
+      .singleton()
+      .disposer(events => events.close()),
+    // Публикация после коммита: воркер и API получают её без изменений своего кода.
+    steps: asFunction(
+      ({ database, stepEvents, logger }: Cradle) =>
+        new PublishingStepLog({ inner: new DrizzleStepLog({ database }), events: stepEvents, logger }),
+    ).singleton(),
     subtasks: asClass(DrizzleSubtaskRepository).singleton(),
     ledger: asClass(DrizzleCreditLedger).singleton(),
     files: asClass(DrizzleFileRepository).singleton(),
     // Через asFunction: в строгом PROXY-режиме обращение к незарегистрированному lockTimeoutMs бросило бы.
     uow: asFunction(
-      ({ database, config }: Cradle) => new DrizzleUnitOfWork({ database, lockTimeoutMs: config.db.lockTimeoutMs }),
+      ({ database, config, stepEvents, logger }: Cradle) =>
+        new PublishingUnitOfWork({
+          inner: new DrizzleUnitOfWork({ database, lockTimeoutMs: config.db.lockTimeoutMs }),
+          events: stepEvents,
+          logger,
+        }),
     ).singleton(),
     fileStore: asFunction(({ config }: Cradle) => new S3FileStore(config.s3)).singleton(),
     llm: asFunction(({ config }: Cradle) => createLlm(config.llm)).singleton(),
@@ -74,6 +95,9 @@ export function buildContainer(appConfig: Config, overrides: Overrides = {}): Ap
         ? new BraveSearchProvider({ apiKey: config.search.braveApiKey, baseUrl: config.search.braveBaseUrl })
         : new UnavailableSearchProvider(),
     ).singleton(),
+    // Через asFunction: asClass передал бы конструктору cradle.
+    logger: asFunction(() => new ConsoleLogger()).singleton(),
+    mailer: asFunction(({ logger }: Cradle) => new LogMailer({ logger })).singleton(),
     ...agentServices(),
     ...overrides,
   });

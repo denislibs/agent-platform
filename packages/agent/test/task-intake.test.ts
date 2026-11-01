@@ -38,6 +38,52 @@ describe('TaskIntake', () => {
     expect((await files.listForTask(task.id)).map(x => x.id)).toEqual([f.id]);
   });
 
+  test('a foreign, unknown or already attached file refuses the whole task, and writes nothing', async () => {
+    const { intake, memory, files, tasks } = setup();
+    const userId = memory.seedUser();
+    const other = memory.seedUser();
+    const upload = (owner: string) =>
+      files.insert({
+        userId: owner,
+        kind: 'input',
+        path: 'data.csv',
+        storageKey: crypto.randomUUID(),
+        size: 1,
+        mime: 'text/csv',
+      });
+    const own = await upload(userId);
+    const foreign = await upload(other);
+    for (const fileIds of [
+      [own.id, foreign.id],
+      [own.id, crypto.randomUUID()],
+    ]) {
+      const p = intake.create({ userId, prompt: 'x', fileIds });
+      await expect(p).rejects.toBeInstanceOf(NotFoundError);
+      await expect(p).rejects.toHaveProperty('entity', 'file');
+    }
+    expect(await tasks.listForUser(userId)).toEqual([]);
+    expect((await files.get(own.id))?.taskId).toBeNull();
+
+    const first = await intake.create({ userId, prompt: 'first', fileIds: [own.id] });
+    await expect(intake.create({ userId, prompt: 'again', fileIds: [own.id] })).rejects.toBeInstanceOf(NotFoundError);
+    expect((await tasks.listForUser(userId)).map(t => t.id)).toEqual([first.id]);
+  });
+
+  test('a repeated file id counts once', async () => {
+    const { intake, memory, files } = setup();
+    const userId = memory.seedUser();
+    const f = await files.insert({
+      userId,
+      kind: 'input',
+      path: 'a.csv',
+      storageKey: 'k-dup',
+      size: 1,
+      mime: 'text/csv',
+    });
+    const task = await intake.create({ userId, prompt: 'x', fileIds: [f.id, f.id] });
+    expect((await files.listForTask(task.id)).map(x => x.id)).toEqual([f.id]);
+  });
+
   test('refuses when the user already has the maximum of active tasks, and writes nothing', async () => {
     const { intake, memory, tasks } = setup({ MAX_ACTIVE_TASKS_PER_USER: '1' });
     const userId = memory.seedUser();
@@ -97,12 +143,13 @@ describe('TaskIntake', () => {
   });
 
   test('if queueing fails the task still exists with currentKind plan, for the sweeper to pick up', async () => {
-    const { intake, memory, queue, tasks } = setup();
+    const { intake, memory, queue, tasks, logger } = setup();
     queue.enqueue = async () => {
       throw new Error('valkey down');
     };
     const userId = memory.seedUser();
     const task = await intake.create({ userId, prompt: 'x' });
     expect(await tasks.get(task.id)).toMatchObject({ status: 'queued', currentKind: 'plan' });
+    expect(logger.entries).toMatchObject([{ level: 'warn', fields: { taskId: task.id, error: 'valkey down' } }]);
   });
 });

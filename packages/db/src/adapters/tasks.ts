@@ -4,6 +4,7 @@ import {
   NotFoundError,
   type ExpectedFrom,
   type Task,
+  type TaskCursor,
   type TaskPatch,
   type TaskRepository,
 } from '@agent/core';
@@ -80,12 +81,23 @@ export class DrizzleTaskRepository implements TaskRepository {
     return row?.n ?? 0;
   }
 
-  async listForUser(userId: string, opts: { limit?: number } = {}): Promise<Task[]> {
+  async listForUser(userId: string, opts: { limit?: number; before?: TaskCursor } = {}): Promise<Task[]> {
+    const { before } = opts;
+    if (before && !isUuid(before.id)) return [];
+    // JS Date хранит миллисекунды, Postgres — микросекунды: сравнение и порядок — по усечённому до мс времени,
+    // иначе курсор из Date на границе страницы терял бы задачи из той же миллисекунды.
+    const createdMs = sql`date_trunc('milliseconds', ${tasks.createdAt})`;
+    const where = before
+      ? and(
+          eq(tasks.userId, userId),
+          sql`(${createdMs}, ${tasks.id}) < (${before.createdAt.toISOString()}::timestamptz, ${before.id}::uuid)`,
+        )
+      : eq(tasks.userId, userId);
     return this.db
       .select()
       .from(tasks)
-      .where(eq(tasks.userId, userId))
-      .orderBy(desc(tasks.createdAt), desc(tasks.id))
+      .where(where)
+      .orderBy(desc(createdMs), desc(tasks.id))
       .limit(opts.limit ?? 50);
   }
 
