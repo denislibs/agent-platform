@@ -667,6 +667,53 @@ export function repositoryContract(
           'user',
         );
       });
+
+      test('a nested run is misuse: the outer run rejects and nothing is committed', async () => {
+        const userId = await h.seedUser({ millicredits: 1000 });
+        let taskId = '';
+        const p = h.uow.run(async tx => {
+          await tx.lockUser(userId);
+          taskId = (await tx.tasks.create({ userId, prompt: 'outer' })).id;
+          // In-memory бросает сразу; в Postgres вложенный run ждёт блокировку внешнего и падает по lock_timeout.
+          await h.uow.run(async inner => {
+            await inner.lockUser(userId);
+            await inner.ledger.record({
+              userId,
+              taskId: null,
+              model: 'q',
+              tokensIn: 1,
+              tokensOut: 1,
+              millicredits: 50,
+            });
+          });
+        });
+        await expect(p).rejects.toBeInstanceOf(Error);
+        expect(taskId).not.toBe('');
+        expect(await h.tasks.get(taskId)).toBeUndefined();
+        expect(await h.ledger.balance(userId)).toBe(1000);
+        expect(await h.countUsageEvents()).toBe(0);
+      });
+
+      test('parallel calls on tx run one at a time: a failed sibling does not undo a fulfilled write', async () => {
+        const userId = await h.seedUser({ millicredits: 1000 });
+        const task = await h.tasks.create({ userId, prompt: 'x' });
+        const settled = await h.uow.run(tx =>
+          Promise.allSettled([
+            tx.ledger.record({ userId, taskId: task.id, model: 'q', tokensIn: 1, tokensOut: 1, millicredits: 300 }),
+            tx.steps.append({ taskId: crypto.randomUUID(), agent: 'user', payload: msg('lost?') }),
+          ]),
+        );
+        const [recorded, appended] = settled;
+        expect(recorded).toEqual({ status: 'fulfilled', value: { balance: 700 } });
+        expect(appended?.status).toBe('rejected');
+        if (appended?.status === 'rejected') {
+          expect(appended.reason).toBeInstanceOf(NotFoundError);
+          expect(appended.reason).toHaveProperty('entity', 'task');
+        }
+        expect(await h.ledger.balance(userId)).toBe(700);
+        expect(await h.countUsageEvents()).toBe(1);
+        expect((await h.tasks.get(task.id))?.tokensUsed).toBe(2);
+      });
     });
   });
 }

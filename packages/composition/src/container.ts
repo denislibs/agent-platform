@@ -48,7 +48,8 @@ export function buildContainer(appConfig: Config, overrides: Overrides = {}): Ap
     subtasks: asClass(DrizzleSubtaskRepository).singleton(),
     ledger: asClass(DrizzleCreditLedger).singleton(),
     files: asClass(DrizzleFileRepository).singleton(),
-    uow: asClass(DrizzleUnitOfWork).singleton(),
+    // Через asFunction: в строгом PROXY-режиме обращение к незарегистрированному lockTimeoutMs бросило бы.
+    uow: asFunction(({ database }: Cradle) => new DrizzleUnitOfWork({ database })).singleton(),
     fileStore: asFunction(({ config }: Cradle) => new S3FileStore(config.s3)).singleton(),
     llm: asFunction(({ config }: Cradle) => createLlm(config.llm)).singleton(),
     sandboxes: asFunction(({ config }: Cradle) => new DockerSandboxProvider(config.sandbox)).singleton(),

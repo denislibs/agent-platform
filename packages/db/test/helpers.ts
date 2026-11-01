@@ -13,7 +13,7 @@ export function assertTestDatabaseUrl(url: string): void {
   }
 }
 
-function testDatabaseUrl(): string {
+export function testDatabaseUrl(): string {
   const url = process.env.TEST_DATABASE_URL;
   if (!url) throw new Error('TEST_DATABASE_URL is not set (see .env.test)');
   assertTestDatabaseUrl(url);
