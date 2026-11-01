@@ -13,7 +13,7 @@ Backend architecture: ports & adapters, DI with awilix, TDD (spec section 3.1).
 
 ```bash
 bun install
-cp .env.example .env        # fill LITELLM_BASE_URL and LITELLM_API_KEY
+cp .env.example .env        # fill LITELLM_BASE_URL and LITELLM_API_KEY (worker), BETTER_AUTH_SECRET (API)
 bun run infra:up && bun run infra:wait
 bun run sandbox:build       # agent sandbox image (Chromium + Python + Node), takes a few minutes
 bun run db:migrate
@@ -28,7 +28,9 @@ bun run worker              # worker locally, on the infra from infra:up
 bun run stack:up            # infra and worker in Docker (profile app); stack:down stops them
 ```
 
-The worker needs the sandbox image (`bun run sandbox:build`) and a non-empty `LITELLM_API_KEY` in `.env`.
+The worker needs the sandbox image (`bun run sandbox:build`) and `LITELLM_BASE_URL`, `LITELLM_API_KEY`,
+`PLANNER_MODEL`, `EXECUTOR_MODEL` in `.env`: they are optional in the config schema (the API does without them),
+but the worker creates the LiteLLM client at startup and refuses to start when any is missing.
 In Docker it applies migrations on start and manages sandboxes through the host `/var/run/docker.sock`
 (root-equivalent on the host: development and closed beta only, production uses E2B).
 `bun run backend:build` builds only the `agent-backend:dev` image.
@@ -58,10 +60,22 @@ Sandbox network isolation:
 ## API
 
 ```bash
-NODE_ENV=development bun run api   # Hono API on 127.0.0.1:3000 (API_HOST, API_PORT), on the infra from infra:up
+NODE_ENV=development BETTER_AUTH_URL=http://localhost:3000 bun run api   # Hono API on 127.0.0.1:3000, on the infra from infra:up
 ```
 
-The API needs `BETTER_AUTH_SECRET` in `.env` (`openssl rand -base64 32`). Sign-in methods:
+Until nginx arrives (plan 4b), the browser talks to the API directly, so local runs set `BETTER_AUTH_URL=http://localhost:3000`
+(the app's origin: sign-in callbacks, cookies and the CSRF check of mutating requests compare against it) and
+`NODE_ENV=development`. The API reads from `.env`:
+
+- `DATABASE_URL`, `VALKEY_URL`, `S3_*` (`S3_PUBLIC_ENDPOINT` — the S3 address the browser can reach);
+- `BETTER_AUTH_SECRET` — required, at least 32 characters: `openssl rand -base64 32`;
+- `BETTER_AUTH_URL` — the app's public origin (default `http://localhost:8080`, the nginx of plan 4b);
+- optional: `API_HOST`, `API_PORT`, `UPLOAD_MAX_BYTES`, `SSE_HEARTBEAT_MS` (≤ 120000), `SSE_MAX_STREAM_MS`,
+  `GOOGLE_*` / `GITHUB_*`.
+
+The API does not need `LITELLM_*` or the models; the worker refuses to start without them.
+
+Sign-in methods:
 
 - magic link — always on; without a mail provider the link is written to the API log (`mail not sent … logged instead`);
 - Google / GitHub — on when both `*_CLIENT_ID` and `*_CLIENT_SECRET` are set; the OAuth callback URL is

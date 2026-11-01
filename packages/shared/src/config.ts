@@ -25,10 +25,14 @@ const EnvSchema = z.object({
   S3_BUCKET: required,
   S3_ACCESS_KEY_ID: required,
   S3_SECRET_ACCESS_KEY: required,
-  LITELLM_BASE_URL: required,
-  LITELLM_API_KEY: required,
-  PLANNER_MODEL: required,
-  EXECUTOR_MODEL: required,
+  /**
+   * LiteLLM нужен только воркеру, поэтому в схеме эти четыре значения необязательны (как BETTER_AUTH_SECRET для API):
+   * API стартует без них, а воркер не стартует — createLlm бросает, и main.ts воркера создаёт клиент сразу.
+   */
+  LITELLM_BASE_URL: optionalText,
+  LITELLM_API_KEY: optionalText,
+  PLANNER_MODEL: optionalText,
+  EXECUTOR_MODEL: optionalText,
   /** Цены моделей в кредитах за 1M токенов (спецификация 11). */
   PLANNER_PRICE_IN: price(30),
   PLANNER_PRICE_OUT: price(120),
@@ -110,9 +114,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       secretAccessKey: e.S3_SECRET_ACCESS_KEY,
     },
     llm: {
-      baseURL: e.LITELLM_BASE_URL,
-      apiKey: e.LITELLM_API_KEY,
-      models: { planner: e.PLANNER_MODEL, executor: e.EXECUTOR_MODEL },
+      baseURL: e.LITELLM_BASE_URL ?? null,
+      apiKey: e.LITELLM_API_KEY ?? null,
+      models: { planner: e.PLANNER_MODEL ?? null, executor: e.EXECUTOR_MODEL ?? null },
       contextTokens: { planner: e.PLANNER_CONTEXT_TOKENS, executor: e.EXECUTOR_CONTEXT_TOKENS },
       toolChoice: e.LLM_TOOL_CHOICE,
     },

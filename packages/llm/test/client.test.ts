@@ -12,6 +12,17 @@ const llmFor = (url: string, maxRetries = 4) =>
   createLlm({ baseURL: url, apiKey: 'k', models: { planner: 'deepseek-x', executor: 'qwen-x' }, maxRetries });
 
 describe('createLlm', () => {
+  test('refuses to start without LiteLLM settings, naming the missing variables', () => {
+    const full = { baseURL: 'http://llm/v1', apiKey: 'k', models: { planner: 'p', executor: 'e' } };
+    expect(() => createLlm({ ...full, apiKey: null })).toThrow(
+      'LiteLLM is not configured: set LITELLM_API_KEY (the worker cannot run agents without it)',
+    );
+    expect(() => createLlm({ baseURL: null, apiKey: '', models: { planner: null, executor: 'e' } })).toThrow(
+      /set LITELLM_BASE_URL, LITELLM_API_KEY, PLANNER_MODEL\b/,
+    );
+    expect(() => createLlm(full)).not.toThrow();
+  });
+
   test('picks the model by role and returns text with usage', async () => {
     server = fakeOpenAI(() => completion({ content: 'Hello' }, { prompt_tokens: 12, completion_tokens: 3 }));
     const res = await llmFor(server.url).chat({ role: 'planner', messages: [{ role: 'user', content: 'hi' }] });

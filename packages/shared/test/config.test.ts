@@ -77,7 +77,22 @@ describe('loadConfig', () => {
   });
 
   test('lists every missing variable in one error', () => {
-    expect(() => loadConfig({})).toThrow(/DATABASE_URL.*LITELLM_API_KEY/s);
+    expect(() => loadConfig({})).toThrow(/DATABASE_URL.*S3_SECRET_ACCESS_KEY/s);
+  });
+
+  test('LiteLLM settings are optional (only the worker needs them); blank means unset', () => {
+    const {
+      LITELLM_BASE_URL: _url,
+      LITELLM_API_KEY: _key,
+      PLANNER_MODEL: _planner,
+      EXECUTOR_MODEL: _executor,
+      ...withoutLlm
+    } = base;
+    const c = loadConfig(withoutLlm);
+    expect(c.llm).toMatchObject({ baseURL: null, apiKey: null, models: { planner: null, executor: null } });
+    expect(loadConfig({ ...base, LITELLM_API_KEY: '' }).llm.apiKey).toBeNull();
+    expect(loadConfig({ ...base, LITELLM_API_KEY: '  ' }).llm.apiKey).toBeNull();
+    expect(loadConfig(base).llm).toMatchObject({ baseURL: 'http://llm/v1', apiKey: 'k' });
   });
 
   test('rejects non-positive limits', () => {
