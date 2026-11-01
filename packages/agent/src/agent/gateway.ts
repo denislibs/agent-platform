@@ -17,6 +17,8 @@ export interface ModelCall {
   role: Role;
   messages: ChatMessage[];
   tools?: readonly Tool[];
+  /** summary — вызов для сжатия контекста; помечается в шаге llm_call. */
+  purpose?: 'summary';
 }
 
 const tokens = (n: number) => (Number.isFinite(n) && n > 0 ? Math.floor(n) : 0);
@@ -29,7 +31,7 @@ export class ModelGateway {
   constructor(private readonly deps: { llm: Llm; uow: UnitOfWork; config: Config }) {}
 
   async call(input: ModelCall): Promise<{ result: ChatResult; step: Step }> {
-    const { task, subtaskId, role, messages, tools } = input;
+    const { task, subtaskId, role, messages, tools, purpose } = input;
     const withTools = tools && tools.length > 0;
     const result = await this.deps.llm.chat({
       role,
@@ -61,6 +63,7 @@ export class ModelGateway {
           toolCalls: result.toolCalls.map(c => ({ id: c.id, name: c.name, args: c.args ?? c.rawArgs })),
           finishReason: result.finishReason,
           ...(usageMissing ? { usageMissing: true } : {}),
+          ...(purpose ? { purpose } : {}),
         },
       });
     });

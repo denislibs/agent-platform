@@ -7,6 +7,14 @@ export const COMPACT_AT = 0.6;
 export const COMPACT_KEEP_STEPS = 6;
 
 const isSummary = (s: Step) => s.payload.type === 'message' && s.payload.kind === 'summary';
+const isSummaryCall = (s: Step) => s.payload.type === 'llm_call' && s.payload.purpose === 'summary';
+
+/** Последний конспект: сам шаг, его текст и последний seq, который он заменяет. */
+function latestSummary(steps: readonly Step[]): { step: Step; text: string; covers: number } | undefined {
+  const step = steps.findLast(isSummary);
+  if (step?.payload.type !== 'message') return undefined;
+  return { step, text: step.payload.text, covers: step.payload.coversUpToSeq ?? -1 };
+}
 const argsText = (args: unknown) => (typeof args === 'string' ? args : JSON.stringify(args ?? {}));
 
 function stepToMessage(s: Step): ChatMessage | undefined {
@@ -18,8 +26,9 @@ function stepToMessage(s: Step): ChatMessage | undefined {
         ? { role: 'user', content: p.text }
         : { role: 'assistant', content: p.text };
     case 'llm_call':
+      if (p.purpose === 'summary') return undefined;
       return p.toolCalls.length === 0
-        ? { role: 'assistant', content: p.content }
+        ? { role: 'assistant', content: p.content ?? '' }
         : {
             role: 'assistant',
             content: p.content,
@@ -36,20 +45,53 @@ function stepToMessage(s: Step): ChatMessage | undefined {
   }
 }
 
+const NO_RESULT = '[no result recorded]';
+
+/**
+ * Чинит пары «вызов — результат», которые рвёт сбой между записью llm_call и tool_result:
+ * результаты без вызова в ближайшем assistant-сообщении выбрасываются, недостающие подставляются.
+ */
+function repairPairing(messages: readonly ChatMessage[]): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  let group: { pending: string[]; insertAt: number } | undefined;
+  const flush = () => {
+    if (group && group.pending.length > 0) {
+      const missing = group.pending.map((id): ChatMessage => ({ role: 'tool', tool_call_id: id, content: NO_RESULT }));
+      out.splice(group.insertAt, 0, ...missing);
+    }
+    group = undefined;
+  };
+  for (const m of messages) {
+    if (m.role === 'tool') {
+      if (!group?.pending.includes(m.tool_call_id)) continue;
+      group.pending = group.pending.filter(id => id !== m.tool_call_id);
+      out.push(m);
+      group.insertAt = out.length;
+      continue;
+    }
+    if (m.role === 'assistant') {
+      flush();
+      out.push(m);
+      if (m.tool_calls?.length) group = { pending: m.tool_calls.map(c => c.id), insertAt: out.length };
+      continue;
+    }
+    out.push(m);
+  }
+  flush();
+  return out;
+}
+
 /** Лента шагов → сообщения модели. Последний конспект идёт первым и заменяет покрытые им шаги. */
 export function toMessages(steps: readonly Step[]): ChatMessage[] {
-  const summary = steps.findLast(isSummary);
-  const covered = summary?.payload.type === 'message' ? (summary.payload.coversUpToSeq ?? -1) : -1;
+  const summary = latestSummary(steps);
   const out: ChatMessage[] = [];
-  if (summary?.payload.type === 'message') {
-    out.push({ role: 'user', content: `[Summary of earlier steps]\n${summary.payload.text}` });
-  }
+  if (summary) out.push({ role: 'user', content: `[Summary of earlier steps]\n${summary.text}` });
   for (const s of steps) {
-    if (isSummary(s) || s.seq <= covered) continue;
+    if (isSummary(s) || s.seq <= (summary?.covers ?? -1)) continue;
     const m = stepToMessage(s);
     if (m) out.push(m);
   }
-  return out;
+  return repairPairing(out);
 }
 
 export function estimateTokens(messages: readonly ChatMessage[]): number {
@@ -66,10 +108,11 @@ const OUTPUT_IN_SUMMARY = 2000;
 
 function render(steps: readonly Step[]): string {
   return steps
+    .filter(s => !isSummaryCall(s))
     .map(s => {
       const p = s.payload;
       if (p.type === 'llm_call') {
-        const callsText = p.toolCalls.map(c => `${c.name}(${argsText(c.args)})`).join(', ');
+        const callsText = p.toolCalls.map(c => `${c.name}(${argsText(c.args).slice(0, OUTPUT_IN_SUMMARY)})`).join(', ');
         return `assistant: ${p.content ?? ''}${callsText ? `\ncalls: ${callsText}` : ''}`;
       }
       if (p.type === 'tool_result')
@@ -98,9 +141,8 @@ export class Compactor {
       const window = this.deps.config.llm.contextTokens[role];
       if (estimateTokens([...head, ...toMessages(history)]) <= window * COMPACT_AT) return history;
     }
-    const summary = history.findLast(isSummary);
-    const covered = summary?.payload.type === 'message' ? (summary.payload.coversUpToSeq ?? -1) : -1;
-    const active = history.filter(s => !isSummary(s) && s.seq > covered);
+    const summary = latestSummary(history);
+    const active = history.filter(s => !isSummary(s) && !isSummaryCall(s) && s.seq > (summary?.covers ?? -1));
     let cut = active.length - COMPACT_KEEP_STEPS;
     // Сохранённая часть не начинается с результата инструмента: иначе его вызов окажется в конспекте.
     while (cut > 0 && active[cut]?.payload.type === 'tool_result') cut--;
@@ -110,11 +152,15 @@ export class Compactor {
       task,
       subtaskId,
       role,
+      purpose: 'summary',
       messages: [
         { role: 'system', content: PROMPTS.summarySystem },
-        { role: 'user', content: render(summary ? [summary, ...old] : old) },
+        { role: 'user', content: render(summary ? [summary.step, ...old] : old) },
       ],
     });
+    const text = result.content?.trim();
+    // Пустой конспект заменил бы историю ничем: оставляем как есть (вызов уже оплачен и записан).
+    if (!text) return history;
     const summaryStep = await this.deps.steps.append({
       taskId: task.id,
       subtaskId,
@@ -122,7 +168,7 @@ export class Compactor {
       payload: {
         type: 'message',
         role: 'assistant',
-        text: result.content ?? '',
+        text,
         kind: 'summary',
         coversUpToSeq: old.at(-1)!.seq,
       },

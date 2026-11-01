@@ -30,6 +30,8 @@ export const StepPayloadSchema = z.discriminatedUnion('type', [
     finishReason: z.string(),
     /** Модель не вернула usage — вызов записан с нулём токенов. */
     usageMissing: z.boolean().optional(),
+    /** Вызов, сделанный для сжатия контекста: ответ уже записан шагом-конспектом и в сообщения не попадает. */
+    purpose: z.enum(['summary']).optional(),
   }),
   z.object({
     type: z.literal('tool_result'),
