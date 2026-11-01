@@ -215,6 +215,24 @@ describe('hardening', () => {
     expect(body.nextCursor).toBeNull();
   });
 
+  test('a body over 256 KiB is 413 payload_too_large before it is parsed', async () => {
+    const t = setupApi();
+    const { headers } = await t.signIn();
+    const res = await t.call('POST', '/api/tasks', { headers, body: { prompt: 'x'.repeat(300 * 1024) } });
+    expect(res.status).toBe(413);
+    expect(await errorCode(res)).toBe('payload_too_large');
+    const ok = await t.call('POST', '/api/tasks', { headers, body: { prompt: 'x'.repeat(20_000) } });
+    expect(ok.status).toBe(201);
+  });
+
+  test('a NUL character in the prompt is 400 bad_request', async () => {
+    const t = setupApi();
+    const { headers } = await t.signIn();
+    const res = await t.call('POST', '/api/tasks', { headers, body: { prompt: 'a\u0000b' } });
+    expect(res.status).toBe(400);
+    expect(await errorCode(res)).toBe('bad_request');
+  });
+
   test('every task route requires a session', async () => {
     const t = setupApi();
     for (const [method, path] of [

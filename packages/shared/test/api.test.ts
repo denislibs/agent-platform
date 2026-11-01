@@ -5,6 +5,7 @@ import {
   formatCredits,
   ListTasksQuerySchema,
   MAX_FILES_PER_TASK,
+  ReplyBodySchema,
   UploadBodySchema,
 } from '@agent/shared';
 
@@ -54,4 +55,11 @@ describe('API schemas', () => {
     expect(ApiErrorSchema.safeParse({ error: { code: 'not_found', message: 'task not found' } }).success).toBe(true);
     expect(ApiErrorSchema.safeParse({ error: { code: 'teapot', message: 'x' } }).success).toBe(false);
   });
+});
+
+test('NUL characters are rejected in the prompt, the reply text and the upload name', () => {
+  expect(CreateTaskBodySchema.safeParse({ prompt: 'a\u0000b' }).success).toBe(false);
+  expect(ReplyBodySchema.safeParse({ text: 'a\u0000b' }).success).toBe(false);
+  expect(UploadBodySchema.safeParse({ name: 'a\u0000.csv', contentType: 'text/csv', size: 1 }).success).toBe(false);
+  expect(ReplyBodySchema.safeParse({ text: 'fine' }).success).toBe(true);
 });

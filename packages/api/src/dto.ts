@@ -1,7 +1,16 @@
 import type { FileRecord, Step, Subtask, Task } from '@agent/core';
-import type { FileDto, StepDto, SubtaskDto, TaskDetail, TaskSummary } from '@agent/shared';
+import {
+  StepPayloadSchema,
+  type FileDto,
+  type StepDto,
+  type SubtaskDto,
+  type TaskDetail,
+  type TaskSummary,
+} from '@agent/shared';
 
 const REASON_LIMIT = 200;
+/** Сколько кодовых единиц входа обрабатывается: длинный текст режется до регулярных выражений. */
+const REASON_INPUT_LIMIT = 10_000;
 /** Абсолютный путь хоста из двух и более сегментов: /Users/me/app, /var/run/docker.sock (в том числе не ASCII). */
 const ABSOLUTE_PATH = /(?<![\p{L}\p{N}_.~-])(?:\/[\p{L}\p{N}_.@+~-]+){2,}\/?/gu;
 
@@ -16,7 +25,7 @@ const isUnsafeChar = (ch: string): boolean => {
  * символов, не длиннее 200 символов (по кодовым точкам).
  */
 export function sanitizeReason(text: string): string {
-  const cleaned = Array.from(text, ch => (isUnsafeChar(ch) ? ' ' : ch))
+  const cleaned = Array.from(text.slice(0, REASON_INPUT_LIMIT), ch => (isUnsafeChar(ch) ? ' ' : ch))
     .join('')
     .replace(ABSOLUTE_PATH, '<path>')
     .replace(/\s+/g, ' ')
@@ -68,16 +77,26 @@ export const toFileDto = (f: FileRecord): FileDto => ({
   url: `/api/files/${f.id}`,
 });
 
+/**
+ * Нагрузка шага проходит через схему: лишние ключи из jsonb (в том числе внутренние) отбрасываются.
+ * Не разобравшаяся (устаревшая) запись заменяется нейтральной заметкой — ленту это не ломает.
+ */
+function toPayload(s: Step): StepDto['payload'] {
+  const parsed = StepPayloadSchema.safeParse(s.payload);
+  if (!parsed.success) return { type: 'message', role: 'assistant', kind: 'note', text: '[step unavailable]' };
+  const payload = parsed.data;
+  return payload.type === 'status' && payload.reason !== undefined
+    ? { ...payload, reason: sanitizeReason(payload.reason) }
+    : payload;
+}
+
 export function toStepDto(s: Step): StepDto {
-  const payload =
-    s.payload.type === 'status' && s.payload.reason !== undefined
-      ? { ...s.payload, reason: sanitizeReason(s.payload.reason) }
-      : s.payload;
+  const payload = toPayload(s);
   return {
     seq: s.seq,
     subtaskId: s.subtaskId,
     agent: s.agent,
-    type: s.type,
+    type: payload.type,
     payload,
     tokensIn: s.tokensIn,
     tokensOut: s.tokensOut,

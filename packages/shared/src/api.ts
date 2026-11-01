@@ -24,14 +24,20 @@ export const MAX_FILES_PER_TASK = 20;
 export const MAX_TASKS_PAGE = 100;
 
 // ── Запросы ──
+/** Postgres `text` не хранит U+0000: такая строка дала бы 500 при записи, поэтому отсекается как 400 на входе. */
+export const noNul = (value: string): boolean => !value.includes('\u0000');
+const NO_NUL_MESSAGE = 'must not contain NUL characters';
+
 export const CreateTaskBodySchema = z.object({
-  prompt: z.string().trim().min(1).max(MAX_PROMPT_CHARS),
+  prompt: z.string().trim().min(1).max(MAX_PROMPT_CHARS).refine(noNul, NO_NUL_MESSAGE),
   fileIds: z.array(z.uuid()).max(MAX_FILES_PER_TASK).default([]),
 });
-export const ReplyBodySchema = z.object({ text: z.string().trim().min(1).max(MAX_PROMPT_CHARS) });
+export const ReplyBodySchema = z.object({
+  text: z.string().trim().min(1).max(MAX_PROMPT_CHARS).refine(noNul, NO_NUL_MESSAGE),
+});
 /** contentType — без параметров (`text/csv`, не `text/csv; charset=utf-8`); неизвестный тип — application/octet-stream. */
 export const UploadBodySchema = z.object({
-  name: z.string().min(1).max(255),
+  name: z.string().min(1).max(255).refine(noNul, NO_NUL_MESSAGE),
   contentType: z
     .string()
     .max(127)

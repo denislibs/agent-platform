@@ -39,6 +39,14 @@ describe('sanitizeReason', () => {
     expect(sanitizeReason('\ud83d')).toBe('');
   });
 
+  test('a huge input is cut before the regular expressions run', () => {
+    const started = performance.now();
+    const out = sanitizeReason(`${'/a'.repeat(5_000_000)}`);
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(Array.from(out).length).toBeLessThanOrEqual(200);
+    expect(sanitizeReason(`${'x'.repeat(10_000)}/Users/me/app`)).toBe(`${'x'.repeat(199)}…`);
+  });
+
   test('control characters and line breaks collapse to single spaces', () => {
     expect(sanitizeReason('a\r\nb\tc\u001b[31md\u007fe')).toBe('a b c [31md e');
   });
@@ -81,6 +89,26 @@ test('toStepDto keeps a status step without a reason free of the reason key', ()
     payload: { type: 'status', from: 'queued', to: 'planning' },
   };
   expect('reason' in toStepDto(step).payload).toBe(false);
+});
+
+test('toStepDto strips unknown payload keys and replaces an unreadable payload', () => {
+  const message = {
+    ...baseStep,
+    agent: 'user',
+    type: 'message',
+    payload: { type: 'message', role: 'user', text: 'hi', internalPath: '/srv/x/y' },
+  } as unknown as Step;
+  expect(toStepDto(message).payload).toEqual({ type: 'message', role: 'user', text: 'hi' });
+  const status = {
+    ...baseStep,
+    agent: 'system',
+    type: 'status',
+    payload: { type: 'status', from: 'running', to: 'failed', reason: 'at /a/b/c', leak: 1 },
+  } as unknown as Step;
+  expect(toStepDto(status).payload).toEqual({ type: 'status', from: 'running', to: 'failed', reason: 'at <path>' });
+  const legacy = { ...baseStep, agent: 'system', type: 'status', payload: { type: 'status' } } as unknown as Step;
+  const dto = StepDtoSchema.parse(toStepDto(legacy));
+  expect(dto.type).toBe('message');
 });
 
 test('toStepDto does not expose the internal step and task ids', () => {

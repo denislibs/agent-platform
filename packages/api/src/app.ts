@@ -9,6 +9,8 @@ import { taskRoutes } from './routes/tasks';
 
 /** Тела запросов /api/auth/* — JSON с адресом и URL; больше этого Better Auth читать незачем. */
 export const AUTH_BODY_LIMIT_BYTES = 64 * 1024;
+/** Тела остальных /api/*: самый большой запрос — промпт до 20 000 символов (даже с экранированием это меньше 128 КиБ). */
+export const API_BODY_LIMIT_BYTES = 256 * 1024;
 
 /** Единственное исключение из охраны: проверка живости и обработчик авторизации. */
 const isPublic = (method: string, path: string): boolean =>
@@ -34,6 +36,10 @@ export function createApp(deps: ApiDeps): Hono<ApiEnv> {
   // Охрана регистрируется раньше всех маршрутов: маршрут, добавленный позже, не окажется без неё.
   const authenticated = requireUser(deps.auth);
   app.use('/api/*', (c, next) => (isPublic(c.req.method, c.req.path) ? next() : authenticated(c, next)));
+
+  // Тело читается целиком только в parseJson, поэтому предел ставится до маршрутов. /api/auth/* ограничен отдельно.
+  const apiBodyLimit = bodyLimit({ maxSize: API_BODY_LIMIT_BYTES });
+  app.use('/api/*', (c, next) => (c.req.path.startsWith('/api/auth/') ? next() : apiBodyLimit(c, next)));
 
   app.get('/api/health', c => c.json({ ok: true }));
   // Предел до обработчика: bodyLimit бросает HTTPException 413, mapError превращает его в payload_too_large.
