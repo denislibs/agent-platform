@@ -29,6 +29,7 @@ export class ToolExecutor {
     private readonly deps: { steps: StepLog; sandboxes: SandboxProvider; search: SearchProvider; config: Config },
   ) {}
 
+  /** Если execute бросит ошибку посреди хода, записанные результаты остаются; вызовы без ответа чинит toMessages (`[no result recorded]`), а job повторит план 3d. */
   async execute(input: {
     task: Task;
     subtaskId: string | null;
