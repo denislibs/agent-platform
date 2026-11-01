@@ -1,9 +1,8 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { errorMessage } from '@agent/core';
 import { requireUser } from './auth/middleware';
 import type { ApiDeps, ApiEnv } from './deps';
-import { mapError } from './errors';
+import { errorLogFields, mapError } from './errors';
 import { OpenStreams } from './open-streams';
 import { eventRoutes } from './routes/events';
 import { fileRoutes } from './routes/files';
@@ -33,8 +32,7 @@ export function createApp(deps: ApiDeps, opts: { streams?: OpenStreams } = {}): 
       deps.logger.error('unhandled API error', {
         method: c.req.method,
         path: c.req.path,
-        error: errorMessage(err),
-        ...(err instanceof Error && err.stack ? { stack: err.stack } : {}),
+        ...errorLogFields(err),
       });
     return c.json(body, status);
   });

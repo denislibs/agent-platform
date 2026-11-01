@@ -1,5 +1,5 @@
-import { errorMessage, LogMailer, type Logger, type Mailer } from '@agent/core';
-import { mapError } from './errors';
+import { LogMailer, type Logger, type Mailer } from '@agent/core';
+import { errorLogFields, mapError } from './errors';
 import type { OpenStreams } from './open-streams';
 import { isLocalRuntime } from './runtime-env';
 import { settlesWithin } from './timing';
@@ -32,7 +32,7 @@ export function withJsonErrors<A extends unknown[]>(
       logger.error('unhandled API error', {
         method: req.method,
         path: new URL(req.url).pathname,
-        error: errorMessage(err),
+        ...errorLogFields(err),
       });
       return Response.json(mapError(err).body, { status: 500 });
     }

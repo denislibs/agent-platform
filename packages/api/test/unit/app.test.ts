@@ -114,6 +114,23 @@ test('an unexpected error is logged with its stack', async () => {
   expect(stack).toContain('boom');
 });
 
+test('the params tail of an unexpected error is scrubbed from both the logged message and the stack', async () => {
+  const t = setupApi();
+  const { headers } = await t.signIn();
+  t.c.ledger.balance = async () => {
+    throw new Error('Failed query: select 1 where prompt = $1\nparams: secret-prompt');
+  };
+  const res = await t.call('GET', '/api/me', { headers });
+  expect(res.status).toBe(500);
+  const logged = JSON.stringify(t.c.logger.entries);
+  expect(logged).not.toContain('secret-prompt');
+  const fields = t.c.logger.entries[0]?.fields as { error?: string; stack?: string } | undefined;
+  expect(fields?.error).toBe('Failed query: select 1 where prompt = $1\nparams: <redacted>');
+  // Кадры стека остаются: очищается только заголовок с сообщением.
+  expect(fields?.stack).toContain('params: <redacted>');
+  expect(fields?.stack).toContain('    at ');
+});
+
 test('only /api/health and /api/auth/* are public: lookalike and unnormalised paths need a session', async () => {
   const t = setupApi();
   for (const path of ['/api/authx', '/api/auth', '/api/health/x', '/api/nope']) {

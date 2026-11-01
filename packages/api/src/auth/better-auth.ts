@@ -6,6 +6,7 @@ import { magicLink } from 'better-auth/plugins';
 import type { Logger, MailMessage, Mailer } from '@agent/core';
 import { account, session, user, verification, type Db } from '@agent/db';
 import type { Config } from '@agent/shared';
+import { scrub } from '../errors';
 import { isLocalRuntime } from '../runtime-env';
 import type { AuthGateway, SessionUser } from './gateway';
 
@@ -29,10 +30,6 @@ export function magicLinkMail(to: string, url: string): MailMessage {
     text: `Open this link to sign in:\n\n${url}\n\nIt expires in ${MAGIC_LINK_TTL_SEC / 60} minutes. If you did not ask for it, ignore this email.`,
   };
 }
-
-/** Хвост сообщения DrizzleQueryError (`params: …`) — значения запроса: токены сессий, ссылки magic link. */
-const PARAMS_TAIL = /\bparams:[\s\S]*$/i;
-const scrub = (text: string) => text.replace(PARAMS_TAIL, 'params: <redacted>');
 
 /** Аргумент лога Better Auth → безопасное поле: у ошибок только имя и текст причины (ошибка Postgres). */
 function safeLogArg(arg: unknown, depth = 0): unknown {

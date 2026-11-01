@@ -15,6 +15,27 @@ export class ApiError extends Error {
   }
 }
 
+/** Хвост сообщения DrizzleQueryError (`params: …`) — значения запроса: токены сессий, ссылки magic link, промпты. */
+const PARAMS_TAIL = /\bparams:[\s\S]*$/i;
+
+/** Вырезает из текста ошибки хвост `params: …`: в журнал не должны попасть значения запроса. */
+export const scrub = (text: string): string => text.replace(PARAMS_TAIL, 'params: <redacted>');
+
+/**
+ * Поля журнала для непредвиденной ошибки: текст и стек без хвоста `params: …`. В стеке очищается только
+ * заголовок с сообщением, кадры остаются; если сообщения в стеке нет, очищается весь стек.
+ */
+export function errorLogFields(err: unknown): { error: string; stack?: string } {
+  if (!(err instanceof Error)) return { error: scrub(String(err)) };
+  const error = scrub(err.message);
+  if (!err.stack) return { error };
+  const stack =
+    err.message !== '' && err.stack.includes(err.message)
+      ? err.stack.replace(err.message, () => error)
+      : scrub(err.stack);
+  return { error, stack };
+}
+
 const body = (code: ApiErrorCode, message: string): ApiErrorBody => ({ error: { code, message } });
 
 /** Ошибка → ответ. Текст неизвестных ошибок клиенту не показывается: его пишет журнал (createApp). */

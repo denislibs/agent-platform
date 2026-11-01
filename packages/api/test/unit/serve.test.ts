@@ -44,6 +44,23 @@ test('a synchronous throw from the handler is caught too', async () => {
   expect(logger.entries).toMatchObject([{ level: 'error', fields: { error: 'boom' } }]);
 });
 
+test('the last-resort log scrubs the params tail from the message and the stack', async () => {
+  const logger = new CapturingLogger();
+  const fetch = withJsonErrors(() => {
+    throw new Error('Failed query: insert into steps params: secret-prompt');
+  }, logger);
+  expect((await fetch(new Request('http://x/api/tasks'))).status).toBe(500);
+  expect(JSON.stringify(logger.entries)).not.toContain('secret-prompt');
+  expect(logger.entries).toMatchObject([
+    { level: 'error', fields: { error: 'Failed query: insert into steps params: <redacted>' } },
+  ]);
+  const odd = new CapturingLogger();
+  await withJsonErrors(() => {
+    throw 'raw params: secret-prompt';
+  }, odd)(new Request('http://x/api/tasks'));
+  expect(JSON.stringify(odd.entries)).not.toContain('secret-prompt');
+});
+
 test('normal responses pass through the wrapper unchanged', async () => {
   const t = setupApi();
   const fetch = withJsonErrors((req: Request) => t.app.fetch(req), new CapturingLogger());
