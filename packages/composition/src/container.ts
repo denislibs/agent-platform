@@ -20,7 +20,7 @@ import {
   type DbHandle,
 } from '@agent/db';
 import { createLlm } from '@agent/llm';
-import { BullJobQueue, redisConnection, type RedisConnection } from '@agent/queue';
+import { BullJobQueue, redisConnection, TaskLock, type RedisConnection } from '@agent/queue';
 import { DockerSandboxProvider } from '@agent/sandbox';
 import { BraveSearchProvider, UnavailableSearchProvider } from '@agent/search';
 import type { Config } from '@agent/shared';
@@ -30,6 +30,9 @@ export interface Cradle extends Ports, AgentServices {
   config: Config;
   database: DbHandle;
   redis: RedisConnection;
+  // Воркеру нужен scheduleSweep, которого нет в порте JobQueue.
+  queue: BullJobQueue;
+  taskLock: TaskLock;
 }
 
 export type AppContainer = AwilixContainer<Cradle>;
@@ -53,6 +56,7 @@ export function buildContainer(appConfig: Config, overrides: Overrides = {}): Ap
     queue: asFunction(({ redis, config }: Cradle) => new BullJobQueue({ redis, config }))
       .singleton()
       .disposer(q => q.close()),
+    taskLock: asFunction(({ redis }: Cradle) => new TaskLock({ redis })).singleton(),
     tasks: asClass(DrizzleTaskRepository).singleton(),
     steps: asClass(DrizzleStepLog).singleton(),
     subtasks: asClass(DrizzleSubtaskRepository).singleton(),

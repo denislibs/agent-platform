@@ -135,6 +135,23 @@
         "awilix": "^13",
       },
     },
+    "packages/worker": {
+      "name": "@agent/worker",
+      "version": "0.0.0",
+      "dependencies": {
+        "@agent/agent": "workspace:*",
+        "@agent/composition": "workspace:*",
+        "@agent/core": "workspace:*",
+        "@agent/queue": "workspace:*",
+        "@agent/shared": "workspace:*",
+        "bullmq": "^5",
+      },
+      "devDependencies": {
+        "@agent/db": "workspace:*",
+        "@agent/testing": "workspace:*",
+        "awilix": "^13",
+      },
+    },
   },
   "packages": {
     "@agent/agent": ["@agent/agent@workspace:packages/agent"],
@@ -158,6 +175,8 @@
     "@agent/storage": ["@agent/storage@workspace:packages/storage"],
 
     "@agent/testing": ["@agent/testing@workspace:packages/testing"],
+
+    "@agent/worker": ["@agent/worker@workspace:packages/worker"],
 
     "@drizzle-team/brocli": ["@drizzle-team/brocli@0.10.2", "", {}, "sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w=="],
 

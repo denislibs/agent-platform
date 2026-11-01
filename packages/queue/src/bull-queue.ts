@@ -28,9 +28,17 @@ export class BullJobQueue implements JobQueue {
     await this.queue.add(job.kind, { taskId: job.taskId, kind: job.kind }, { jobId: key });
   }
 
-  /** Расписание сборщика: job 'sweep' каждые everyMs (upsertJobScheduler). */
+  /**
+   * Расписание сборщика: job 'sweep' каждые everyMs (upsertJobScheduler). Первый проход — через everyMs:
+   * с одним `every` BullMQ запускает его сразу, и тестовый воркер с большим SWEEP_EVERY_MS всё равно собрал бы
+   * чужие задачи общей базы и песочницы. Для существующего расписания startDate не действует.
+   */
   async scheduleSweep(everyMs: number): Promise<void> {
-    await this.queue.upsertJobScheduler('sweeper', { every: everyMs }, { name: SWEEP_JOB, data: {} });
+    await this.queue.upsertJobScheduler(
+      'sweeper',
+      { every: everyMs, startDate: Date.now() + everyMs },
+      { name: SWEEP_JOB, data: {} },
+    );
   }
 
   /** Для тестов и диагностики. */

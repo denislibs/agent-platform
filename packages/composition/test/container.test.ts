@@ -13,7 +13,7 @@ import {
   runMigrations,
   user,
 } from '@agent/db';
-import { BullJobQueue } from '@agent/queue';
+import { BullJobQueue, TaskLock } from '@agent/queue';
 import { DockerSandboxProvider } from '@agent/sandbox';
 import { BraveSearchProvider, UnavailableSearchProvider } from '@agent/search';
 import { S3FileStore } from '@agent/storage';
@@ -42,6 +42,7 @@ test('registers a real adapter for every port', () => {
   expect(c.uow).toBeInstanceOf(DrizzleUnitOfWork);
   expect(c.fileStore).toBeInstanceOf(S3FileStore);
   expect(c.queue).toBeInstanceOf(BullJobQueue);
+  expect(c.taskLock).toBeInstanceOf(TaskLock);
   expect(c.clock).toBeInstanceOf(SystemClock);
   expect(c.ids).toBeInstanceOf(CryptoIds);
   expect(typeof c.llm.chat).toBe('function');

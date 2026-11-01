@@ -19,7 +19,8 @@
     "infra:reset": "docker compose -f docker/compose.yml down -v",
     "infra:wait": "bun scripts/wait-infra.ts",
     "db:generate": "cd packages/db && bunx --bun drizzle-kit generate",
-    "db:migrate": "bun packages/db/src/migrate.ts"
+    "db:migrate": "bun packages/db/src/migrate.ts",
+    "worker": "bun packages/worker/src/main.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.4.4",

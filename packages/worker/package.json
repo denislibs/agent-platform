@@ -1,0 +1,22 @@
+{
+  "name": "@agent/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@agent/agent": "workspace:*",
+    "@agent/composition": "workspace:*",
+    "@agent/core": "workspace:*",
+    "@agent/queue": "workspace:*",
+    "@agent/shared": "workspace:*",
+    "bullmq": "^5"
+  },
+  "devDependencies": {
+    "@agent/db": "workspace:*",
+    "@agent/testing": "workspace:*",
+    "awilix": "^13"
+  }
+}

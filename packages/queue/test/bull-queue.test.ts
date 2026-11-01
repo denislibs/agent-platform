@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { Queue } from 'bullmq';
 import type IORedis from 'ioredis';
 import { loadConfig } from '@agent/shared';
-import { AGENT_QUEUE, BullJobQueue, redisConnection } from '../src';
+import { AGENT_QUEUE, BullJobQueue, SWEEP_JOB, redisConnection } from '../src';
 
 const base = loadConfig();
 const config = { ...base, worker: { ...base.worker, queuePrefix: `t${crypto.randomUUID().slice(0, 8)}` } };
@@ -42,4 +42,13 @@ test('the sweep scheduler produces a sweep job', async () => {
   await queue.scheduleSweep(60_000);
   const schedulers = await raw.getJobSchedulers();
   expect(schedulers.map(s => s.key ?? s.id)).toContain('sweeper');
+});
+
+test('the first sweep runs one interval after scheduling, not at once', async () => {
+  const before = Date.now();
+  await queue.scheduleSweep(60_000);
+  expect((await raw.getWaiting()).filter(j => j.name === SWEEP_JOB)).toEqual([]);
+  const [next] = (await raw.getDelayed()).filter(j => j.name === SWEEP_JOB);
+  // Расписание могло появиться в тесте выше на несколько мс раньше: допуск, а не точное равенство.
+  expect(next!.timestamp + next!.delay - before).toBeGreaterThan(55_000);
 });
