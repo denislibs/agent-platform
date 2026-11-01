@@ -71,7 +71,13 @@ const EnvSchema = z.object({
   API_PORT: positiveInt(3000),
   /** Лимит входного файла; 50 МиБ — как лимит чтения файла песочницы. */
   UPLOAD_MAX_BYTES: positiveInt(52_428_800),
-  SSE_HEARTBEAT_MS: positiveInt(15_000),
+  /** Не дольше 2 мин: idleTimeout Bun — двойной интервал, а его предел — 255 с. */
+  SSE_HEARTBEAT_MS: z.coerce.number().int().positive().max(120_000).default(15_000),
+  /**
+   * Наибольшая длительность одного SSE-потока: потом он закрывается без end, EventSource переподключается
+   * и снова проходит проверку сессии (отозванная сессия перестаёт получать шаги).
+   */
+  SSE_MAX_STREAM_MS: positiveInt(900_000),
   BETTER_AUTH_SECRET: z.preprocess(
     blankAsUnset,
     z.string().min(32, 'at least 32 characters (openssl rand -base64 32)').optional(),
@@ -145,7 +151,13 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       braveApiKey: e.BRAVE_API_KEY ?? null,
       braveBaseUrl: e.BRAVE_BASE_URL,
     },
-    api: { host: e.API_HOST, port: e.API_PORT, uploadMaxBytes: e.UPLOAD_MAX_BYTES, sseHeartbeatMs: e.SSE_HEARTBEAT_MS },
+    api: {
+      host: e.API_HOST,
+      port: e.API_PORT,
+      uploadMaxBytes: e.UPLOAD_MAX_BYTES,
+      sseHeartbeatMs: e.SSE_HEARTBEAT_MS,
+      sseMaxStreamMs: e.SSE_MAX_STREAM_MS,
+    },
     auth: {
       secret: e.BETTER_AUTH_SECRET ?? null,
       baseUrl: e.BETTER_AUTH_URL,

@@ -55,6 +55,30 @@ function countingTimers() {
   return { timers, active };
 }
 
+/** Таймеры, которые срабатывают только по команде теста: fire(ms) запускает все ожидающие с этим интервалом. */
+function manualTimers() {
+  const pending = new Map<number, { fn: () => void; ms: number }>();
+  let next = 0;
+  const timers: Timers = {
+    set(fn, ms) {
+      const id = ++next;
+      pending.set(id, { fn, ms });
+      return id;
+    },
+    clear(handle) {
+      pending.delete(handle as number);
+    },
+  };
+  const fire = (ms: number) => {
+    for (const [id, timer] of pending) {
+      if (timer.ms !== ms) continue;
+      pending.delete(id);
+      timer.fn();
+    }
+  };
+  return { timers, pending, fire };
+}
+
 async function until(condition: () => boolean, timeoutMs = 1000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!condition()) {
@@ -255,6 +279,101 @@ describe('streamTaskSteps', () => {
     ready.resolve();
     await Bun.sleep(5);
     expect(t.c.stepEvents.subscribers(task.id)).toBe(0);
+  });
+
+  test('the stream ends without end once maxStreamMs is up, leaving no subscription or timer', async () => {
+    const t = setupApi();
+    const task = await newTask(t);
+    const { timers, pending, fire } = manualTimers();
+    const sink = new RecordingSink();
+    const done = streamTaskSteps(deps(t), {
+      taskId: task.id,
+      afterSeq: 0,
+      heartbeatMs: HOUR,
+      maxStreamMs: 15 * 60_000,
+      timers,
+      sink,
+    });
+    await until(() => sink.steps().length === 1);
+    expect([...pending.values()].map(p => p.ms).toSorted()).toEqual([HOUR, 15 * 60_000]);
+
+    fire(15 * 60_000);
+    await done;
+    expect(sink.events).toEqual(['step:1']); // ни end, ни ping
+    expect(pending.size).toBe(0);
+    expect(t.c.stepEvents.subscribers(task.id)).toBe(0);
+    expect((await t.c.tasks.get(task.id))?.status).toBe('queued');
+  });
+
+  test('maxStreamMs that runs out mid-read stops before sending the rest', async () => {
+    const t = setupApi();
+    const task = await newTask(t);
+    await appendQuietly(t, task.id, 'a');
+    const { timers, fire } = manualTimers();
+    const gate = Promise.withResolvers<void>();
+    let reads = 0;
+    const slow = {
+      append: (input: Parameters<StepLog['append']>[0]) => t.c.steps.append(input),
+      list: async (taskId: string, o?: { afterSeq?: number }) => {
+        const steps = await t.c.steps.list(taskId, o);
+        if (++reads === 1) await gate.promise;
+        return steps;
+      },
+    } as StepLog;
+    const sink = new RecordingSink();
+    const done = streamTaskSteps(deps(t, { steps: slow }), {
+      taskId: task.id,
+      afterSeq: 0,
+      heartbeatMs: HOUR,
+      maxStreamMs: 1000,
+      timers,
+      sink,
+    });
+    await until(() => reads === 1);
+    fire(1000);
+    gate.resolve();
+    await done;
+    expect(sink.events).toEqual([]);
+  });
+
+  test('the task status is read before the steps: a terminal commit during the first read does not end early', async () => {
+    const t = setupApi();
+    const task = await newTask(t);
+    const gate = Promise.withResolvers<void>();
+    const entered = Promise.withResolvers<void>();
+    let reads = 0;
+    // Первое чтение берёт снимок ленты, затем «зависает»: за это время воркер коммитит последний шаг и финал.
+    const racing = {
+      append: (input: Parameters<StepLog['append']>[0]) => t.c.steps.append(input),
+      list: async (taskId: string, o?: { afterSeq?: number }) => {
+        const snapshot = await t.c.steps.list(taskId, o);
+        if (++reads === 1) {
+          entered.resolve();
+          await gate.promise;
+        }
+        return snapshot;
+      },
+    } as StepLog;
+    const sink = new RecordingSink();
+    const done = streamTaskSteps(deps(t, { steps: racing }), {
+      taskId: task.id,
+      afterSeq: 0,
+      heartbeatMs: HOUR,
+      sink,
+    });
+    await entered.promise;
+    await t.c.uow.run(async tx => {
+      await tx.tasks.transition(task.id, 'cancelled');
+      await tx.steps.append({
+        taskId: task.id,
+        agent: 'user',
+        payload: { type: 'status', from: 'queued', to: 'cancelled' },
+      });
+    });
+    gate.resolve();
+    await done;
+    // Если бы статус читался после шагов, стрим увидел бы cancelled со старым снимком и закончился без шага 2.
+    expect(sink.events).toEqual(['step:1', 'step:2', 'end:cancelled']);
   });
 
   test('nothing is left behind after end: no subscription, no timer', async () => {

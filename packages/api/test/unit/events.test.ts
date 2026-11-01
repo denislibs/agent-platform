@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { ApiErrorSchema, StepDtoSchema, StreamEndSchema } from '@agent/shared';
+import { ApiErrorSchema, StepDtoSchema, StreamEndSchema, StreamErrorSchema } from '@agent/shared';
 import { InMemoryStepLog } from '@agent/testing';
 import { sseReader, type SseEvent } from '../sse';
 import { setupApi, type ApiTest } from './helpers';
@@ -52,6 +52,81 @@ describe('GET /api/tasks/:id/events', () => {
     const sse = sseReader(await t.call('GET', `/api/tasks/${task.id}/events?after=2`, { headers }));
     expect((await sse.next())?.id).toBe('3');
     await sse.cancel();
+  });
+
+  test('an empty Last-Event-ID does not override ?after=', async () => {
+    const t = setupApi();
+    const { user, headers } = await t.signIn();
+    const task = await taskWithSteps(t, user.id, 2);
+    const sse = sseReader(
+      await t.call('GET', `/api/tasks/${task.id}/events?after=2`, { headers: { ...headers, 'last-event-id': '' } }),
+    );
+    expect((await sse.next())?.id).toBe('3');
+    await sse.cancel();
+  });
+
+  test('the stream closes without end after SSE_MAX_STREAM_MS, so EventSource reconnects through the guard', async () => {
+    const t = setupApi({ SSE_MAX_STREAM_MS: '50' });
+    const { user, headers } = await t.signIn();
+    const task = await taskWithSteps(t, user.id, 0);
+    const sse = sseReader(await t.call('GET', `/api/tasks/${task.id}/events`, { headers }));
+    expect((await sse.next())?.id).toBe('1');
+    expect(await sse.next()).toBeUndefined(); // ни end, ни ошибки: просто конец потока
+    expect((await t.c.tasks.get(task.id))?.status).toBe('queued');
+    expect(t.c.stepEvents.subscribers(task.id)).toBe(0);
+  });
+
+  test('a failing read sends stream_error (not the raw message) and is logged with the params tail scrubbed', async () => {
+    const t = setupApi();
+    const { user, headers } = await t.signIn();
+    const task = await taskWithSteps(t, user.id, 0);
+    t.c.steps.list = async () => {
+      throw new Error('Failed query: select … params: secret-prompt');
+    };
+    const sse = sseReader(await t.call('GET', `/api/tasks/${task.id}/events`, { headers }));
+    const failed = await sse.next();
+    expect(failed?.event).toBe('stream_error');
+    expect(StreamErrorSchema.parse(JSON.parse(failed!.data))).toEqual({
+      code: 'internal',
+      message: 'the stream failed; reconnect',
+    });
+    expect(failed!.data).not.toContain('secret-prompt');
+    expect(await sse.next()).toBeUndefined();
+    expect(t.c.logger.entries).toMatchObject([
+      {
+        level: 'error',
+        message: 'step stream failed',
+        fields: { taskId: task.id, error: 'Failed query: select … params: <redacted>' },
+      },
+    ]);
+    expect(JSON.stringify(t.c.logger.entries)).not.toContain('secret-prompt');
+  });
+
+  test('a read that fails after the client went away is still logged', async () => {
+    const t = setupApi();
+    const { user, headers } = await t.signIn();
+    const task = await taskWithSteps(t, user.id, 0);
+    const list = t.c.steps.list.bind(t.c.steps);
+    const gate = Promise.withResolvers<void>();
+    let reads = 0;
+    t.c.steps.list = async (taskId, opts) => {
+      if (++reads === 2) {
+        await gate.promise;
+        throw new Error('connection terminated');
+      }
+      return list(taskId, opts);
+    };
+    const sse = sseReader(await t.call('GET', `/api/tasks/${task.id}/events`, { headers }));
+    expect((await sse.next())?.id).toBe('1');
+    await t.c.steps.append({ taskId: task.id, agent: 'system', payload: note('wakes the stream') });
+    await until(() => reads === 2);
+    await sse.cancel();
+    await Bun.sleep(10); // отмена тела дошла до Hono: приёмник закрыт
+    gate.resolve();
+    await until(() => t.c.logger.entries.length > 0);
+    expect(t.c.logger.entries).toMatchObject([
+      { level: 'error', message: 'step stream failed', fields: { taskId: task.id, error: 'connection terminated' } },
+    ]);
   });
 
   test('a cancelled task sends its last status step, then end, then closes the stream', async () => {

@@ -135,6 +135,11 @@ export const UploadResponseSchema = z.object({
 });
 /** Данные SSE-события end: задача в финальном статусе, все шаги отправлены. */
 export const StreamEndSchema = z.object({ status: TaskStatusSchema });
+/**
+ * Данные SSE-события stream_error: поток сломался на сервере и закрывается, клиенту — переподключиться.
+ * Имя не `error`: так EventSource называет собственные сбои соединения, и обработчики смешались бы.
+ */
+export const StreamErrorSchema = z.object({ code: z.literal('internal'), message: z.string() });
 
 export type TaskSummary = z.infer<typeof TaskSummarySchema>;
 export type TaskDetail = z.infer<typeof TaskDetailSchema>;
@@ -147,3 +152,4 @@ export type TaskListResponse = z.infer<typeof TaskListResponseSchema>;
 export type MeResponse = z.infer<typeof MeResponseSchema>;
 export type UploadResponse = z.infer<typeof UploadResponseSchema>;
 export type StreamEnd = z.infer<typeof StreamEndSchema>;
+export type StreamError = z.infer<typeof StreamErrorSchema>;

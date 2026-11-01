@@ -31,7 +31,10 @@ const idle = (): void => {};
  * Номер из уведомления не используется: уведомления теряются и приходят не по порядку, поэтому это лишь сигнал
  * «перечитай». Читаем всегда `seq > lastSent` из хранилища, по одному чтению за раз: уведомления, пришедшие во время
  * чтения, схлопываются во флаг signalled и дают ровно один следующий круг.
- * После end или закрытия приёмника не остаётся ни подписки, ни таймера.
+ * 4. `maxStreamMs` (SSE_MAX_STREAM_MS) — наибольшая длительность потока: по её истечении стрим заканчивается
+ *    без end. EventSource переподключится с Last-Event-ID и снова пройдёт проверку сессии: отозванная сессия
+ *    перестаёт получать шаги не позже чем через этот срок.
+ * После end, закрытия приёмника или истечения срока не остаётся ни подписки, ни таймера.
  */
 export async function streamTaskSteps(
   deps: Pick<ApiDeps, 'tasks' | 'steps' | 'stepEvents' | 'logger'>,
@@ -39,6 +42,8 @@ export async function streamTaskSteps(
     taskId: string;
     afterSeq: number;
     heartbeatMs: number;
+    /** Без него поток живёт, пока задача не финальная и клиент на связи. */
+    maxStreamMs?: number;
     sink: StepSink;
     subscribeTimeoutMs?: number;
     timers?: Timers;
@@ -56,6 +61,17 @@ export async function streamTaskSteps(
     signalled = true;
     wake();
   };
+
+  let expired = false;
+  const lifetime =
+    opts.maxStreamMs === undefined
+      ? undefined
+      : timers.set(() => {
+          expired = true;
+          wake();
+        }, opts.maxStreamMs);
+  /** Пора заканчивать без end: клиент ушёл, сервер останавливается или вышел срок жизни потока. */
+  const over = () => sink.closed || expired;
 
   let finished = false;
   let unsubscribe: (() => Promise<void>) | undefined;
@@ -86,15 +102,15 @@ export async function streamTaskSteps(
 
   sink.onClose(notify);
   try {
-    while (!sink.closed) {
+    while (!over()) {
       signalled = false;
       const task = await deps.tasks.get(taskId);
       for (const step of await deps.steps.list(taskId, { afterSeq: lastSent })) {
-        if (sink.closed) return;
+        if (over()) return;
         await sink.send(step);
         lastSent = step.seq;
       }
-      if (!task || sink.closed) return;
+      if (!task || over()) return;
       if (isTerminalTask(task.status)) {
         await sink.end(task.status);
         return;
@@ -108,11 +124,12 @@ export async function streamTaskSteps(
         };
       });
       wake = idle;
-      if (timedOut && !sink.closed) await sink.ping();
+      if (timedOut && !over()) await sink.ping();
     }
   } finally {
     finished = true;
     wake = idle;
+    if (lifetime !== undefined) timers.clear(lifetime);
     const off = unsubscribe;
     unsubscribe = undefined;
     if (off) await release(off);

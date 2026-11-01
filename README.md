@@ -69,17 +69,20 @@ The API needs `BETTER_AUTH_SECRET` in `.env` (`openssl rand -base64 32`). Sign-i
 
 Endpoints (spec section 10; request and response schemas: `packages/shared/src/api.ts`):
 
-| Method     | Path                      |                                                                                                  |
-| ---------- | ------------------------- | ------------------------------------------------------------------------------------------------ |
-| `*`        | `/api/auth/*`             | Better Auth                                                                                      |
-| GET        | `/api/me`                 | profile and balance (`millicredits`, `credits` as a string)                                      |
-| POST       | `/api/uploads`            | declare an input file → presigned PUT for exactly `size` bytes (≤ `UPLOAD_MAX_BYTES`)            |
-| POST / GET | `/api/tasks`              | create (`{ prompt, fileIds }`) / list (`?limit=`, `?before=<nextCursor>`)                        |
-| GET        | `/api/tasks/:id`          | task, subtasks, files                                                                            |
-| GET        | `/api/tasks/:id/events`   | SSE: `step` events (`id` = seq, resume with `Last-Event-ID` or `?after=`), `: ping`, final `end` |
-| POST       | `/api/tasks/:id/messages` | answer the agent's question (task in `waiting_user`)                                             |
-| POST       | `/api/tasks/:id/cancel`   | cancel                                                                                           |
-| GET        | `/api/files/:id`          | redirect to a presigned download (always as an attachment)                                       |
+| Method     | Path                      |                                                                                                                                      |
+| ---------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `*`        | `/api/auth/*`             | Better Auth                                                                                                                          |
+| GET        | `/api/me`                 | profile and balance (`millicredits`, `credits` as a string)                                                                          |
+| POST       | `/api/uploads`            | declare an input file → presigned PUT for exactly `size` bytes (≤ `UPLOAD_MAX_BYTES`)                                                |
+| POST / GET | `/api/tasks`              | create (`{ prompt, fileIds }`) / list (`?limit=`, `?before=<nextCursor>`)                                                            |
+| GET        | `/api/tasks/:id`          | task, subtasks, files                                                                                                                |
+| GET        | `/api/tasks/:id/events`   | SSE: `step` events (`id` = seq, resume with `Last-Event-ID` or `?after=`), `: ping`, final `end`; `stream_error` on a server failure |
+| POST       | `/api/tasks/:id/messages` | answer the agent's question (task in `waiting_user`)                                                                                 |
+| POST       | `/api/tasks/:id/cancel`   | cancel                                                                                                                               |
+| GET        | `/api/files/:id`          | redirect to a presigned download (always as an attachment)                                                                           |
+
+A stream lives at most `SSE_MAX_STREAM_MS` (15 min): it then closes without `end`, and EventSource reconnects with
+`Last-Event-ID`, passing the session check again.
 
 Errors are `{ "error": { "code", "message" } }`; `/api/auth/*` answers in Better Auth's own `{ "message", "code" }`.
 Presigned URLs use `S3_PUBLIC_ENDPOINT` — the S3 address the browser can reach.

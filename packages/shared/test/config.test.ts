@@ -152,7 +152,13 @@ describe('loadConfig', () => {
 
   test('api and auth settings have defaults; OAuth apps are off without credentials', () => {
     const c = loadConfig(base);
-    expect(c.api).toEqual({ host: '127.0.0.1', port: 3000, uploadMaxBytes: 52_428_800, sseHeartbeatMs: 15_000 });
+    expect(c.api).toEqual({
+      host: '127.0.0.1',
+      port: 3000,
+      uploadMaxBytes: 52_428_800,
+      sseHeartbeatMs: 15_000,
+      sseMaxStreamMs: 900_000,
+    });
     expect(loadConfig({ ...base, API_HOST: '0.0.0.0' }).api.host).toBe('0.0.0.0');
     expect(c.auth).toEqual({ secret: null, baseUrl: 'http://localhost:8080', google: null, github: null });
   });
@@ -162,6 +168,14 @@ describe('loadConfig', () => {
     expect(c.auth.github).toEqual({ clientId: 'id', clientSecret: 'secret' });
     expect(c.auth.google).toBeNull();
     expect(() => loadConfig({ ...base, GOOGLE_CLIENT_ID: 'id' })).toThrow(/GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET/);
+  });
+
+  test('the SSE heartbeat is at most 2 minutes; the stream lifetime can be overridden', () => {
+    expect(loadConfig({ ...base, SSE_HEARTBEAT_MS: '120000' }).api.sseHeartbeatMs).toBe(120_000);
+    expect(() => loadConfig({ ...base, SSE_HEARTBEAT_MS: '120001' })).toThrow(/SSE_HEARTBEAT_MS/);
+    expect(() => loadConfig({ ...base, SSE_HEARTBEAT_MS: '0' })).toThrow(/SSE_HEARTBEAT_MS/);
+    expect(loadConfig({ ...base, SSE_MAX_STREAM_MS: '60000' }).api.sseMaxStreamMs).toBe(60_000);
+    expect(() => loadConfig({ ...base, SSE_MAX_STREAM_MS: '-1' })).toThrow(/SSE_MAX_STREAM_MS/);
   });
 
   test('the auth secret must be at least 32 characters', () => {

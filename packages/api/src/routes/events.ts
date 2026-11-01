@@ -1,10 +1,9 @@
 import type { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { errorMessage } from '@agent/core';
-import type { StreamEnd } from '@agent/shared';
+import type { StreamEnd, StreamError } from '@agent/shared';
 import type { ApiDeps, ApiEnv } from '../deps';
 import { toStepDto } from '../dto';
-import { ApiError } from '../errors';
+import { ApiError, errorLogFields } from '../errors';
 import type { OpenStreams } from '../open-streams';
 import { ownTask } from '../ownership';
 import { streamTaskSteps, type StepSink } from '../step-stream';
@@ -20,7 +19,8 @@ export function eventRoutes(app: Hono<ApiEnv>, deps: ApiDeps, streams: OpenStrea
   app.get('/api/tasks/:id/events', async c => {
     // Владелец и номер шага проверяются до начала потока: ошибки — обычные JSON-ответы, чужая задача — 404.
     const task = await ownTask(deps.tasks, c.req.param('id'), c.get('user').id);
-    const afterSeq = afterSeqOf(c.req.header('last-event-id') ?? c.req.query('after'));
+    // `||`, а не `??`: пустой Last-Event-ID (EventSource без событий шлёт его так) не перекрывает ?after=.
+    const afterSeq = afterSeqOf(c.req.header('last-event-id') || c.req.query('after'));
     // nginx не буферизует ответ с этим заголовком (план 4b) — события уходят клиенту сразу.
     c.header('X-Accel-Buffering', 'no');
     return streamSSE(c, async stream => {
@@ -58,16 +58,20 @@ export function eventRoutes(app: Hono<ApiEnv>, deps: ApiDeps, streams: OpenStrea
       });
       // Ошибки ловим сами: onError хелпера Hono отправил бы клиенту сырой err.message.
       try {
-        await streamTaskSteps(deps, { taskId: task.id, afterSeq, heartbeatMs: deps.config.api.sseHeartbeatMs, sink });
+        await streamTaskSteps(deps, {
+          taskId: task.id,
+          afterSeq,
+          heartbeatMs: deps.config.api.sseHeartbeatMs,
+          maxStreamMs: deps.config.api.sseMaxStreamMs,
+          sink,
+        });
       } catch (err) {
-        if (sink.closed) return; // клиент ушёл посреди записи — не ошибка
-        deps.logger.error('step stream failed', { taskId: task.id, error: errorMessage(err) });
-        await stream
-          .writeSSE({
-            event: 'error',
-            data: JSON.stringify({ code: 'internal', message: 'the stream failed; reconnect' }),
-          })
-          .catch(() => undefined);
+        // В журнал — всегда, даже если клиент уже ушёл: запись в закрытый поток не бросает (см. выше), так что
+        // сюда попадают сбои чтения из хранилища, а не уход клиента.
+        deps.logger.error('step stream failed', { taskId: task.id, ...errorLogFields(err) });
+        if (sink.closed) return;
+        const body: StreamError = { code: 'internal', message: 'the stream failed; reconnect' };
+        await stream.writeSSE({ event: 'stream_error', data: JSON.stringify(body) }).catch(() => undefined);
       } finally {
         untrack();
       }
