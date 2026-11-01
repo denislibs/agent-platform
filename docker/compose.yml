@@ -42,6 +42,21 @@ services:
       - garagemeta:/var/lib/garage/meta
       - garagedata:/var/lib/garage/data
 
+  # Миграции — разовым сервисом до воркера: несколько воркеров не гоняют их наперегонки, и в образе одна команда.
+  migrate:
+    profiles: ['app']
+    # Образ собирает сервис worker (bun run backend:build).
+    image: agent-backend:dev
+    command: ['bun', 'packages/db/src/migrate.ts']
+    # Миграциям нужен только DATABASE_URL: секреты из .env сюда не передаются.
+    environment:
+      DATABASE_URL: postgres://agent:agent@postgres:5432/agent
+    depends_on:
+      postgres: { condition: service_healthy }
+    cap_drop: ['ALL']
+    security_opt: ['no-new-privileges:true']
+    restart: 'no'
+
   worker:
     profiles: ['app']
     build:
@@ -56,9 +71,13 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
+      migrate: { condition: service_completed_successfully }
       postgres: { condition: service_healthy }
       valkey: { condition: service_healthy }
       garage: { condition: service_started }
+    # docker.sock всё равно даёт root на хосте (backlog: прокси Docker API), но сам процесс лишних прав не получает.
+    cap_drop: ['ALL']
+    security_opt: ['no-new-privileges:true']
     restart: unless-stopped
     stop_grace_period: 60s
 

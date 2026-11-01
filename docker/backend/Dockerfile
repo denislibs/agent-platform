@@ -15,4 +15,5 @@ COPY package.json bun.lock bunfig.toml tsconfig.json ./
 COPY packages ./packages
 RUN bun install --frozen-lockfile --production
 
-CMD ["sh", "-c", "bun packages/db/src/migrate.ts && exec bun packages/worker/src/main.ts"]
+# Exec-форма: bun — PID 1 и сам получает SIGTERM. Миграции — отдельный сервис migrate в compose.
+CMD ["bun", "packages/worker/src/main.ts"]
