@@ -22,7 +22,7 @@ import type { StageOutcome } from './outcome';
 import { PROMPTS } from './prompts';
 import type { ToolExecutor } from './tool-executor';
 import { toMessages, type Compactor } from './transcript';
-import { isCompaction, isNote, trailingSilent, unappliedControl } from './turns';
+import { isCompaction, isNote, questionsAnswered, trailingSilent, unappliedControl } from './turns';
 
 const SILENT_LIMIT = 3;
 const CALL_ERROR_LIMIT = 3;
@@ -149,11 +149,16 @@ export class ExecutorStage {
   private async history(task: Task, sub: Subtask): Promise<Step[]> {
     const all = await this.deps.steps.list(task.id);
     const firstSeq = all.find(s => s.subtaskId === sub.id)?.seq ?? Number.POSITIVE_INFINITY;
-    // Шаги проверки планировщика (agent = planner) пишутся с тем же subtaskId — исполнителю они не принадлежат.
+    const question = questionsAnswered(all);
+    // Шаги проверки планировщика (agent = planner) пишутся с тем же subtaskId — исполнителю они не принадлежат,
+    // как и ответы пользователя на вопросы планировщика (вместе с заметкой о возобновлении).
     return all.filter(
       s =>
         (s.subtaskId === sub.id && s.agent !== 'planner') ||
-        (s.subtaskId === null && s.payload.type === 'message' && s.seq > firstSeq),
+        (s.subtaskId === null &&
+          s.payload.type === 'message' &&
+          s.seq > firstSeq &&
+          question.get(s.seq)?.agent !== 'planner'),
     );
   }
 

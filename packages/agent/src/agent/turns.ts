@@ -39,3 +39,18 @@ export function unappliedControl<T>(steps: readonly Step[], agent: Role, schema:
   }
   return undefined;
 }
+
+/**
+ * Чей вопрос: сообщение уровня задачи (ответ пользователя, заметка о возобновлении) относится к той роли,
+ * чей ask_user последним ему предшествовал. Карта: seq сообщения → шаг tool_result с этим ask_user;
+ * сообщений до первого вопроса в ней нет. Так ответ на вопрос проверки не попадает к исполнителю.
+ */
+export function questionsAnswered(steps: readonly Step[]): Map<number, Step> {
+  const byMessage = new Map<number, Step>();
+  let asked: Step | undefined;
+  for (const s of steps) {
+    if (s.payload.type === 'tool_result' && s.payload.control?.kind === 'ask_user') asked = s;
+    else if (asked && s.subtaskId === null && s.payload.type === 'message') byMessage.set(s.seq, asked);
+  }
+  return byMessage;
+}
