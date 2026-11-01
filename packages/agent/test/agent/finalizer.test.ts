@@ -43,6 +43,12 @@ describe('safeOutputPath', () => {
       expect(safeOutputPath(bad)).toBeUndefined();
     }
   });
+  test('rejects control characters and over-long paths', () => {
+    for (const bad of ['outputs/a\u0000.md', 'outputs/a\n.md', 'a'.repeat(901)]) {
+      expect(safeOutputPath(bad)).toBeUndefined();
+    }
+    expect(safeOutputPath('a'.repeat(900))).toBe('a'.repeat(900));
+  });
   test('mime by extension with a safe default', () => {
     expect(mimeOf('a.md')).toBe('text/markdown');
     expect(mimeOf('a.CSV')).toBe('text/csv');
@@ -122,5 +128,16 @@ describe('Finalizer', () => {
     };
     expect(await c.finalizer.finalize(task.id)).toEqual({ next: 'stop' });
     expect((await c.tasks.get(task.id))?.status).toBe('cancelled');
+  });
+
+  test('a failing sandbox destroy after done does not fail the job', async () => {
+    const c = setupAgent();
+    const task = await ready(c, [], { 'outputs/a.md': 'a' });
+    const sandbox = await c.sandboxes.create(task.id);
+    sandbox.destroy = async () => {
+      throw new Error('docker is down');
+    };
+    expect(await c.finalizer.finalize(task.id)).toEqual({ next: 'stop' });
+    expect((await c.tasks.get(task.id))?.status).toBe('done');
   });
 });

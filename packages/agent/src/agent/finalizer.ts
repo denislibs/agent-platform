@@ -12,6 +12,9 @@ import type { ResultComposer } from './composer';
 import type { TaskGuard } from './guard';
 import type { StageOutcome } from './outcome';
 
+/** Ключ S3 ограничен 1024 байтами; с префиксом tasks/<id>/ путь должен быть заметно короче. */
+const MAX_PATH_BYTES = 900;
+const hasControlChars = (s: string) => [...s].some(ch => ch.charCodeAt(0) < 0x20 || ch.charCodeAt(0) === 0x7f);
 const SERVICE_DIRS = ['.tool-outputs/', '.screenshots/'];
 /** Файл нельзя прочитать из песочницы — пропускаем, остальные сбои пробрасываем (job повторится). */
 const SKIPPED_CODES = new Set(['file_too_large', 'not_a_file', 'fs_error', 'path_outside_workspace']);
@@ -24,6 +27,8 @@ export function safeOutputPath(raw: string): string | undefined {
     .replace(/^(\.\/)+/, '')
     .replace(/\/{2,}/g, '/');
   if (!p || p.startsWith('/')) return undefined;
+  // Управляющие символы ломают запуск в Docker, длинные пути — ключ S3: такой файл пропускаем, а не роняем job.
+  if (hasControlChars(p) || new TextEncoder().encode(p).length > MAX_PATH_BYTES) return undefined;
   if (p.split('/').some(seg => seg === '' || seg === '.' || seg === '..')) return undefined;
   if (SERVICE_DIRS.some(d => p.startsWith(d))) return undefined;
   return p;
@@ -116,7 +121,13 @@ export class Finalizer {
         await tx.steps.append({ taskId, agent: 'system', payload: { type: 'status', from: 'finalizing', to: 'done' } });
       }),
     );
-    if (done) await sandbox.destroy();
+    if (done) {
+      try {
+        await sandbox.destroy();
+      } catch {
+        // Задача уже done: повтор job бесполезен, осиротевшую песочницу завершённой задачи уберёт сборщик.
+      }
+    }
     return { next: 'stop' };
   }
 }
