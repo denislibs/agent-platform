@@ -10,12 +10,15 @@
     "@agent/agent": "workspace:*",
     "@agent/composition": "workspace:*",
     "@agent/core": "workspace:*",
+    "@agent/db": "workspace:*",
     "@agent/shared": "workspace:*",
+    "awilix": "^13",
+    "better-auth": "1.7.15",
     "hono": "4.13.16",
     "zod": "^4"
   },
   "devDependencies": {
     "@agent/testing": "workspace:*",
-    "awilix": "^13"
+    "drizzle-orm": "^0.45.1"
   }
 }

@@ -54,3 +54,19 @@ Sandbox network isolation:
   must report `RESULT: host services are not reachable`. A Linux production host additionally needs
   `DOCKER-USER` egress rules that drop traffic from the sandbox network to the host gateway, the infra networks
   and `169.254.169.254` (cloud metadata).
+
+## API
+
+```bash
+bun run api                 # Hono API on :3000 (API_PORT), on the infra from infra:up
+```
+
+The API needs `BETTER_AUTH_SECRET` in `.env` (`openssl rand -base64 32`). Sign-in methods:
+
+- magic link — always on; without a mail provider the link is written to the API log (`mail not sent … logged instead`);
+- Google / GitHub — on when both `*_CLIENT_ID` and `*_CLIENT_SECRET` are set; the OAuth callback URL is
+  `<BETTER_AUTH_URL>/api/auth/callback/google` (or `/github`), `BETTER_AUTH_URL` defaults to `http://localhost:8080`.
+
+With `NODE_ENV=production` the API warns at startup while magic links still go to the log.
+The Better Auth integration tests (`packages/api/test/integration`) run on Postgres from `infra:up`
+and are not part of `test:unit`.

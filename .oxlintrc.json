@@ -406,6 +406,10 @@
               {
                 "name": "@agent/worker",
                 "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "awilix",
+                "message": "awilix is allowed in @agent/api only in src/auth/better-auth.ts and src/main.ts: routes take their dependencies as one object."
               }
             ],
             "patterns": [
@@ -421,6 +425,106 @@
                   "@agent/worker/**"
                 ],
                 "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "group": ["awilix/**"],
+                "message": "awilix is allowed in @agent/api only in src/auth/better-auth.ts and src/main.ts: routes take their dependencies as one object."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/api/src/auth/better-auth.ts", "packages/api/src/main.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "bullmq",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "ioredis",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "openai",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "@agent/llm",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "@agent/sandbox",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "@agent/search",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "@agent/queue",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "@agent/worker",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              }
+            ],
+            "patterns": [
+              {
+                "group": [
+                  "bullmq/**",
+                  "ioredis/**",
+                  "openai/**",
+                  "@agent/llm/**",
+                  "@agent/sandbox/**",
+                  "@agent/search/**",
+                  "@agent/queue/**",
+                  "@agent/worker/**"
+                ],
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "packages/shared/**",
+        "packages/db/**",
+        "packages/queue/**",
+        "packages/storage/**",
+        "packages/llm/**",
+        "packages/sandbox/**",
+        "packages/search/**",
+        "packages/composition/**",
+        "packages/worker/**",
+        "packages/testing/**"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "hono",
+                "message": "hono and better-auth live only in @agent/api (spec 3.1)."
+              },
+              {
+                "name": "better-auth",
+                "message": "hono and better-auth live only in @agent/api (spec 3.1)."
+              }
+            ],
+            "patterns": [
+              {
+                "group": ["hono/**", "better-auth/**"],
+                "message": "hono and better-auth live only in @agent/api (spec 3.1)."
               }
             ]
           }
