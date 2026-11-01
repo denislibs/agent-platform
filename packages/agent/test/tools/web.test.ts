@@ -98,6 +98,42 @@ describe('browser tools', () => {
     ]);
   });
 
+  test('the screenshot path reaches the caller but never the model', async () => {
+    const shot = '.screenshots/7-0.png';
+    const ctx = await toolContext({ handlers: { browser: () => page() } });
+    for (const [name, args] of [
+      ['browser_open', { url: 'https://example.com' }],
+      ['browser_click', { id: 1 }],
+      ['browser_type', { id: 2, text: 'bun' }],
+      ['browser_scroll', { direction: 'up' }],
+    ] as const) {
+      const r = await runToolCall(browserTools, call(name, args), ctx);
+      expect(r).toEqual({ ok: true, output: formatSnapshot(page()), screenshotPath: shot });
+      expect(r.output).not.toContain('.screenshots');
+    }
+    expect(formatSnapshot(page())).not.toContain(shot);
+  });
+
+  test('a snapshot without a screenshot gives no screenshotPath; the click fallback uses the fresh snapshot', async () => {
+    // The double fills .screenshots/<shot>.png for any valid shot, so stand in for a browser whose screenshot failed.
+    const bare = await toolContext();
+    bare.sandbox.browser = async () => page({ screenshotPath: undefined });
+    const r = await runToolCall(browserTools, call('browser_open', { url: 'https://example.com' }), bare);
+    expect('screenshotPath' in r).toBe(false);
+    let calls = 0;
+    const ctx = await toolContext({
+      handlers: {
+        browser: () => {
+          calls += 1;
+          if (calls === 1) throw new SandboxError('browser_failed', 'Execution context was destroyed');
+          return page({ screenshotPath: '.screenshots/after.png' });
+        },
+      },
+    });
+    const clicked = await runToolCall(browserTools, call('browser_click', { id: 1 }), ctx);
+    expect(clicked.screenshotPath).toBe('.screenshots/after.png');
+  });
+
   test('only http(s) URLs can be opened', async () => {
     const ctx = await toolContext({ handlers: { browser: () => page() } });
     for (const url of ['file:///etc/passwd', 'javascript:alert(1)', 'not a url']) {

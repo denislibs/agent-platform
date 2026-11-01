@@ -25,6 +25,29 @@ test('exec and browser delegate to scripted handlers with a resolved cwd', async
   expect((await s.browser({ type: 'open', url: 'https://example.com' })).url).toBe('https://example.com');
 });
 
+test('browser fills screenshotPath from a valid shot like browserd, keeping one the handler set', async () => {
+  const snapshot = {
+    url: 'about:blank',
+    title: '',
+    markdown: '',
+    truncated: false,
+    elements: [],
+    elementsTruncated: false,
+  };
+  const provider = new InMemorySandboxProvider({
+    browser: action => (action.type === 'scroll' ? { ...snapshot, screenshotPath: '.screenshots/own.png' } : snapshot),
+  });
+  const s = await provider.create(crypto.randomUUID());
+  expect((await s.browser({ type: 'snapshot', shot: '12-0_a' })).screenshotPath).toBe('.screenshots/12-0_a.png');
+  expect((await s.browser({ type: 'scroll', direction: 'down', shot: '12-1' })).screenshotPath).toBe(
+    '.screenshots/own.png',
+  );
+  for (const shot of [undefined, '../escape', 'a.b', '', 'k'.repeat(65)]) {
+    const r = await s.browser(shot === undefined ? { type: 'snapshot' } : { type: 'snapshot', shot });
+    expect('screenshotPath' in r).toBe(false);
+  }
+});
+
 test('without handlers exec returns 127 and browser fails clearly', async () => {
   const s = await new InMemorySandboxProvider().create(crypto.randomUUID());
   expect(await s.exec('ls', { timeoutMs: 1000 })).toMatchObject({ exitCode: 127, timedOut: false, truncated: false });

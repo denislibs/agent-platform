@@ -52,7 +52,7 @@ test('file and shell tools work end to end on a Docker sandbox', async () => {
 test('file_write onto a folder is an fs_error result for the model, not an exception', async () => {
   await run('file_write', { path: 'outputs/report.md', content: 'x' });
   const r = await run('file_write', { path: 'outputs', content: 'oops' });
-  expect(r.ok).toBe(false);
+  expect(r).toMatchObject({ ok: false, error: 'tool' });
   expect(r.output).toContain('writeFile outputs failed');
   expect(r.output).toContain('Is a directory');
   expect(r.output).not.toContain('/workspace');

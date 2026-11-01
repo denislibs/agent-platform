@@ -28,6 +28,9 @@ export interface SandboxHandlers {
   browser?: BrowserHandler;
 }
 
+/** Имя скриншота, которое принимает browserd; другое он заменяет временем (здесь — скриншота нет). */
+const SAFE_SHOT = /^[A-Za-z0-9_-]{1,64}$/;
+
 const byPath = (a: FileEntry, b: FileEntry) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
 
 /** Те же лимиты по умолчанию, что у Docker-адаптера. */
@@ -164,7 +167,12 @@ export class InMemorySandbox implements Sandbox {
     this.ensureRunning();
     const handler = this.provider.handlers.browser;
     if (!handler) throw new SandboxError('browser_unavailable', 'no browser handler scripted');
-    return handler(action, this);
+    const snapshot = await handler(action, this);
+    // Как browserd: скриншот действия с допустимым shot лежит в .screenshots/<shot>.png.
+    if (snapshot.screenshotPath !== undefined || action.shot === undefined || !SAFE_SHOT.test(action.shot)) {
+      return snapshot;
+    }
+    return { ...snapshot, screenshotPath: `.screenshots/${action.shot}.png` };
   }
 
   async stop(): Promise<void> {

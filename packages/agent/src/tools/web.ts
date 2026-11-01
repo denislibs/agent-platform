@@ -28,11 +28,11 @@ export const PAGE_CHANGED_PREFIX =
 async function browse(action: BrowserAction, ctx: ToolContext): Promise<ToolOutcome> {
   const shot = ctx.callKey;
   try {
-    return { ok: true, output: formatSnapshot(await ctx.sandbox.browser({ ...action, shot })) };
+    return pageOutcome(await ctx.sandbox.browser({ ...action, shot }));
   } catch (err) {
     if (!(err instanceof SandboxError) || err.code !== 'browser_failed') throw err;
-    if (action.type !== 'click' && action.type !== 'type') {
-      return { ok: true, output: formatSnapshot(await ctx.sandbox.browser({ ...action, shot })) };
+    if (action.type === 'open' || action.type === 'scroll') {
+      return pageOutcome(await ctx.sandbox.browser({ ...action, shot }));
     }
     let current: PageSnapshot;
     try {
@@ -41,8 +41,15 @@ async function browse(action: BrowserAction, ctx: ToolContext): Promise<ToolOutc
       if (snapErr instanceof SandboxError && snapErr.code === 'browser_failed') throw err;
       throw snapErr;
     }
-    return { ok: true, output: PAGE_CHANGED_PREFIX + formatSnapshot(current) };
+    return pageOutcome(current, PAGE_CHANGED_PREFIX);
   }
+}
+
+/** Текст страницы — модели; путь скриншота — только интерфейсу (в тексте его нет). */
+function pageOutcome(s: PageSnapshot, prefix = ''): ToolOutcome {
+  const outcome: ToolOutcome = { ok: true, output: prefix + formatSnapshot(s) };
+  if (s.screenshotPath !== undefined) outcome.screenshotPath = s.screenshotPath;
+  return outcome;
 }
 
 const httpUrl = z.url({ protocol: /^https?$/, error: 'only http and https URLs can be opened' });

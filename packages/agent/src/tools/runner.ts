@@ -1,5 +1,5 @@
 import { NotFoundError, SandboxError, SearchError, type SandboxErrorCode, type ToolCall } from '@agent/core';
-import { ToolError, type Tool, type ToolContext, type ToolOutcome } from './tool';
+import { CALL_KEY_PATTERN, ToolArgumentsError, ToolError, type Tool, type ToolContext, type ToolOutcome } from './tool';
 
 export const TOOL_OUTPUT_LIMIT = 8000;
 export const TOOL_OUTPUT_EDGE = 2000;
@@ -26,6 +26,13 @@ function modelFacing(err: unknown): err is Error {
   return false;
 }
 
+/** Вид ошибки для цикла (план 3c): спецификация 5.3 считает только 'call'; 'unavailable' — не вина модели. */
+function errorKind(err: Error): NonNullable<ToolOutcome['error']> {
+  if (err instanceof ToolArgumentsError) return 'call';
+  if (err instanceof SearchError) return err.code === 'invalid_query' ? 'call' : 'unavailable';
+  return 'tool';
+}
+
 /** Отрезать начало и конец так, чтобы суррогатная пара не разорвалась. */
 function headTail(text: string): { head: string; tail: string } {
   let headEnd = TOOL_OUTPUT_EDGE;
@@ -47,39 +54,47 @@ export async function limitOutput(outcome: ToolOutcome, ctx: ToolContext): Promi
   try {
     await ctx.sandbox.writeFile(path, output);
   } catch (err) {
-    // Не удалось сохранить (например, диск полон): модель всё равно получает начало и конец. Сбой самой песочницы — циклу.
-    const sandboxFailure = (err instanceof NotFoundError || err instanceof SandboxError) && !modelFacing(err);
-    if (!(err instanceof Error) || sandboxFailure) throw err;
+    // Не удалось сохранить по причине из того же списка разрешённых (например, fs_error: диск полон) — модель всё равно
+    // получает начало и конец. Всё остальное (песочница пропала или стоит, сбой Docker, баг) — циклу.
+    if (!modelFacing(err)) throw err;
     return {
       ...outcome,
-      output: `${head}\n\n… ${omitted} characters omitted; the full output could not be saved (${err.message}) …\n\n${tail}`,
+      output: `${head}\n\n… ${omitted} characters omitted; the full output could not be saved (${echo(err.message)}) …\n\n${tail}`,
     };
   }
   return {
     ...outcome,
     output:
       `${head}\n\n… ${omitted} characters omitted; the full output is in ${path} ` +
-      `(read it with file_read or shell) …\n\n${tail}`,
+      `(read parts with file_read (offset/limit) or shell (head, tail, grep)) …\n\n${tail}`,
     fullOutputPath: path,
   };
 }
 
 export async function runToolCall(tools: readonly Tool[], call: ToolCall, ctx: ToolContext): Promise<ToolOutcome> {
+  if (!CALL_KEY_PATTERN.test(ctx.callKey)) {
+    throw new Error(`invalid callKey ${JSON.stringify(ctx.callKey)}: it must match ${CALL_KEY_PATTERN}`);
+  }
   const tool = tools.find(t => t.name === call.name);
   if (!tool) {
     return {
       ok: false,
       output: `unknown tool "${echo(call.name)}"; available tools: ${tools.map(t => t.name).join(', ')}`,
+      error: 'call',
     };
   }
   if (call.parseError !== undefined) {
-    return { ok: false, output: `the arguments are not valid JSON (${echo(call.parseError)}); send a JSON object` };
+    return {
+      ok: false,
+      output: `the arguments are not valid JSON (${echo(call.parseError)}); send a JSON object`,
+      error: 'call',
+    };
   }
   let outcome: ToolOutcome;
   try {
     outcome = await tool.run(call.args === undefined ? {} : call.args, ctx);
   } catch (err) {
-    if (modelFacing(err)) return limitOutput({ ok: false, output: err.message }, ctx);
+    if (modelFacing(err)) return limitOutput({ ok: false, output: err.message, error: errorKind(err) }, ctx);
     throw err;
   }
   return limitOutput(outcome, ctx);

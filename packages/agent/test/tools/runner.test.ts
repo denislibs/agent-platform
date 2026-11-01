@@ -1,7 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 import { NotFoundError, SandboxError, SearchError, type SandboxErrorCode } from '@agent/core';
 import { z } from 'zod';
-import { defineTool, limitOutput, runToolCall, ToolError, TOOL_OUTPUT_EDGE, TOOL_OUTPUT_LIMIT } from '../../src';
+import {
+  defineTool,
+  limitOutput,
+  runToolCall,
+  ToolArgumentsError,
+  ToolError,
+  TOOL_OUTPUT_EDGE,
+  TOOL_OUTPUT_LIMIT,
+} from '../../src';
 import { toolContext } from './helpers';
 
 const call = (name: string, args: unknown, extra: Partial<{ rawArgs: string; parseError: string }> = {}) => ({
@@ -138,6 +146,102 @@ describe('runToolCall', () => {
   });
 });
 
+describe('runToolCall error kinds', () => {
+  test('a successful call has no error kind', async () => {
+    const r = await runToolCall([echo], call('echo', { text: 'a' }), await toolContext());
+    expect(r.error).toBeUndefined();
+    expect('error' in r).toBe(false);
+  });
+
+  test('unknown tool, invalid JSON and schema violations are call errors', async () => {
+    const ctx = await toolContext();
+    expect(await runToolCall([echo], call('nope', {}), ctx)).toMatchObject({ ok: false, error: 'call' });
+    expect(
+      await runToolCall([echo], call('echo', undefined, { rawArgs: '{', parseError: 'Unexpected end' }), ctx),
+    ).toMatchObject({ ok: false, error: 'call' });
+    expect(await runToolCall([echo], call('echo', { text: '' }), ctx)).toMatchObject({ ok: false, error: 'call' });
+    expect(await runToolCall([throwing(new ToolArgumentsError('bad id'))], call('boom', {}), ctx)).toEqual({
+      ok: false,
+      output: 'bad id',
+      error: 'call',
+    });
+  });
+
+  test('a search that is down or rate limited is unavailable; an invalid query is a call error', async () => {
+    const ctx = await toolContext();
+    for (const [err, kind] of [
+      [new SearchError('unavailable', 'search is not configured'), 'unavailable'],
+      [new SearchError('rate_limited', 'slow down', true), 'unavailable'],
+      [new SearchError('invalid_query', 'query too long'), 'call'],
+    ] as const) {
+      expect(await runToolCall([throwing(err)], call('boom', {}), ctx)).toEqual({
+        ok: false,
+        output: err.message,
+        error: kind,
+      });
+    }
+  });
+
+  test('every other model-facing error is a tool error', async () => {
+    const ctx = await toolContext();
+    const codes: SandboxErrorCode[] = [
+      'path_outside_workspace',
+      'element_not_found',
+      'file_too_large',
+      'not_a_file',
+      'browser_failed',
+      'fs_error',
+    ];
+    for (const err of [
+      new ToolError('old text not found'),
+      new NotFoundError('file', 'a.txt'),
+      ...codes.map(code => new SandboxError(code, `sandbox says ${code}`)),
+    ]) {
+      expect(await runToolCall([throwing(err)], call('boom', {}), ctx)).toEqual({
+        ok: false,
+        output: err.message,
+        error: 'tool',
+      });
+    }
+  });
+
+  test('limitOutput keeps the error kind of a long failure', async () => {
+    const ctx = await toolContext();
+    const r = await runToolCall([throwing(new ToolError('e'.repeat(TOOL_OUTPUT_LIMIT + 1)))], call('boom', {}), ctx);
+    expect(r).toMatchObject({ ok: false, error: 'tool', fullOutputPath: '.tool-outputs/7-0.txt' });
+  });
+});
+
+describe('runToolCall callKey', () => {
+  test('a callKey outside ^[A-Za-z0-9_-]{1,64}$ is a programming error, not a result', async () => {
+    let ran = false;
+    const probe = defineTool({
+      name: 'probe',
+      description: 'Records that it ran',
+      schema: z.object({}),
+      run: async () => {
+        ran = true;
+        return { ok: true, output: 'ran' };
+      },
+    });
+    for (const callKey of ['', '../x', 'a/b', 'a.b', 'k'.repeat(65)]) {
+      const ctx = await toolContext({ callKey });
+      let caught: unknown;
+      try {
+        await runToolCall([probe], call('probe', {}), ctx);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect(caught).not.toBeInstanceOf(ToolError);
+      expect((caught as Error).message).toContain('callKey');
+    }
+    expect(ran).toBe(false);
+    const ok = await runToolCall([probe], call('probe', {}), await toolContext({ callKey: `A_z-9${'k'.repeat(59)}` }));
+    expect(ok).toEqual({ ok: true, output: 'ran' });
+  });
+});
+
 describe('limitOutput', () => {
   test('short output is returned as is', async () => {
     const ctx = await toolContext();
@@ -153,6 +257,7 @@ describe('limitOutput', () => {
     expect(r.output.startsWith('a'.repeat(TOOL_OUTPUT_EDGE))).toBe(true);
     expect(r.output.endsWith('z'.repeat(TOOL_OUTPUT_EDGE))).toBe(true);
     expect(r.output).toContain('.tool-outputs/12-1.txt');
+    expect(r.output).toContain('read parts with file_read (offset/limit) or shell (head, tail, grep)');
     expect(r.output).toContain(`${long.length - 2 * TOOL_OUTPUT_EDGE} characters omitted`);
     expect(r.output.length).toBeLessThan(TOOL_OUTPUT_LIMIT);
   });
@@ -190,10 +295,13 @@ describe('limitOutput', () => {
     expect(r.output).toContain(`${long.length - 2 * TOOL_OUTPUT_EDGE + 2} characters omitted`);
   });
 
-  test('when the full output cannot be saved the model still gets head and tail without a path', async () => {
-    const ctx = await toolContext();
+  test('when the full output cannot be saved for a model-facing reason the model still gets head and tail', async () => {
     const long = 'a'.repeat(5000) + 'z'.repeat(5000);
-    for (const err of [new Error('ENOSPC: no space left'), new SandboxError('file_too_large', 'too big')]) {
+    for (const err of [
+      new SandboxError('fs_error', 'writeFile .tool-outputs/7-0.txt failed: No space left on device'),
+      new SandboxError('file_too_large', 'too big'),
+    ]) {
+      const ctx = await toolContext();
       ctx.sandbox.writeFile = async () => {
         throw err;
       };
@@ -207,10 +315,25 @@ describe('limitOutput', () => {
     }
   });
 
-  test('infrastructure errors from the save propagate', async () => {
+  test('the save failure reason is capped like other echoed text', async () => {
     const ctx = await toolContext();
+    ctx.sandbox.writeFile = async () => {
+      throw new SandboxError('fs_error', `writeFile failed: ${'r'.repeat(500)}`);
+    };
+    const r = await limitOutput({ ok: true, output: 'x'.repeat(TOOL_OUTPUT_LIMIT + 1) }, ctx);
+    expect(r.output).toContain('the full output could not be saved');
+    expect(r.output).not.toContain('r'.repeat(201));
+  });
+
+  test('infrastructure and unexpected errors from the save propagate', async () => {
     const long = 'a'.repeat(TOOL_OUTPUT_LIMIT + 1);
-    for (const err of [new SandboxError('not_running', 'stopped'), new NotFoundError('sandbox', 'agent-sbx-task-1')]) {
+    for (const err of [
+      new SandboxError('not_running', 'stopped'),
+      new NotFoundError('sandbox', 'agent-sbx-task-1'),
+      new Error('docker exploded'),
+      'not even an Error',
+    ]) {
+      const ctx = await toolContext();
       ctx.sandbox.writeFile = async () => {
         throw err;
       };
