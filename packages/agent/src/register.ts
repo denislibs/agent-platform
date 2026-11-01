@@ -1,5 +1,5 @@
 import { asClass, type Resolver } from 'awilix';
-import { Compactor, ModelGateway, TaskGuard } from './agent';
+import { Compactor, ModelGateway, TaskGuard, ToolExecutor } from './agent';
 import { TaskIntake } from './task-intake';
 
 export interface AgentServices {
@@ -7,6 +7,7 @@ export interface AgentServices {
   gateway: ModelGateway;
   guard: TaskGuard;
   compactor: Compactor;
+  toolExecutor: ToolExecutor;
 }
 
 /**
@@ -19,5 +20,6 @@ export function agentServices(): { [K in keyof AgentServices]: Resolver<AgentSer
     gateway: asClass(ModelGateway).singleton(),
     guard: asClass(TaskGuard).singleton(),
     compactor: asClass(Compactor).singleton(),
+    toolExecutor: asClass(ToolExecutor).singleton(),
   };
 }
