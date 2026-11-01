@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import {
   NotFoundError,
   SandboxError,
@@ -65,6 +65,9 @@ export function sandboxContract(
   name: string,
   open: (limits: SandboxContractLimits) => Promise<{ provider: SandboxProvider; close(): Promise<void> }>,
 ): void {
+  // Тесты жизненного цикла на настоящих контейнерах (create, stop/start, destroy) идут 2–3 с, а под нагрузкой
+  // полного прогона упираются в 5 с по умолчанию. Действует на файл, который запускает контракт.
+  setDefaultTimeout(30_000);
   describe(`sandbox contract: ${name}`, () => {
     let provider: SandboxProvider;
     let close: () => Promise<void>;
@@ -282,6 +285,50 @@ export function sandboxContract(
       expect((await s.readFile('fits.bin')).length).toBe(limit);
       await s.writeFile('big.bin', new Uint8Array(limit + 1).fill(7));
       await expectSandboxError(s.readFile('big.bin'), 'file_too_large');
+    });
+
+    test('readFile on a folder throws not_a_file', async () => {
+      const s = await fresh();
+      await s.writeFile('dir/inner.txt', 'x');
+      await expectSandboxError(s.readFile('dir'), 'not_a_file');
+    });
+
+    test('writeFile onto a folder throws fs_error and leaves the folder intact', async () => {
+      const s = await fresh();
+      await s.writeFile('d/inner.txt', 'x');
+      await expectSandboxError(s.writeFile('d', 'y'), 'fs_error');
+      expect(text(await s.readFile('d/inner.txt'))).toBe('x');
+    });
+
+    test('writeFile, readFile and list through a file throw fs_error naming the relative path', async () => {
+      const s = await fresh();
+      await s.writeFile('a.txt', 'x');
+      await expectSandboxError(s.writeFile('a.txt/b', 'y'), 'fs_error');
+      await expectSandboxError(s.readFile('a.txt/b'), 'fs_error');
+      await expectSandboxError(s.list('a.txt/b', 1), 'fs_error');
+      await expect(s.readFile('a.txt/b')).rejects.toThrow('a.txt/b');
+      expect(text(await s.readFile('a.txt'))).toBe('x');
+    });
+
+    test('exec in a missing cwd throws NotFoundError(file) with the relative path', async () => {
+      const s = await fresh();
+      await expectNotFound(s.exec('echo contract-ok', { timeoutMs: 5000, cwd: 'no/such/dir' }), 'file', 'no/such/dir');
+    });
+
+    test('list with depth below 1 behaves like depth 1', async () => {
+      const s = await fresh();
+      await s.writeFile('a/b.txt', 'x');
+      expect(await s.list('.', 0)).toEqual(await s.list('.', 1));
+    });
+
+    test('stop of a stopped and start of a running sandbox are not errors', async () => {
+      const s = await fresh();
+      await s.start();
+      await s.stop();
+      await s.stop();
+      await s.start();
+      await s.writeFile('ok.txt', 'ok');
+      expect(text(await s.readFile('ok.txt'))).toBe('ok');
     });
 
     test('sandboxes are isolated from each other', async () => {

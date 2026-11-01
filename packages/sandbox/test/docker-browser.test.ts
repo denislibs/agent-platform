@@ -26,6 +26,12 @@ const RESULTS = `<!doctype html><html><head><title>Results</title></head><body><
 const LONG = `<!doctype html><html><head><title>Long</title></head><body><h1>Long</h1><p>${'lorem ipsum '.repeat(3000)}</p></body></html>`;
 
 const open = (name: string) => sandbox.browser({ type: 'open', url: `file:///workspace/site/${name}` });
+// Кладёт HTML в песочницу и открывает его так же, как остальные фикстуры: через file://.
+async function openHtml(html: string): Promise<PageSnapshot> {
+  const name = `fixture-${crypto.randomUUID()}.html`;
+  await sandbox.writeFile(`site/${name}`, html);
+  return open(name);
+}
 const elementNamed = (snap: PageSnapshot, name: string) => {
   const el = snap.elements.find(e => e.name === name);
   if (!el) throw new Error(`no element "${name}" in ${JSON.stringify(snap.elements)}`);
@@ -146,3 +152,43 @@ test('the browser works again after stop and start', async () => {
   await sandbox.start();
   expect((await open('page2.html')).title).toBe('Page Two');
 });
+
+test('more than 150 interactive elements: the first 150 are numbered and the snapshot says so', async () => {
+  const links = Array.from({ length: 200 }, (_, i) => `<a href="#l${i}">link ${i}</a>`).join(' ');
+  const snap = await openHtml(`<html><body>${links}</body></html>`);
+  expect(snap.elements).toHaveLength(150);
+  expect(snap.elementsTruncated).toBe(true);
+});
+
+test('a short page is not marked elementsTruncated', async () => {
+  const snap = await openHtml('<html><body><a href="#a">a</a></body></html>');
+  expect(snap.elementsTruncated).toBe(false);
+});
+
+test('shot names the screenshot file', async () => {
+  const snap = await sandbox.browser({ type: 'snapshot', shot: 'step-42' });
+  expect(snap.screenshotPath).toBe('.screenshots/step-42.png');
+});
+
+test('an invalid shot name falls back to a timestamp', async () => {
+  const snap = await sandbox.browser({ type: 'snapshot', shot: '../escape' });
+  expect(snap.screenshotPath).toMatch(/^\.screenshots\/\d+\.png$/);
+});
+
+test('a popup opened up to a second after a click is followed', async () => {
+  const snap = await openHtml(
+    `<html><body><button onclick="setTimeout(() => window.open('popup.html'), 600)">go</button></body></html>`,
+  );
+  const button = snap.elements.find(e => e.name === 'go')!;
+  const after = await sandbox.browser({ type: 'click', id: button.id });
+  expect(after.title).toBe('Popup Page');
+}, 30_000);
+
+test('the browser keeps at most 5 tabs', async () => {
+  for (let i = 0; i < 7; i++) {
+    const s = await openHtml(`<html><body><a href="popup.html" target="_blank">open ${i}</a></body></html>`);
+    await sandbox.browser({ type: 'click', id: s.elements[0]!.id });
+  }
+  const tabs = await sandbox.exec('curl -s 127.0.0.1:9230/health', { timeoutMs: 10_000 });
+  expect(JSON.parse(tabs.stdout).pages).toBeLessThanOrEqual(5);
+}, 60_000);

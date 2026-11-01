@@ -1,4 +1,5 @@
 import {
+  MAX_EXEC_TIMEOUT_MS,
   NotFoundError,
   resolveWorkspacePath,
   SandboxError,
@@ -26,6 +27,9 @@ export interface SandboxHandlers {
   exec?: ExecHandler;
   browser?: BrowserHandler;
 }
+
+/** Имя скриншота, которое принимает browserd; другое он заменяет временем (здесь — скриншота нет). */
+const SAFE_SHOT = /^[A-Za-z0-9_-]{1,64}$/;
 
 const byPath = (a: FileEntry, b: FileEntry) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
 
@@ -66,6 +70,7 @@ export class InMemorySandbox implements Sandbox {
   async exec(cmd: string, opts: ExecOptions): Promise<ExecResult> {
     const cwd = resolveWorkspacePath(opts.cwd ?? WORKSPACE_ROOT);
     this.ensureRunning();
+    if (cwd !== WORKSPACE_ROOT && !this.hasEntriesUnder(cwd)) throw new NotFoundError('file', toWorkspaceRelative(cwd));
     const handler = this.provider.handlers.exec;
     if (!handler) {
       return {
@@ -76,7 +81,7 @@ export class InMemorySandbox implements Sandbox {
         truncated: false,
       };
     }
-    const r = await handler(cmd, { ...opts, cwd }, this);
+    const r = await handler(cmd, { ...opts, cwd, timeoutMs: Math.min(opts.timeoutMs, MAX_EXEC_TIMEOUT_MS) }, this);
     const limit = this.provider.limits.maxExecOutputBytes;
     const stdout = capBytes(r.stdout, limit);
     const stderr = capBytes(r.stderr, limit);
@@ -92,8 +97,12 @@ export class InMemorySandbox implements Sandbox {
   async readFile(path: string): Promise<Uint8Array> {
     const abs = resolveWorkspacePath(path);
     this.ensureRunning();
+    this.ensureNoFileAncestor('readFile', abs);
     const bytes = this.files.get(abs);
-    if (!bytes) throw new NotFoundError('file', toWorkspaceRelative(abs));
+    if (!bytes) {
+      if (this.hasEntriesUnder(abs)) throw new SandboxError('not_a_file', `${toWorkspaceRelative(abs)} is a folder`);
+      throw new NotFoundError('file', toWorkspaceRelative(abs));
+    }
     const limit = this.provider.limits.maxReadFileBytes;
     if (bytes.length > limit) {
       throw new SandboxError(
@@ -107,12 +116,17 @@ export class InMemorySandbox implements Sandbox {
   async writeFile(path: string, data: string | Uint8Array): Promise<void> {
     const abs = resolveWorkspacePath(path);
     this.ensureRunning();
+    this.ensureNoFileAncestor('writeFile', abs);
+    if (this.hasEntriesUnder(abs)) {
+      throw new SandboxError('fs_error', `writeFile ${toWorkspaceRelative(abs)} failed: Is a directory`);
+    }
     this.files.set(abs, typeof data === 'string' ? new TextEncoder().encode(data) : new Uint8Array(data));
   }
 
   async list(path: string, depth: number): Promise<FileEntry[]> {
     const base = resolveWorkspacePath(path);
     this.ensureRunning();
+    this.ensureNoFileAncestor('list', base);
     if (this.files.has(base)) return [];
     const prefix = `${base}/`;
     const keys = [...this.files.keys()].filter(k => k.startsWith(prefix));
@@ -120,7 +134,7 @@ export class InMemorySandbox implements Sandbox {
     const entries = new Map<string, FileEntry>();
     for (const abs of keys) {
       const parts = abs.slice(prefix.length).split('/');
-      for (let i = 1; i <= Math.min(parts.length, depth); i++) {
+      for (let i = 1; i <= Math.min(parts.length, Math.max(1, depth)); i++) {
         const p = `${prefix}${parts.slice(0, i).join('/')}`;
         const isFile = i === parts.length;
         entries.set(p, {
@@ -133,11 +147,32 @@ export class InMemorySandbox implements Sandbox {
     return [...entries.values()].toSorted(byPath);
   }
 
+  /** Путь сквозь файл (`a.txt/b`, где a.txt — файл) — fs_error, как ENOTDIR у настоящей файловой системы. */
+  private ensureNoFileAncestor(op: string, abs: string): void {
+    for (let i = abs.indexOf('/', WORKSPACE_ROOT.length + 1); i !== -1; i = abs.indexOf('/', i + 1)) {
+      if (this.files.has(abs.slice(0, i))) {
+        throw new SandboxError('fs_error', `${op} ${toWorkspaceRelative(abs)} failed: Not a directory`);
+      }
+    }
+  }
+
+  /** Папки в памяти нет отдельно от файлов: она существует, пока под ней лежит хоть один файл. */
+  private hasEntriesUnder(abs: string): boolean {
+    const prefix = `${abs}/`;
+    for (const key of this.files.keys()) if (key.startsWith(prefix)) return true;
+    return false;
+  }
+
   async browser(action: BrowserAction): Promise<PageSnapshot> {
     this.ensureRunning();
     const handler = this.provider.handlers.browser;
-    if (!handler) throw new SandboxError('browser_failed', 'no browser handler scripted');
-    return handler(action, this);
+    if (!handler) throw new SandboxError('browser_unavailable', 'no browser handler scripted');
+    const snapshot = await handler(action, this);
+    // Как browserd: скриншот действия с допустимым shot лежит в .screenshots/<shot>.png.
+    if (snapshot.screenshotPath !== undefined || action.shot === undefined || !SAFE_SHOT.test(action.shot)) {
+      return snapshot;
+    }
+    return { ...snapshot, screenshotPath: `.screenshots/${action.shot}.png` };
   }
 
   async stop(): Promise<void> {

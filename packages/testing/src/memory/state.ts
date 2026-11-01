@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Clock, FileRecord, IdGenerator, Step, Subtask, Task, UsageInput } from '@agent/core';
 
 export interface MemoryUser {
@@ -24,6 +25,8 @@ export class InMemoryState {
   readonly subtasks = new Map<string, Subtask>();
   readonly files = new Map<string, FileRecord>();
   readonly usage: Array<UsageInput & { createdAt: Date }> = [];
+  /** Метка текущего UnitOfWork.run в асинхронном контексте (см. InMemoryUnitOfWork и проверку в репозиториях). */
+  readonly txScope = new AsyncLocalStorage<{ active: boolean; token: symbol }>();
 
   constructor({ clock, ids }: { clock: Clock; ids: IdGenerator }) {
     this.clock = clock;

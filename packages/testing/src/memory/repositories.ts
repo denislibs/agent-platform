@@ -31,15 +31,26 @@ import {
 import type { InMemoryState } from './state';
 
 type Deps = { memory: InMemoryState };
+/** Внутри UnitOfWork.run годятся только репозитории из tx: in-memory ловит то, что Postgres поймал бы лишь по lock_timeout. */
+function guardedState(deps: Deps, txToken: symbol | undefined): InMemoryState {
+  const scope = deps.memory.txScope.getStore();
+  if (scope?.active && scope.token !== txToken) {
+    throw new Error('repository from the container used inside UnitOfWork.run: use the tx passed to fn');
+  }
+  return deps.memory;
+}
 const copy = <T>(v: T): T => structuredClone(v);
 /** Как Drizzle .set(): ключи со значением undefined не трогают поле (null — очищает). */
 const definedOnly = <T extends object>(patch: T): Partial<T> =>
   Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) as Partial<T>;
 
 export class InMemoryTaskRepository implements TaskRepository {
-  constructor(private readonly deps: Deps) {}
+  constructor(
+    private readonly deps: Deps,
+    private readonly txToken?: symbol,
+  ) {}
   private get m() {
-    return this.deps.memory;
+    return guardedState(this.deps, this.txToken);
   }
 
   async create(input: { userId: string; prompt: string }): Promise<Task> {
@@ -116,9 +127,12 @@ export class InMemoryTaskRepository implements TaskRepository {
 }
 
 export class InMemoryStepLog implements StepLog {
-  constructor(private readonly deps: Deps) {}
+  constructor(
+    private readonly deps: Deps,
+    private readonly txToken?: symbol,
+  ) {}
   private get m() {
-    return this.deps.memory;
+    return guardedState(this.deps, this.txToken);
   }
 
   async append(input: AppendStepInput): Promise<Step> {
@@ -159,9 +173,12 @@ export class InMemoryStepLog implements StepLog {
 }
 
 export class InMemorySubtaskRepository implements SubtaskRepository {
-  constructor(private readonly deps: Deps) {}
+  constructor(
+    private readonly deps: Deps,
+    private readonly txToken?: symbol,
+  ) {}
   private get m() {
-    return this.deps.memory;
+    return guardedState(this.deps, this.txToken);
   }
 
   async insertMany(taskId: string, contracts: SubtaskContract[]): Promise<Subtask[]> {
@@ -240,9 +257,12 @@ export class InMemorySubtaskRepository implements SubtaskRepository {
 }
 
 export class InMemoryCreditLedger implements CreditLedger {
-  constructor(private readonly deps: Deps) {}
+  constructor(
+    private readonly deps: Deps,
+    private readonly txToken?: symbol,
+  ) {}
   private get m() {
-    return this.deps.memory;
+    return guardedState(this.deps, this.txToken);
   }
 
   async record(e: UsageInput): Promise<{ balance: number }> {
@@ -271,9 +291,12 @@ export class InMemoryCreditLedger implements CreditLedger {
 }
 
 export class InMemoryFileRepository implements FileRepository {
-  constructor(private readonly deps: Deps) {}
+  constructor(
+    private readonly deps: Deps,
+    private readonly txToken?: symbol,
+  ) {}
   private get m() {
-    return this.deps.memory;
+    return guardedState(this.deps, this.txToken);
   }
 
   async insert(input: NewFile): Promise<FileRecord> {

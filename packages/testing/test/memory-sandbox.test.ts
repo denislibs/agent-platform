@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { SandboxError } from '@agent/core';
+import { MAX_EXEC_TIMEOUT_MS, SandboxError } from '@agent/core';
 import { contractExecHandler, InMemorySandboxProvider, sandboxContract } from '@agent/testing';
 
 sandboxContract('in-memory', async limits => ({
@@ -16,11 +16,36 @@ test('exec and browser delegate to scripted handlers with a resolved cwd', async
       markdown: '# T',
       truncated: false,
       elements: [],
+      elementsTruncated: false,
     }),
   });
   const s = await provider.create(crypto.randomUUID());
+  await s.writeFile('outputs/r.csv', 'a'); // cwd должен существовать
   expect((await s.exec('ls', { timeoutMs: 1000, cwd: 'outputs' })).stdout).toBe('/workspace/outputs$ ls');
   expect((await s.browser({ type: 'open', url: 'https://example.com' })).url).toBe('https://example.com');
+});
+
+test('browser fills screenshotPath from a valid shot like browserd, keeping one the handler set', async () => {
+  const snapshot = {
+    url: 'about:blank',
+    title: '',
+    markdown: '',
+    truncated: false,
+    elements: [],
+    elementsTruncated: false,
+  };
+  const provider = new InMemorySandboxProvider({
+    browser: action => (action.type === 'scroll' ? { ...snapshot, screenshotPath: '.screenshots/own.png' } : snapshot),
+  });
+  const s = await provider.create(crypto.randomUUID());
+  expect((await s.browser({ type: 'snapshot', shot: '12-0_a' })).screenshotPath).toBe('.screenshots/12-0_a.png');
+  expect((await s.browser({ type: 'scroll', direction: 'down', shot: '12-1' })).screenshotPath).toBe(
+    '.screenshots/own.png',
+  );
+  for (const shot of [undefined, '../escape', 'a.b', '', 'k'.repeat(65)]) {
+    const r = await s.browser(shot === undefined ? { type: 'snapshot' } : { type: 'snapshot', shot });
+    expect('screenshotPath' in r).toBe(false);
+  }
 });
 
 test('without handlers exec returns 127 and browser fails clearly', async () => {
@@ -33,7 +58,7 @@ test('without handlers exec returns 127 and browser fails clearly', async () => 
     caught = err;
   }
   expect(caught).toBeInstanceOf(SandboxError);
-  expect((caught as SandboxError).code).toBe('browser_failed');
+  expect((caught as SandboxError).code).toBe('browser_unavailable');
 });
 
 test('the double caps exec output at 1 MiB per stream and readFile at 50 MiB by default', async () => {
@@ -62,4 +87,18 @@ test('a handler that reports truncated keeps the flag', async () => {
   });
   const s = await provider.create(crypto.randomUUID());
   expect((await s.exec('x', { timeoutMs: 1000 })).truncated).toBe(true);
+});
+
+test('exec hands the handler a timeoutMs capped at MAX_EXEC_TIMEOUT_MS', async () => {
+  const seen: number[] = [];
+  const provider = new InMemorySandboxProvider({
+    exec: (_cmd, opts) => {
+      seen.push(opts.timeoutMs);
+      return { stdout: '', stderr: '', exitCode: 0, timedOut: false };
+    },
+  });
+  const s = await provider.create(crypto.randomUUID());
+  await s.exec('true', { timeoutMs: 10 * 60 * 60 * 1000 });
+  await s.exec('true', { timeoutMs: 5_000 });
+  expect(seen).toEqual([MAX_EXEC_TIMEOUT_MS, 5_000]);
 });

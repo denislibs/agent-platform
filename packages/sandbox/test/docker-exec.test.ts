@@ -1,7 +1,7 @@
-import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { SandboxError, type Sandbox } from '@agent/core';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { MAX_EXEC_TIMEOUT_MS, SandboxError, type Sandbox } from '@agent/core';
 import { loadConfig } from '@agent/shared';
-import { DockerSandboxProvider } from '../src';
+import { DockerCli, DockerSandboxProvider, type CliResult, type RunOptions } from '../src';
 import { requireSandboxImage } from './helpers';
 
 let sandbox: Sandbox;
@@ -99,3 +99,74 @@ test('a non-finite or non-positive timeoutMs falls back to the 120 s default', a
     });
   }
 }, 60_000);
+
+test('a command printing a daemon-like error does not look like a missing sandbox', async () => {
+  const r = await sandbox.exec("echo 'Error response from daemon: No such container: x' >&2; exit 1", {
+    timeoutMs: 10_000,
+  });
+  expect(r.exitCode).toBe(1);
+  expect(r.stderr).toContain('No such container');
+});
+
+/** Настоящий docker CLI, который запоминает аргументы и опции каждого вызова. */
+class RecordingCli extends DockerCli {
+  readonly calls: { args: string[]; opts: RunOptions | undefined }[] = [];
+  override async run(args: string[], opts?: RunOptions): Promise<CliResult> {
+    this.calls.push({ args, opts });
+    return super.run(args, opts);
+  }
+}
+
+describe('with a 4097-byte output limit and a recording CLI', () => {
+  const cli = new RecordingCli();
+  let small: Sandbox;
+  beforeAll(async () => {
+    await requireSandboxImage();
+    small = await new DockerSandboxProvider(loadConfig().sandbox, cli, { maxExecOutputBytes: 4097 }).create(
+      crypto.randomUUID(),
+    );
+  });
+  afterAll(async () => {
+    await small?.destroy();
+  });
+
+  test('output cut inside a multi-byte character does not end with U+FFFD', async () => {
+    // 'я' — 2 байта; 4097 байт режут символ пополам.
+    const r = await small.exec("python3 -c \"print('я' * 5000, end='')\"", { timeoutMs: 20_000 });
+    expect(r.truncated).toBe(true);
+    expect(r.stdout.endsWith('\uFFFD')).toBe(false);
+    expect(r.stdout).toBe('я'.repeat(2048));
+  });
+
+  test('stderr cut inside a multi-byte character does not end with U+FFFD either', async () => {
+    const r = await small.exec('python3 -c "import sys; sys.stderr.write(\'я\' * 5000)"', { timeoutMs: 20_000 });
+    expect(r.truncated).toBe(true);
+    expect(r.stderr).toBe('я'.repeat(2048));
+  });
+
+  test('a timeoutMs above 30 minutes is capped at MAX_EXEC_TIMEOUT_MS', async () => {
+    const cmd = `true # cap-${crypto.randomUUID()}`;
+    const r = await small.exec(cmd, { timeoutMs: 10 * 60 * 60 * 1000 });
+    expect(r.exitCode).toBe(0);
+    const call = cli.calls.find(c => c.args.at(-1) === cmd);
+    const pidFileAt = call?.args.findIndex(a => a.startsWith('/tmp/.agent-exec-')) ?? -1;
+    // Аргумент обёртки после pid-файла — секунды для `timeout`; клиенту docker даётся ещё 15 с запаса.
+    expect(call?.args[pidFileAt + 1]).toBe(String(MAX_EXEC_TIMEOUT_MS / 1000));
+    expect(call?.opts?.timeoutMs).toBe(MAX_EXEC_TIMEOUT_MS + 15_000);
+  });
+});
+
+test('a paused sandbox still rejects exec with not_running', async () => {
+  const cli = new DockerCli();
+  await cli.ok(['pause', sandbox.id]);
+  let caught: unknown;
+  try {
+    await sandbox.exec('true', { timeoutMs: 5_000 });
+  } catch (err) {
+    caught = err;
+  } finally {
+    await cli.ok(['unpause', sandbox.id]);
+  }
+  expect(caught).toBeInstanceOf(SandboxError);
+  expect((caught as SandboxError).code).toBe('not_running');
+});

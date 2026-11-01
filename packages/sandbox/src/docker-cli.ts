@@ -1,3 +1,5 @@
+import { decodeUtf8Prefix } from './utf8';
+
 export interface CliResult {
   stdout: Uint8Array;
   stderr: string;
@@ -78,7 +80,9 @@ export class DockerCli {
       collect(proc.stderr, limit, overflow),
       proc.exited,
     ]);
-    return { stdout, stderr: new TextDecoder().decode(stderr), exitCode, truncated };
+    // Обрезанный по байтам stderr не должен заканчиваться U+FFFD от разрезанного символа.
+    const stderrText = truncated ? decodeUtf8Prefix(stderr) : new TextDecoder().decode(stderr);
+    return { stdout, stderr: stderrText, exitCode, truncated };
   }
 
   async ok(args: string[], opts: RunOptions = {}): Promise<string> {

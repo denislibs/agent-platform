@@ -1,4 +1,5 @@
 import {
+  MAX_EXEC_TIMEOUT_MS,
   NotFoundError,
   resolveWorkspacePath,
   SandboxError,
@@ -15,6 +16,7 @@ import {
 } from '@agent/core';
 import { DockerCli, DockerError, type CliResult, type RunOptions } from './docker-cli';
 import { BrowserdResponseSchema } from './page-snapshot';
+import { decodeUtf8Prefix } from './utf8';
 
 export interface DockerSandboxConfig {
   image: string;
@@ -30,7 +32,13 @@ const TASK_LABEL = 'agent.task';
 const BROWSERD_HEALTH = 'http://127.0.0.1:9230/health';
 const BROWSERD_ACTION = 'http://127.0.0.1:9230/action';
 const SAFE_TASK_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}$/;
-const DAEMON_ERROR = /^Error response from daemon/i;
+/**
+ * Ошибка самого клиента docker, а не команды в контейнере: ответ демона с ошибкой или демон недоступен
+ * (Docker/OrbStack не запущен, сокет не тот). Ищется в любом месте stderr: перед ней бывают предупреждения
+ * клиента. Совпадение перепроверяется через inspect — такой же текст может напечатать и сама команда.
+ */
+const DAEMON_ERROR =
+  /Error response from daemon|Cannot connect to the Docker daemon|failed to connect to the docker API|error during connect/i;
 /** curl: не удалось подключиться — browserd сейчас не слушает (например, перезапускается). */
 const CURL_COULDNT_CONNECT = 7;
 const NOT_RUNNING = /is not running|is paused|is restarting/i;
@@ -90,6 +98,17 @@ const containerName = (taskId: string) => `${NAME_PREFIX}${taskId}`;
 const volumeName = (taskId: string) => `agent-ws-${taskId}`;
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 const byPath = (a: FileEntry, b: FileEntry) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+const FS_REASON_LIMIT = 300;
+
+/**
+ * Файловый скрипт в контейнере завершился с ошибкой (запись поверх папки, путь сквозь файл, нет прав, диск
+ * полон): модель может исправить это сама. Причина — первая строка stderr без префикса /workspace/, до 300 символов.
+ */
+function fsError(op: string, rel: string, r: CliResult): SandboxError {
+  const line = (r.stderr.split('\n').find(l => l.trim() !== '') ?? '').trim().replaceAll(`${WORKSPACE_ROOT}/`, '');
+  const reason = line === '' ? `exit code ${r.exitCode}` : line.slice(0, FS_REASON_LIMIT);
+  return new SandboxError('fs_error', `${op} ${rel} failed: ${reason}`);
+}
 
 /**
  * Песочница — это один Docker-контейнер. Публичный `id` — стабильное имя `agent-sbx-<taskId>`,
@@ -116,18 +135,37 @@ export class DockerSandbox implements Sandbox {
       ...(opts.maxOutputBytes ? { maxOutputBytes: opts.maxOutputBytes } : {}),
     });
     if (r.exitCode !== 0 && DAEMON_ERROR.test(r.stderr)) {
-      if (NO_SUCH_CONTAINER.test(r.stderr)) throw new NotFoundError('sandbox', this.id);
-      if (NOT_RUNNING.test(r.stderr)) {
+      // Такой же текст может напечатать и сама команда: верим не stderr, а состоянию контейнера.
+      const state = await this.cli.run([
+        'inspect',
+        '--type',
+        'container',
+        '--format',
+        // Status, а не Running: у приостановленного контейнера Running = true, но exec в нём невозможен.
+        '{{.State.Status}}',
+        this.containerId,
+      ]);
+      if (state.exitCode !== 0 && NO_SUCH_CONTAINER.test(state.stderr)) throw new NotFoundError('sandbox', this.id);
+      if (state.exitCode === 0 && decode(state.stdout).trim() !== 'running') {
         throw new SandboxError('not_running', `sandbox ${this.id} is stopped`);
       }
-      throw new DockerError(args, r.exitCode, r.stderr);
+      if (state.exitCode !== 0) throw new DockerError(args, r.exitCode, r.stderr);
+      // Контейнер жив и запущен: это вывод самой команды, а не ошибка Docker.
     }
     return r;
   }
 
   async exec(cmd: string, opts: ExecOptions): Promise<ExecResult> {
     const cwd = resolveWorkspacePath(opts.cwd ?? WORKSPACE_ROOT);
-    const timeoutMs = Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0 ? opts.timeoutMs : DEFAULT_EXEC_TIMEOUT_MS;
+    const timeoutMs = Math.min(
+      Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0 ? opts.timeoutMs : DEFAULT_EXEC_TIMEOUT_MS,
+      MAX_EXEC_TIMEOUT_MS,
+    );
+    // Отдельная дешёвая проверка надёжнее разбора текста ошибки OCI («chdir to cwd … failed», код 127).
+    if (cwd !== WORKSPACE_ROOT) {
+      const probe = await this.execRaw(['test', '-d', cwd]);
+      if (probe.exitCode !== 0) throw new NotFoundError('file', toWorkspaceRelative(cwd));
+    }
     const seconds = Math.max(1, Math.ceil(timeoutMs / 1000));
     const pidFile = `/tmp/.agent-exec-${crypto.randomUUID()}.pid`;
     const started = Date.now();
@@ -143,7 +181,8 @@ export class DockerSandbox implements Sandbox {
     }
     const elapsed = Date.now() - started;
     const timedOut = !r.truncated && (r.exitCode === 124 || (r.exitCode === 137 && elapsed >= timeoutMs));
-    return { stdout: decode(r.stdout), stderr: r.stderr, exitCode: r.exitCode, timedOut, truncated: r.truncated };
+    const stdout = r.truncated ? decodeUtf8Prefix(r.stdout) : decode(r.stdout);
+    return { stdout, stderr: r.stderr, exitCode: r.exitCode, timedOut, truncated: r.truncated };
   }
 
   async readFile(path: string): Promise<Uint8Array> {
@@ -158,11 +197,12 @@ export class DockerSandbox implements Sandbox {
         `file ${rel} is ${size ? `${size} bytes` : 'larger than that'}, over the ${limit}-byte read limit; ` +
           'read it in parts with exec (head -c, tail -c)',
       );
+    if (r.exitCode === READ_FILE_IS_DIR) throw new SandboxError('not_a_file', `${rel} is a folder`);
     if (r.exitCode === READ_FILE_TOO_LARGE) throw tooLarge(/too large: (\d+)/.exec(r.stderr)?.[1]);
     if (r.truncated) throw tooLarge(undefined); // файл вырос между stat и cat
     if (r.exitCode !== 0) {
       if (/No such file or directory/i.test(r.stderr)) throw new NotFoundError('file', rel);
-      throw new Error(`readFile ${rel} failed: ${r.stderr.trim()}`);
+      throw fsError('readFile', rel, r);
     }
     return r.stdout;
   }
@@ -172,7 +212,7 @@ export class DockerSandbox implements Sandbox {
     const r = await this.execRaw(['sh', '-c', 'mkdir -p "$(dirname "$1")" && cat > "$1"', 'sh', abs], {
       stdin: data,
     });
-    if (r.exitCode !== 0) throw new Error(`writeFile ${toWorkspaceRelative(abs)} failed: ${r.stderr.trim()}`);
+    if (r.exitCode !== 0) throw fsError('writeFile', toWorkspaceRelative(abs), r);
   }
 
   async list(path: string, depth: number): Promise<FileEntry[]> {
@@ -196,7 +236,7 @@ export class DockerSandbox implements Sandbox {
     ]);
     if (r.exitCode !== 0) {
       if (/No such file or directory/i.test(r.stderr)) throw new NotFoundError('file', toWorkspaceRelative(abs));
-      throw new Error(`list ${toWorkspaceRelative(abs)} failed: ${r.stderr.trim()}`);
+      throw fsError('list', toWorkspaceRelative(abs), r);
     }
     return decode(r.stdout)
       .split('\0')
@@ -222,23 +262,26 @@ export class DockerSandbox implements Sandbox {
         await waitForBrowserd(this.cli, this.containerId, this.id);
       } catch (err) {
         if (err instanceof DockerError)
-          throw new SandboxError('browser_failed', `browserd did not come back: ${err.message}`);
+          throw new SandboxError('browser_unavailable', `browserd did not come back: ${err.message}`);
         throw err;
       }
       r = await this.browserRequest(action);
     }
     if (r.exitCode !== 0) {
-      throw new SandboxError('browser_failed', `browserd is unreachable (curl exit ${r.exitCode}): ${r.stderr.trim()}`);
+      throw new SandboxError(
+        'browser_unavailable',
+        `browserd is unreachable (curl exit ${r.exitCode}): ${r.stderr.trim()}`,
+      );
     }
     let json: unknown;
     try {
       json = JSON.parse(decode(r.stdout));
     } catch {
-      throw new SandboxError('browser_failed', 'browserd returned a response that is not valid JSON');
+      throw new SandboxError('browser_unavailable', 'browserd returned a response that is not valid JSON');
     }
     const parsed = BrowserdResponseSchema.safeParse(json);
     if (!parsed.success) {
-      throw new SandboxError('browser_failed', `unexpected browserd response: ${parsed.error.message}`);
+      throw new SandboxError('browser_unavailable', `unexpected browserd response: ${parsed.error.message}`);
     }
     const body = parsed.data;
     if (!body.ok) {
@@ -251,7 +294,7 @@ export class DockerSandbox implements Sandbox {
     return this.execRaw(
       [
         'curl',
-        '-s',
+        '-sS',
         '--max-time',
         '60',
         '-X',
@@ -331,7 +374,9 @@ const EXEC_KILL = [
 ].join('\n');
 
 const READ_FILE_TOO_LARGE = 3;
+const READ_FILE_IS_DIR = 4;
 const READ_FILE_SCRIPT = [
+  `[ -d "$1" ] && { echo "is a directory" >&2; exit ${READ_FILE_IS_DIR}; }`,
   'size=$(stat -c %s -- "$1") || exit 1',
   `if [ "$size" -gt "$2" ]; then echo "too large: $size" >&2; exit ${READ_FILE_TOO_LARGE}; fi`,
   'exec cat -- "$1"',
@@ -375,8 +420,10 @@ async function blockEgress(cli: DockerCli, image: string, containerId: string, i
     `have() { ip rule show pref ${EGRESS_RULE_PREF} | awk '$NF == "blackhole" { for (i = 1; i < NF; i++) if ($i == "to") print $(i + 1) }'; }`,
     // Сначала добавляем недостающее, и только потом снимаем устаревшее: набор ни в какой момент не неполон.
     'current=$(have)',
-    `for d in $want; do echo "$current" | grep -qxF "$d" || ip rule add pref ${EGRESS_RULE_PREF} to "$d" blackhole; done`,
-    `for d in $(have); do echo "$want" | grep -qxF "$d" || ip rule del pref ${EGRESS_RULE_PREF} to "$d" blackhole; done`,
+    // Параллельный помощник (create той же задачи) мог успеть раньше: «File exists» при добавлении и
+    // «No such file» при удалении — не ошибка. Любая другая ошибка печатается и валит помощника.
+    `for d in $want; do echo "$current" | grep -qxF "$d" || ip rule add pref ${EGRESS_RULE_PREF} to "$d" blackhole 2>/tmp/e || grep -q 'File exists' /tmp/e || { cat /tmp/e >&2; exit 1; }; done`,
+    `for d in $(have); do echo "$want" | grep -qxF "$d" || ip rule del pref ${EGRESS_RULE_PREF} to "$d" blackhole 2>/tmp/e || grep -q 'No such file' /tmp/e || { cat /tmp/e >&2; exit 1; }; done`,
   ].join('\n');
   const args = [
     'run',
@@ -466,6 +513,10 @@ export class DockerSandboxProvider implements SandboxProvider {
     let created = false;
     let volumeCreated = false;
     if (!info) ({ info, created, volumeCreated } = await this.runContainer(taskId, name));
+    // После runContainer тоже: имя мог занять не параллельный create, а чужой контейнер.
+    if (!info.labeled) {
+      throw new Error(`container ${name} exists but was not created by the sandbox provider (no ${LABEL} label)`);
+    }
     const sandbox = new DockerSandbox(name, taskId, info.containerId, this.cli, this.settings);
     try {
       if (!info.running) await sandbox.start();
@@ -519,7 +570,7 @@ export class DockerSandboxProvider implements SandboxProvider {
       }
       if (/is already in use/i.test(r.stderr)) {
         // Параллельный create той же задачи: контейнер уже создан другим вызовом, его том не наш.
-        const info = await this.inspect(name);
+        const info = await this.waitForContainer(name);
         if (info) return { info, created: false, volumeCreated: false };
         throw new DockerError(['run', name], r.exitCode, r.stderr);
       }
@@ -532,6 +583,19 @@ export class DockerSandboxProvider implements SandboxProvider {
       if (volumeCreated) await this.cli.run(['volume', 'rm', '-f', volumeName(taskId)]);
       throw new DockerError(['run', name], r.exitCode, r.stderr);
     }
+  }
+
+  /**
+   * Docker резервирует имя раньше, чем контейнер становится виден `inspect`: сразу после «is already in use»
+   * inspect ещё может ответить «No such container». Ждём появления до 5 с.
+   */
+  private async waitForContainer(name: string): Promise<ContainerInfo | undefined> {
+    for (let i = 0; i < 50; i++) {
+      const info = await this.inspect(name);
+      if (info) return info;
+      await Bun.sleep(100);
+    }
+    return undefined;
   }
 
   private runArgs(taskId: string, name: string): string[] {

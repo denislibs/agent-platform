@@ -1,7 +1,13 @@
 export interface ExecOptions {
-  /** Предел времени команды. NaN, ±Infinity и значения ≤ 0 заменяются значением по умолчанию — 120 с. */
+  /**
+   * Предел времени команды. NaN, ±Infinity и значения ≤ 0 заменяются значением по умолчанию — 120 с.
+   * Больше 30 минут (1 800 000 мс, MAX_EXEC_TIMEOUT_MS) урезается до 30 минут.
+   */
   timeoutMs: number;
-  /** Рабочая папка; по умолчанию /workspace. Разрешается через resolveWorkspacePath. */
+  /**
+   * Рабочая папка; по умолчанию /workspace. Разрешается через resolveWorkspacePath.
+   * Несуществующая папка — NotFoundError('file', относительный путь).
+   */
   cwd?: string;
   stdin?: string;
 }
@@ -28,12 +34,16 @@ export interface FileEntry {
   size: number;
 }
 
-export type BrowserAction =
-  | { type: 'open'; url: string }
-  | { type: 'click'; id: number }
-  | { type: 'type'; id: number; text: string; submit?: boolean }
-  | { type: 'scroll'; direction: 'up' | 'down' }
-  | { type: 'snapshot' };
+/** shot — имя файла скриншота без расширения (буквы, цифры, _ и -, до 64 символов); по умолчанию — время. */
+type BrowserActionBase = { shot?: string };
+export type BrowserAction = BrowserActionBase &
+  (
+    | { type: 'open'; url: string }
+    | { type: 'click'; id: number }
+    | { type: 'type'; id: number; text: string; submit?: boolean }
+    | { type: 'scroll'; direction: 'up' | 'down' }
+    | { type: 'snapshot' }
+  );
 
 export interface PageElement {
   /** Номер из последнего снимка; действия click/type ссылаются на него. */
@@ -50,6 +60,8 @@ export interface PageSnapshot {
   markdown: string;
   truncated: boolean;
   elements: PageElement[];
+  /** Интерактивных элементов было больше 150 — пронумерованы только первые 150. */
+  elementsTruncated: boolean;
   screenshotPath?: string;
 }
 
@@ -57,8 +69,11 @@ export interface PageSnapshot {
  * Изолированный компьютер задачи. Ошибки:
  * уничтоженная песочница → NotFoundError('sandbox'); нет файла/папки → NotFoundError('file', относительный путь);
  * песочница остановлена → SandboxError('not_running'); путь вне /workspace → SandboxError('path_outside_workspace');
- * неизвестный номер элемента → SandboxError('element_not_found'); прочие сбои браузера → SandboxError('browser_failed');
- * файл больше лимита чтения → SandboxError('file_too_large').
+ * неизвестный номер элемента → SandboxError('element_not_found'); сбой страницы или действия, о котором сообщил браузер (навигация, DNS) → SandboxError('browser_failed'); сам браузер недоступен (не поднялся, не отвечает, мусорный ответ) → SandboxError('browser_unavailable');
+ * файл больше лимита чтения → SandboxError('file_too_large'); readFile папки → SandboxError('not_a_file');
+ * прочий сбой файловой операции внутри песочницы — запись поверх папки, путь сквозь файл (ENOTDIR), нет прав,
+ * диск полон и т. п. → SandboxError('fs_error') с причиной в тексте. Отсутствующий файл остаётся
+ * NotFoundError('file'), чтение папки — not_a_file. Сбой самого Docker — не fs_error, а ошибка адаптера.
  */
 export interface Sandbox {
   readonly id: string;
@@ -71,11 +86,12 @@ export interface Sandbox {
   readFile(path: string): Promise<Uint8Array>;
   /** Создаёт недостающие родительские папки, перезаписывает файл. */
   writeFile(path: string, data: string | Uint8Array): Promise<void>;
-  /** Записи на глубину depth (1 = прямые потомки), отсортированы по path. */
+  /** Записи на глубину depth (1 = прямые потомки; depth < 1 работает как 1), отсортированы по path. */
   list(path: string, depth: number): Promise<FileEntry[]>;
   browser(action: BrowserAction): Promise<PageSnapshot>;
-  /** Освобождает CPU/RAM, файлы сохраняются. */
+  /** Освобождает CPU/RAM, файлы сохраняются. Идемпотентен: stop остановленной песочницы — не ошибка. */
   stop(): Promise<void>;
+  /** Идемпотентен: start запущенной песочницы — не ошибка. */
   start(): Promise<void>;
   /** Удаляет песочницу и её файлы. Повторный вызов безопасен. */
   destroy(): Promise<void>;

@@ -180,3 +180,31 @@ describe('pruned container and network (I-4)', () => {
     expect(new TextDecoder().decode(await again.readFile('keep.txt'))).toBe('survives');
   }, 60_000);
 });
+
+describe('concurrent and foreign containers', () => {
+  const provider = new DockerSandboxProvider(cfg);
+
+  test('parallel create of the same task leaves one running sandbox', async () => {
+    const taskId = crypto.randomUUID();
+    const results = await Promise.allSettled(Array.from({ length: 4 }, () => provider.create(taskId)));
+    for (const r of results) if (r.status === 'fulfilled') created.push(r.value);
+    expect(results.filter(r => r.status === 'rejected').map(r => String(r.reason))).toEqual([]);
+    expect(results.every(r => r.status === 'fulfilled')).toBe(true);
+    const info = (await provider.list()).find(i => i.taskId === taskId);
+    expect(info?.running).toBe(true);
+    const s = await provider.get(`agent-sbx-${taskId}`);
+    expect((await s!.exec('echo ok', { timeoutMs: 10_000 })).stdout.trim()).toBe('ok');
+    await s!.destroy();
+  }, 60_000);
+
+  test('create refuses a container with the sandbox name but without the label', async () => {
+    const taskId = crypto.randomUUID();
+    await real.ok(['create', '--name', `agent-sbx-${taskId}`, cfg.image]);
+    try {
+      await expect(provider.create(taskId)).rejects.toThrow(/no agent\.sandbox label/);
+    } finally {
+      await real.run(['rm', '-f', `agent-sbx-${taskId}`]);
+      await real.run(['volume', 'rm', '-f', `agent-ws-${taskId}`]);
+    }
+  });
+});

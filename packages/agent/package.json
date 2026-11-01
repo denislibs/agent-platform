@@ -9,7 +9,8 @@
   "dependencies": {
     "@agent/core": "workspace:*",
     "@agent/shared": "workspace:*",
-    "awilix": "^13"
+    "awilix": "^13",
+    "zod": "^4"
   },
   "devDependencies": {
     "@agent/testing": "workspace:*"
