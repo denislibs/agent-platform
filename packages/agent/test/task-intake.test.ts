@@ -63,6 +63,7 @@ describe('TaskIntake', () => {
     }
   });
 
+  // In-memory run'ы сериализованы глобально, так что здесь гонки нет; настоящую гарантию закрепляет тест на Postgres в packages/composition/test/container.test.ts.
   test('concurrent requests cannot exceed the active task limit', async () => {
     const { intake, memory, tasks } = setup({ MAX_ACTIVE_TASKS_PER_USER: '2' });
     const userId = memory.seedUser();
