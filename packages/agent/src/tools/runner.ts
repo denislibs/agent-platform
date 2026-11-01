@@ -11,6 +11,7 @@ const MODEL_FACING_SANDBOX_CODES: ReadonlySet<SandboxErrorCode> = new Set([
   'file_too_large',
   'not_a_file',
   'browser_failed',
+  'fs_error',
 ]);
 
 const ECHO_LIMIT = 200;

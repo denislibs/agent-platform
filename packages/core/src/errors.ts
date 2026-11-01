@@ -26,7 +26,8 @@ export type SandboxErrorCode =
   | 'browser_unavailable'
   | 'not_running'
   | 'file_too_large'
-  | 'not_a_file';
+  | 'not_a_file'
+  | 'fs_error';
 
 export class SandboxError extends Error {
   constructor(

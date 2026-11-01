@@ -293,6 +293,23 @@ export function sandboxContract(
       await expectSandboxError(s.readFile('dir'), 'not_a_file');
     });
 
+    test('writeFile onto a folder throws fs_error and leaves the folder intact', async () => {
+      const s = await fresh();
+      await s.writeFile('d/inner.txt', 'x');
+      await expectSandboxError(s.writeFile('d', 'y'), 'fs_error');
+      expect(text(await s.readFile('d/inner.txt'))).toBe('x');
+    });
+
+    test('writeFile, readFile and list through a file throw fs_error naming the relative path', async () => {
+      const s = await fresh();
+      await s.writeFile('a.txt', 'x');
+      await expectSandboxError(s.writeFile('a.txt/b', 'y'), 'fs_error');
+      await expectSandboxError(s.readFile('a.txt/b'), 'fs_error');
+      await expectSandboxError(s.list('a.txt/b', 1), 'fs_error');
+      await expect(s.readFile('a.txt/b')).rejects.toThrow('a.txt/b');
+      expect(text(await s.readFile('a.txt'))).toBe('x');
+    });
+
     test('exec in a missing cwd throws NotFoundError(file) with the relative path', async () => {
       const s = await fresh();
       await expectNotFound(s.exec('echo contract-ok', { timeoutMs: 5000, cwd: 'no/such/dir' }), 'file', 'no/such/dir');

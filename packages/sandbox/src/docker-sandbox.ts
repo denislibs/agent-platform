@@ -92,6 +92,17 @@ const containerName = (taskId: string) => `${NAME_PREFIX}${taskId}`;
 const volumeName = (taskId: string) => `agent-ws-${taskId}`;
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 const byPath = (a: FileEntry, b: FileEntry) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+const FS_REASON_LIMIT = 300;
+
+/**
+ * Файловый скрипт в контейнере завершился с ошибкой (запись поверх папки, путь сквозь файл, нет прав, диск
+ * полон): модель может исправить это сама. Причина — первая строка stderr без префикса /workspace/, до 300 символов.
+ */
+function fsError(op: string, rel: string, r: CliResult): SandboxError {
+  const line = (r.stderr.split('\n').find(l => l.trim() !== '') ?? '').trim().replaceAll(`${WORKSPACE_ROOT}/`, '');
+  const reason = line === '' ? `exit code ${r.exitCode}` : line.slice(0, FS_REASON_LIMIT);
+  return new SandboxError('fs_error', `${op} ${rel} failed: ${reason}`);
+}
 
 /**
  * Песочница — это один Docker-контейнер. Публичный `id` — стабильное имя `agent-sbx-<taskId>`,
@@ -185,7 +196,7 @@ export class DockerSandbox implements Sandbox {
     if (r.truncated) throw tooLarge(undefined); // файл вырос между stat и cat
     if (r.exitCode !== 0) {
       if (/No such file or directory/i.test(r.stderr)) throw new NotFoundError('file', rel);
-      throw new Error(`readFile ${rel} failed: ${r.stderr.trim()}`);
+      throw fsError('readFile', rel, r);
     }
     return r.stdout;
   }
@@ -195,7 +206,7 @@ export class DockerSandbox implements Sandbox {
     const r = await this.execRaw(['sh', '-c', 'mkdir -p "$(dirname "$1")" && cat > "$1"', 'sh', abs], {
       stdin: data,
     });
-    if (r.exitCode !== 0) throw new Error(`writeFile ${toWorkspaceRelative(abs)} failed: ${r.stderr.trim()}`);
+    if (r.exitCode !== 0) throw fsError('writeFile', toWorkspaceRelative(abs), r);
   }
 
   async list(path: string, depth: number): Promise<FileEntry[]> {
@@ -219,7 +230,7 @@ export class DockerSandbox implements Sandbox {
     ]);
     if (r.exitCode !== 0) {
       if (/No such file or directory/i.test(r.stderr)) throw new NotFoundError('file', toWorkspaceRelative(abs));
-      throw new Error(`list ${toWorkspaceRelative(abs)} failed: ${r.stderr.trim()}`);
+      throw fsError('list', toWorkspaceRelative(abs), r);
     }
     return decode(r.stdout)
       .split('\0')

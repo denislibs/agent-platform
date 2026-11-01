@@ -82,6 +82,7 @@ describe('runToolCall', () => {
       'file_too_large',
       'not_a_file',
       'browser_failed',
+      'fs_error',
     ];
     for (const err of [
       new ToolError('old text not found'),

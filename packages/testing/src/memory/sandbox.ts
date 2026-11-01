@@ -94,6 +94,7 @@ export class InMemorySandbox implements Sandbox {
   async readFile(path: string): Promise<Uint8Array> {
     const abs = resolveWorkspacePath(path);
     this.ensureRunning();
+    this.ensureNoFileAncestor('readFile', abs);
     const bytes = this.files.get(abs);
     if (!bytes) {
       if (this.hasEntriesUnder(abs)) throw new SandboxError('not_a_file', `${toWorkspaceRelative(abs)} is a folder`);
@@ -112,12 +113,17 @@ export class InMemorySandbox implements Sandbox {
   async writeFile(path: string, data: string | Uint8Array): Promise<void> {
     const abs = resolveWorkspacePath(path);
     this.ensureRunning();
+    this.ensureNoFileAncestor('writeFile', abs);
+    if (this.hasEntriesUnder(abs)) {
+      throw new SandboxError('fs_error', `writeFile ${toWorkspaceRelative(abs)} failed: Is a directory`);
+    }
     this.files.set(abs, typeof data === 'string' ? new TextEncoder().encode(data) : new Uint8Array(data));
   }
 
   async list(path: string, depth: number): Promise<FileEntry[]> {
     const base = resolveWorkspacePath(path);
     this.ensureRunning();
+    this.ensureNoFileAncestor('list', base);
     if (this.files.has(base)) return [];
     const prefix = `${base}/`;
     const keys = [...this.files.keys()].filter(k => k.startsWith(prefix));
@@ -136,6 +142,15 @@ export class InMemorySandbox implements Sandbox {
       }
     }
     return [...entries.values()].toSorted(byPath);
+  }
+
+  /** Путь сквозь файл (`a.txt/b`, где a.txt — файл) — fs_error, как ENOTDIR у настоящей файловой системы. */
+  private ensureNoFileAncestor(op: string, abs: string): void {
+    for (let i = abs.indexOf('/', WORKSPACE_ROOT.length + 1); i !== -1; i = abs.indexOf('/', i + 1)) {
+      if (this.files.has(abs.slice(0, i))) {
+        throw new SandboxError('fs_error', `${op} ${toWorkspaceRelative(abs)} failed: Not a directory`);
+      }
+    }
   }
 
   /** Папки в памяти нет отдельно от файлов: она существует, пока под ней лежит хоть один файл. */

@@ -70,7 +70,10 @@ export interface PageSnapshot {
  * уничтоженная песочница → NotFoundError('sandbox'); нет файла/папки → NotFoundError('file', относительный путь);
  * песочница остановлена → SandboxError('not_running'); путь вне /workspace → SandboxError('path_outside_workspace');
  * неизвестный номер элемента → SandboxError('element_not_found'); сбой страницы или действия, о котором сообщил браузер (навигация, DNS) → SandboxError('browser_failed'); сам браузер недоступен (не поднялся, не отвечает, мусорный ответ) → SandboxError('browser_unavailable');
- * файл больше лимита чтения → SandboxError('file_too_large'); readFile папки → SandboxError('not_a_file').
+ * файл больше лимита чтения → SandboxError('file_too_large'); readFile папки → SandboxError('not_a_file');
+ * прочий сбой файловой операции внутри песочницы — запись поверх папки, путь сквозь файл (ENOTDIR), нет прав,
+ * диск полон и т. п. → SandboxError('fs_error') с причиной в тексте. Отсутствующий файл остаётся
+ * NotFoundError('file'), чтение папки — not_a_file. Сбой самого Docker — не fs_error, а ошибка адаптера.
  */
 export interface Sandbox {
   readonly id: string;
