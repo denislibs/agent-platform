@@ -69,13 +69,12 @@ function repairPairing(messages: readonly ChatMessage[]): ChatMessage[] {
       group.insertAt = out.length;
       continue;
     }
-    if (m.role === 'assistant') {
-      flush();
-      out.push(m);
-      if (m.tool_calls?.length) group = { pending: m.tool_calls.map(c => c.id), insertAt: out.length };
-      continue;
-    }
+    // Любое не-tool сообщение закрывает группу: tool-сообщения должны идти сразу за своим assistant.
+    flush();
     out.push(m);
+    if (m.role === 'assistant' && m.tool_calls?.length) {
+      group = { pending: m.tool_calls.map(c => c.id), insertAt: out.length };
+    }
   }
   flush();
   return out;

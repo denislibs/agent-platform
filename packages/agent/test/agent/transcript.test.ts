@@ -20,6 +20,7 @@ const step = (payload: StepPayload, agent: Step['agent'] = 'executor'): Step => 
 });
 const llm = (content: string | null, toolCalls: Array<{ id: string; name: string; args: unknown }> = []) =>
   step({ type: 'llm_call', model: 'm', content, toolCalls, finishReason: toolCalls.length ? 'tool_calls' : 'stop' });
+const note = () => step({ type: 'message', role: 'user', text: 'Hint', kind: 'note' }, 'system');
 const result = (toolCallId: string, output: string) =>
   step({ type: 'tool_result', toolCallId, name: 'shell', ok: true, output });
 
@@ -36,8 +37,8 @@ const history = (n: number) => {
 function expectPaired(messages: readonly ChatMessage[]) {
   let ids: string[] = [];
   for (const m of messages) {
-    if (m.role === 'assistant') ids = (m.tool_calls ?? []).map(c => c.id);
-    else if (m.role === 'tool') expect(ids).toContain(m.tool_call_id);
+    if (m.role === 'tool') expect(ids).toContain(m.tool_call_id);
+    else ids = m.role === 'assistant' ? (m.tool_calls ?? []).map(c => c.id) : [];
   }
 }
 
@@ -158,6 +159,33 @@ describe('toMessages', () => {
       'd:[no result recorded]',
     ]);
     expectPaired(m);
+  });
+
+  test('a user or note message between a call and its result closes the call group', () => {
+    const full = toMessages([llm(null, [{ id: 'a', name: 'shell', args: {} }]), note(), result('a', 'late')]);
+    expect(full.map(x => (x.role === 'tool' ? `${x.tool_call_id}:${x.content}` : x.role))).toEqual([
+      'assistant',
+      'a:[no result recorded]',
+      'user',
+    ]);
+    expectPaired(full);
+
+    const partial = toMessages([
+      llm(null, [
+        { id: 'a', name: 'shell', args: {} },
+        { id: 'b', name: 'shell', args: {} },
+      ]),
+      result('a', 'A'),
+      note(),
+      result('b', 'late'),
+    ]);
+    expect(partial.map(x => (x.role === 'tool' ? `${x.tool_call_id}:${x.content}` : x.role))).toEqual([
+      'assistant',
+      'a:A',
+      'b:[no result recorded]',
+      'user',
+    ]);
+    expectPaired(partial);
   });
 
   test('estimateTokens counts about 4 characters per token, including tool arguments', () => {
