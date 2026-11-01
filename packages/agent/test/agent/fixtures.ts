@@ -32,6 +32,8 @@ export const calls = (...list: Array<[string, unknown]>): ScriptedTurn => ({
 /** Задача в running с подзадачами в pending — как сразу после create_plan. */
 export async function planned(c: AgentTestCradle, goals: string[] = ['collect data']): Promise<Task> {
   const task = await seedTask(c);
+  // План «составлен» вручную: job plan от TaskIntake в очереди не нужен.
+  c.queue.next();
   await c.tasks.transition(task.id, 'planning', { currentKind: 'plan' });
   await c.subtasks.insertMany(
     task.id,

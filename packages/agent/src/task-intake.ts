@@ -1,5 +1,6 @@
-import { LimitExceededError, type Task, type UnitOfWork } from '@agent/core';
+import { LimitExceededError, type JobQueue, type Task, type UnitOfWork } from '@agent/core';
 import type { Config } from '@agent/shared';
+import { jobKey } from './agent';
 
 export interface NewTaskInput {
   userId: string;
@@ -10,17 +11,17 @@ export interface NewTaskInput {
 
 /**
  * Приём новой задачи (спецификация 4.1, шаг 1): проверка лимитов, задача в статусе queued, первый шаг
- * с запросом пользователя и привязка входных файлов — одной транзакцией. Постановку job `plan`
- * после коммита добавляет план 3d.
+ * с запросом пользователя, `currentKind = 'plan'` и привязка входных файлов — одной транзакцией.
+ * После коммита ставится job `plan`.
  */
 export class TaskIntake {
-  constructor(private readonly deps: { uow: UnitOfWork; config: Config }) {}
+  constructor(private readonly deps: { uow: UnitOfWork; config: Config; queue: JobQueue }) {}
 
   async create(input: NewTaskInput): Promise<Task> {
     const { userId, prompt } = input;
     const fileIds = input.fileIds ?? [];
     const maxActive = this.deps.config.limits.maxActiveTasksPerUser;
-    return this.deps.uow.run(async tx => {
+    const created = await this.deps.uow.run(async tx => {
       await tx.lockUser(userId);
       if ((await tx.tasks.countActive(userId)) >= maxActive) {
         throw new LimitExceededError('active_tasks', `at most ${maxActive} active tasks per user`);
@@ -35,9 +36,15 @@ export class TaskIntake {
         payload: { type: 'message', role: 'user', text: prompt },
       });
       if (fileIds.length > 0) await tx.files.attachToTask(fileIds, userId, task.id);
-      const created = await tx.tasks.get(task.id);
-      if (!created) throw new Error(`task ${task.id} vanished inside its own transaction`);
-      return created;
+      await tx.tasks.update(task.id, { currentKind: 'plan' });
+      const fresh = await tx.tasks.get(task.id);
+      if (!fresh) throw new Error(`task ${task.id} vanished inside its own transaction`);
+      return fresh;
     });
+    // Шаг записан — теперь job (спецификация 8). Сбой постановки не теряет задачу: сборщик поставит plan сам.
+    await this.deps.queue
+      .enqueue({ taskId: created.id, kind: 'plan' }, jobKey(created.id, 'plan', created.lastSeq))
+      .catch(() => undefined);
+    return created;
   }
 }
