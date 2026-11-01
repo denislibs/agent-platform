@@ -11,3 +11,6 @@ export * from './cursor';
 export * from './ownership';
 export * from './task-actions';
 export * from './file-names';
+export * from './step-stream';
+export * from './open-streams';
+export * from './timing';

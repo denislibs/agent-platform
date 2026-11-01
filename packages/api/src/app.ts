@@ -4,6 +4,8 @@ import { errorMessage } from '@agent/core';
 import { requireUser } from './auth/middleware';
 import type { ApiDeps, ApiEnv } from './deps';
 import { mapError } from './errors';
+import { OpenStreams } from './open-streams';
+import { eventRoutes } from './routes/events';
 import { fileRoutes } from './routes/files';
 import { meRoutes } from './routes/me';
 import { taskActionRoutes } from './routes/task-actions';
@@ -18,8 +20,11 @@ export const API_BODY_LIMIT_BYTES = 256 * 1024;
 const isPublic = (method: string, path: string): boolean =>
   (method === 'GET' && path === '/api/health') || path.startsWith('/api/auth/');
 
-/** HTTP API (спецификация 10). Зависимости — одним объектом, обычно cradle контейнера. */
-export function createApp(deps: ApiDeps): Hono<ApiEnv> {
+/**
+ * HTTP API (спецификация 10). Зависимости — одним объектом, обычно cradle контейнера.
+ * `streams` — учёт открытых SSE-потоков: main.ts закрывает их при остановке (`stopServer`).
+ */
+export function createApp(deps: ApiDeps, opts: { streams?: OpenStreams } = {}): Hono<ApiEnv> {
   const app = new Hono<ApiEnv>();
 
   app.onError((err, c) => {
@@ -53,5 +58,6 @@ export function createApp(deps: ApiDeps): Hono<ApiEnv> {
   taskRoutes(app, deps);
   taskActionRoutes(app, deps);
   fileRoutes(app, deps);
+  eventRoutes(app, deps, opts.streams ?? new OpenStreams());
   return app;
 }

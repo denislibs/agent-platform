@@ -1,6 +1,8 @@
 import { errorMessage, LogMailer, type Logger, type Mailer } from '@agent/core';
 import { mapError } from './errors';
+import type { OpenStreams } from './open-streams';
 import { isLocalRuntime } from './runtime-env';
+import { settlesWithin } from './timing';
 
 /** Предел idleTimeout в Bun.serve, секунды. */
 const BUN_MAX_IDLE_TIMEOUT_SEC = 255;
@@ -44,4 +46,25 @@ export function withJsonErrors<A extends unknown[]>(
 export function warnIfMailIsLogged(deps: { mailer: Mailer; logger: Logger }, nodeEnv: string | undefined): void {
   if (!isLocalRuntime(nodeEnv) && deps.mailer instanceof LogMailer)
     deps.logger.warn('magic links are written to the log: configure a mail provider before inviting users (backlog)');
+}
+
+/** Сколько ждать штатного закрытия соединений при остановке, прежде чем рвать их (docker stop ждёт 10 с). */
+export const SHUTDOWN_GRACE_MS = 5000;
+
+/**
+ * Остановка сервера. `server.stop()` перестаёт принимать соединения и ждёт открытые — а SSE-поток задачи
+ * сам не закрывается. Поэтому сначала закрываем учтённые потоки (клиенты переподключатся к другому экземпляру),
+ * затем ждём штатного закрытия не дольше `graceMs` и рвём то, что осталось.
+ */
+export async function stopServer(
+  server: { stop(closeActiveConnections?: boolean): Promise<void> },
+  streams: OpenStreams,
+  opts: { graceMs: number; logger: Logger },
+): Promise<void> {
+  const closed = streams.closeAll();
+  if (closed > 0) opts.logger.info('closed open event streams', { streams: closed });
+  const graceful = server.stop();
+  if (await settlesWithin(graceful, opts.graceMs)) return graceful;
+  opts.logger.warn('connections still open after the grace period; closing them by force', { graceMs: opts.graceMs });
+  await server.stop(true);
 }

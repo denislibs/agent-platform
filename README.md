@@ -67,6 +67,23 @@ The API needs `BETTER_AUTH_SECRET` in `.env` (`openssl rand -base64 32`). Sign-i
 - Google / GitHub — on when both `*_CLIENT_ID` and `*_CLIENT_SECRET` are set; the OAuth callback URL is
   `<BETTER_AUTH_URL>/api/auth/callback/google` (or `/github`), `BETTER_AUTH_URL` defaults to `http://localhost:8080`.
 
+Endpoints (spec section 10; request and response schemas: `packages/shared/src/api.ts`):
+
+| Method     | Path                      |                                                                                                  |
+| ---------- | ------------------------- | ------------------------------------------------------------------------------------------------ |
+| `*`        | `/api/auth/*`             | Better Auth                                                                                      |
+| GET        | `/api/me`                 | profile and balance (`millicredits`, `credits` as a string)                                      |
+| POST       | `/api/uploads`            | declare an input file → presigned PUT for exactly `size` bytes (≤ `UPLOAD_MAX_BYTES`)            |
+| POST / GET | `/api/tasks`              | create (`{ prompt, fileIds }`) / list (`?limit=`, `?before=<nextCursor>`)                        |
+| GET        | `/api/tasks/:id`          | task, subtasks, files                                                                            |
+| GET        | `/api/tasks/:id/events`   | SSE: `step` events (`id` = seq, resume with `Last-Event-ID` or `?after=`), `: ping`, final `end` |
+| POST       | `/api/tasks/:id/messages` | answer the agent's question (task in `waiting_user`)                                             |
+| POST       | `/api/tasks/:id/cancel`   | cancel                                                                                           |
+| GET        | `/api/files/:id`          | redirect to a presigned download (always as an attachment)                                       |
+
+Errors are `{ "error": { "code", "message" } }`; `/api/auth/*` answers in Better Auth's own `{ "message", "code" }`.
+Presigned URLs use `S3_PUBLIC_ENDPOINT` — the S3 address the browser can reach.
+
 Local runs use `NODE_ENV=development`. Any other value, unset included, counts as production: Better Auth rate limiting
 is on and the API warns at startup while magic links still go to the log. Origin and CSRF checks are on everywhere.
 The Better Auth integration tests (`packages/api/test/integration`) run on Postgres from `infra:up`

@@ -3,7 +3,8 @@ import { errorMessage } from '@agent/core';
 import { loadConfig } from '@agent/shared';
 import { createApp } from './app';
 import { registerAuth } from './auth/better-auth';
-import { idleTimeoutSec, warnIfMailIsLogged, withJsonErrors } from './serve';
+import { OpenStreams } from './open-streams';
+import { idleTimeoutSec, SHUTDOWN_GRACE_MS, stopServer, warnIfMailIsLogged, withJsonErrors } from './serve';
 
 const config = loadConfig();
 const container = registerAuth(buildContainer(config));
@@ -12,7 +13,8 @@ const { logger, mailer } = container.cradle;
 void container.cradle.auth;
 warnIfMailIsLogged({ mailer, logger }, process.env.NODE_ENV);
 
-const app = createApp(container.cradle);
+const streams = new OpenStreams();
+const app = createApp(container.cradle, { streams });
 const idleTimeout = idleTimeoutSec(config.api.sseHeartbeatMs);
 const server = Bun.serve({
   hostname: config.api.host,
@@ -29,7 +31,8 @@ async function shutdown(signal: string): Promise<void> {
   closing = true;
   logger.info('api shutting down', { signal });
   try {
-    await server.stop();
+    // Открытые SSE-потоки закрываются явно: иначе server.stop() ждал бы их вечно.
+    await stopServer(server, streams, { graceMs: SHUTDOWN_GRACE_MS, logger });
     await container.dispose();
   } catch (err) {
     logger.error('api shutdown failed', { error: errorMessage(err) });
