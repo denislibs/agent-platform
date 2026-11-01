@@ -16,6 +16,7 @@ test('exec and browser delegate to scripted handlers with a resolved cwd', async
       markdown: '# T',
       truncated: false,
       elements: [],
+      elementsTruncated: false,
     }),
   });
   const s = await provider.create(crypto.randomUUID());

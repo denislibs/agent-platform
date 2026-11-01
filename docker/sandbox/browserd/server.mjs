@@ -59,13 +59,28 @@ async function getPage() {
 }
 
 // Если действие открыло новую вкладку — переключаемся на неё и ждём загрузки.
+// window.open из setTimeout может сработать уже после settle — ждём новую вкладку до 1 с.
 async function followNewTab(current) {
+  for (let waited = 0; waited < 1000 && !openedPages.some(p => !p.isClosed()); waited += 100) {
+    await current.waitForTimeout(100);
+  }
   const next = openedPages.findLast(candidate => !candidate.isClosed());
   openedPages = [];
   if (!next || next === current) return current;
   page = next;
   await settle(next);
+  await closeOldTabs(next);
   return next;
+}
+
+const MAX_TABS = 5;
+// Держим не больше MAX_TABS вкладок: закрываем самые старые, текущую не трогаем.
+async function closeOldTabs(keep) {
+  const open = keep
+    .context()
+    .pages()
+    .filter(p => !p.isClosed());
+  for (const p of open.slice(0, Math.max(0, open.length - MAX_TABS))) if (p !== keep) await p.close().catch(() => {});
 }
 
 async function settle(p) {
@@ -122,9 +137,11 @@ function extract({ maxElements }) {
       .slice(0, 120);
 
   const elements = [];
+  let total = 0;
   for (const el of document.querySelectorAll(SELECTOR)) {
-    if (elements.length >= maxElements) break;
     if (!visible(el)) continue;
+    total += 1;
+    if (elements.length >= maxElements) continue;
     const id = elements.length + 1;
     el.setAttribute('data-agent-id', String(id));
     const item = { id, role: roleOf(el), name: nameOf(el) };
@@ -144,11 +161,11 @@ function extract({ maxElements }) {
   } else {
     markdown = document.body?.innerText ?? '';
   }
-  return { title: document.title, markdown, elements };
+  return { title: document.title, markdown, elements, elementsTruncated: total > maxElements };
 }
 /* oxlint-enable unicorn/consistent-function-scoping */
 
-async function snapshot(p) {
+async function snapshot(p, shot) {
   const hasHelpers = await p.evaluate(() => typeof window.TurndownService === 'function').catch(() => false);
   if (!hasHelpers) {
     // CSP страницы может запретить вставку скриптов — тогда extract() вернёт innerText.
@@ -157,7 +174,8 @@ async function snapshot(p) {
   }
   const data = await p.evaluate(extract, { maxElements: MAX_ELEMENTS });
   await mkdir(SCREENSHOT_DIR, { recursive: true });
-  const file = `${SCREENSHOT_DIR}/${Date.now()}.png`;
+  const name = typeof shot === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(shot) ? shot : String(Date.now());
+  const file = `${SCREENSHOT_DIR}/${name}.png`;
   const screenshotPath = await p
     .screenshot({ path: file })
     .then(() => file.slice(WORKSPACE.length + 1))
@@ -169,6 +187,7 @@ async function snapshot(p) {
     markdown: truncated ? data.markdown.slice(0, MAX_MARKDOWN) : data.markdown,
     truncated,
     elements: data.elements,
+    elementsTruncated: data.elementsTruncated,
     ...(screenshotPath ? { screenshotPath } : {}),
   };
 }
@@ -204,7 +223,7 @@ async function perform(action) {
     default:
       throw new ActionError('browser_failed', `unknown action type: ${action?.type}`);
   }
-  return snapshot(current);
+  return snapshot(current, action?.shot);
 }
 
 // Одна страница — действия выполняются строго по очереди.
@@ -231,7 +250,10 @@ function send(res, status, payload) {
 }
 
 const server = http.createServer(async (req, res) => {
-  if (req.method === 'GET' && req.url === '/health') return send(res, 200, { ok: true });
+  if (req.method === 'GET' && req.url === '/health') {
+    const pages = context ? context.pages().filter(p => !p.isClosed()).length : 0;
+    return send(res, 200, { ok: true, pages });
+  }
   if (req.method !== 'POST' || req.url !== '/action') {
     return send(res, 404, { ok: false, code: 'browser_failed', error: 'not found' });
   }

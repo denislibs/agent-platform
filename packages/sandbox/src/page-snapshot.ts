@@ -13,6 +13,7 @@ export const PageSnapshotSchema = z.object({
   markdown: z.string(),
   truncated: z.boolean(),
   elements: z.array(PageElementSchema),
+  elementsTruncated: z.boolean(),
   screenshotPath: z.string().optional(),
 });
 

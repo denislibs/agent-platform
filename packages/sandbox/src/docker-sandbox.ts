@@ -274,7 +274,7 @@ export class DockerSandbox implements Sandbox {
     return this.execRaw(
       [
         'curl',
-        '-s',
+        '-sS',
         '--max-time',
         '60',
         '-X',

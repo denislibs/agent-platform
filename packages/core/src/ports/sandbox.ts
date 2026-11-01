@@ -34,12 +34,16 @@ export interface FileEntry {
   size: number;
 }
 
-export type BrowserAction =
-  | { type: 'open'; url: string }
-  | { type: 'click'; id: number }
-  | { type: 'type'; id: number; text: string; submit?: boolean }
-  | { type: 'scroll'; direction: 'up' | 'down' }
-  | { type: 'snapshot' };
+/** shot — имя файла скриншота без расширения (буквы, цифры, _ и -, до 64 символов); по умолчанию — время. */
+type BrowserActionBase = { shot?: string };
+export type BrowserAction = BrowserActionBase &
+  (
+    | { type: 'open'; url: string }
+    | { type: 'click'; id: number }
+    | { type: 'type'; id: number; text: string; submit?: boolean }
+    | { type: 'scroll'; direction: 'up' | 'down' }
+    | { type: 'snapshot' }
+  );
 
 export interface PageElement {
   /** Номер из последнего снимка; действия click/type ссылаются на него. */
@@ -56,6 +60,8 @@ export interface PageSnapshot {
   markdown: string;
   truncated: boolean;
   elements: PageElement[];
+  /** Интерактивных элементов было больше 150 — пронумерованы только первые 150. */
+  elementsTruncated: boolean;
   screenshotPath?: string;
 }
 
