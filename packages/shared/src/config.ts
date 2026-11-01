@@ -2,7 +2,9 @@ import { z } from 'zod';
 
 const required = z.string().min(1);
 const positiveInt = (def: number) => z.coerce.number().int().positive().default(def);
-const price = (def: number) => z.coerce.number().nonnegative().finite().default(def);
+/** Пустая или пробельная строка — «не задано»: иначе z.coerce превратит '' в 0 и модель станет бесплатной. */
+const blankAsUnset = (v: unknown) => (typeof v === 'string' && v.trim() === '' ? undefined : v);
+const price = (def: number) => z.preprocess(blankAsUnset, z.coerce.number().nonnegative().finite().default(def));
 
 const EnvSchema = z.object({
   DATABASE_URL: required,
