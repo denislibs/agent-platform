@@ -23,6 +23,11 @@ const EnvSchema = z.object({
   PLANNER_PRICE_OUT: price(120),
   EXECUTOR_PRICE_IN: price(30),
   EXECUTOR_PRICE_OUT: price(120),
+  /** Окно контекста моделей в токенах (спецификация 7): сжатие истории при 60 %. */
+  PLANNER_CONTEXT_TOKENS: positiveInt(64_000),
+  EXECUTOR_CONTEXT_TOKENS: positiveInt(32_000),
+  /** tool_choice для вызовов с инструментами: required, если LiteLLM и модель его поддерживают, иначе auto. */
+  LLM_TOOL_CHOICE: z.enum(['required', 'auto']).default('required'),
   MAX_SUBTASKS: positiveInt(12),
   MAX_EXECUTOR_STEPS: positiveInt(40),
   MAX_REVISIONS: positiveInt(2),
@@ -68,6 +73,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       baseURL: e.LITELLM_BASE_URL,
       apiKey: e.LITELLM_API_KEY,
       models: { planner: e.PLANNER_MODEL, executor: e.EXECUTOR_MODEL },
+      contextTokens: { planner: e.PLANNER_CONTEXT_TOKENS, executor: e.EXECUTOR_CONTEXT_TOKENS },
+      toolChoice: e.LLM_TOOL_CHOICE,
     },
     pricing: {
       planner: { inputPerMillion: e.PLANNER_PRICE_IN, outputPerMillion: e.PLANNER_PRICE_OUT },

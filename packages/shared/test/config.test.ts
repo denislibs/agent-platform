@@ -35,6 +35,16 @@ describe('loadConfig', () => {
     });
   });
 
+  test('model context windows and tool choice have defaults and can be overridden', () => {
+    const c = loadConfig(base);
+    expect(c.llm.contextTokens).toEqual({ planner: 64_000, executor: 32_000 });
+    expect(c.llm.toolChoice).toBe('required');
+    const o = loadConfig({ ...base, EXECUTOR_CONTEXT_TOKENS: '128000', LLM_TOOL_CHOICE: 'auto' });
+    expect(o.llm.contextTokens.executor).toBe(128_000);
+    expect(o.llm.toolChoice).toBe('auto');
+    expect(() => loadConfig({ ...base, LLM_TOOL_CHOICE: 'none' })).toThrow(/LLM_TOOL_CHOICE/);
+  });
+
   test('BRAVE_BASE_URL must be a URL', () => {
     expect(() => loadConfig({ ...base, BRAVE_BASE_URL: 'not a url' })).toThrow(/BRAVE_BASE_URL/);
   });

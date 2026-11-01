@@ -36,3 +36,31 @@ describe('subtask contract and report', () => {
     expect(SubtaskReportSchema.parse({ summary: 'done' })).toEqual({ summary: 'done', files: [], issues: [] });
   });
 });
+
+test('optional fields for summaries, missing usage and tool results', () => {
+  expect(
+    StepPayloadSchema.parse({ type: 'message', role: 'assistant', text: 's', kind: 'summary', coversUpToSeq: 12 }),
+  ).toMatchObject({ kind: 'summary', coversUpToSeq: 12 });
+  expect(
+    StepPayloadSchema.parse({
+      type: 'llm_call',
+      model: 'm',
+      content: null,
+      toolCalls: [],
+      finishReason: 'stop',
+      usageMissing: true,
+    }),
+  ).toMatchObject({ usageMissing: true });
+  const r = StepPayloadSchema.parse({
+    type: 'tool_result',
+    toolCallId: 'c',
+    name: 'report',
+    ok: true,
+    output: 'x',
+    error: 'call',
+    screenshotPath: '.screenshots/1-0.png',
+    control: { kind: 'report', summary: 's', files: [], issues: [] },
+  });
+  expect(r).toMatchObject({ error: 'call', screenshotPath: '.screenshots/1-0.png', control: { kind: 'report' } });
+  expect(() => StepPayloadSchema.parse({ type: 'message', role: 'assistant', text: 's', kind: 'nope' })).toThrow();
+});
