@@ -5,6 +5,15 @@ const positiveInt = (def: number) => z.coerce.number().int().positive().default(
 /** Пустая или пробельная строка — «не задано»: иначе z.coerce превратит '' в 0 и модель станет бесплатной. */
 const blankAsUnset = (v: unknown) => (typeof v === 'string' && v.trim() === '' ? undefined : v);
 const price = (def: number) => z.preprocess(blankAsUnset, z.coerce.number().nonnegative().finite().default(def));
+const optionalText = z.preprocess(blankAsUnset, z.string().min(1).optional());
+
+/** OAuth-приложение включено, только если заданы и id, и секрет; половина пары — ошибка конфига. */
+function oauthApp(name: string, clientId: string | undefined, clientSecret: string | undefined) {
+  if (!clientId && !clientSecret) return null;
+  if (!clientId || !clientSecret)
+    throw new Error(`Invalid environment: ${name}_CLIENT_ID and ${name}_CLIENT_SECRET must be set together`);
+  return { clientId, clientSecret };
+}
 
 const EnvSchema = z.object({
   DATABASE_URL: required,
@@ -57,6 +66,19 @@ const EnvSchema = z.object({
   SANDBOX_NAMESPACE: z.string().min(1).default('dev'),
   BRAVE_API_KEY: z.preprocess(v => (v === '' ? undefined : v), z.string().min(1).optional()),
   BRAVE_BASE_URL: z.url().default('https://api.search.brave.com'),
+  API_PORT: positiveInt(3000),
+  /** Лимит входного файла; 50 МиБ — как лимит чтения файла песочницы. */
+  UPLOAD_MAX_BYTES: positiveInt(52_428_800),
+  SSE_HEARTBEAT_MS: positiveInt(15_000),
+  BETTER_AUTH_SECRET: z.preprocess(
+    blankAsUnset,
+    z.string().min(32, 'at least 32 characters (openssl rand -base64 32)').optional(),
+  ),
+  BETTER_AUTH_URL: z.url().default('http://localhost:8080'),
+  GOOGLE_CLIENT_ID: optionalText,
+  GOOGLE_CLIENT_SECRET: optionalText,
+  GITHUB_CLIENT_ID: optionalText,
+  GITHUB_CLIENT_SECRET: optionalText,
 });
 
 export type Config = ReturnType<typeof loadConfig>;
@@ -120,6 +142,13 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     search: {
       braveApiKey: e.BRAVE_API_KEY ?? null,
       braveBaseUrl: e.BRAVE_BASE_URL,
+    },
+    api: { port: e.API_PORT, uploadMaxBytes: e.UPLOAD_MAX_BYTES, sseHeartbeatMs: e.SSE_HEARTBEAT_MS },
+    auth: {
+      secret: e.BETTER_AUTH_SECRET ?? null,
+      baseUrl: e.BETTER_AUTH_URL,
+      google: oauthApp('GOOGLE', e.GOOGLE_CLIENT_ID, e.GOOGLE_CLIENT_SECRET),
+      github: oauthApp('GITHUB', e.GITHUB_CLIENT_ID, e.GITHUB_CLIENT_SECRET),
     },
   };
 }

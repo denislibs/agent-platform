@@ -149,4 +149,22 @@ describe('loadConfig', () => {
   test('negative prices are rejected', () => {
     expect(() => loadConfig({ ...base, EXECUTOR_PRICE_IN: '-1' })).toThrow(/EXECUTOR_PRICE_IN/);
   });
+
+  test('api and auth settings have defaults; OAuth apps are off without credentials', () => {
+    const c = loadConfig(base);
+    expect(c.api).toEqual({ port: 3000, uploadMaxBytes: 52_428_800, sseHeartbeatMs: 15_000 });
+    expect(c.auth).toEqual({ secret: null, baseUrl: 'http://localhost:8080', google: null, github: null });
+  });
+
+  test('an OAuth app needs both its client id and secret', () => {
+    const c = loadConfig({ ...base, GITHUB_CLIENT_ID: 'id', GITHUB_CLIENT_SECRET: 'secret', GOOGLE_CLIENT_ID: '' });
+    expect(c.auth.github).toEqual({ clientId: 'id', clientSecret: 'secret' });
+    expect(c.auth.google).toBeNull();
+    expect(() => loadConfig({ ...base, GOOGLE_CLIENT_ID: 'id' })).toThrow(/GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET/);
+  });
+
+  test('the auth secret must be at least 32 characters', () => {
+    expect(() => loadConfig({ ...base, BETTER_AUTH_SECRET: 'short' })).toThrow(/BETTER_AUTH_SECRET/);
+    expect(loadConfig({ ...base, BETTER_AUTH_SECRET: 'x'.repeat(32) }).auth.secret).toBe('x'.repeat(32));
+  });
 });

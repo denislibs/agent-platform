@@ -24,6 +24,22 @@
         "@agent/testing": "workspace:*",
       },
     },
+    "packages/api": {
+      "name": "@agent/api",
+      "version": "0.0.0",
+      "dependencies": {
+        "@agent/agent": "workspace:*",
+        "@agent/composition": "workspace:*",
+        "@agent/core": "workspace:*",
+        "@agent/shared": "workspace:*",
+        "hono": "^4.13.16",
+        "zod": "^4",
+      },
+      "devDependencies": {
+        "@agent/testing": "workspace:*",
+        "awilix": "^13",
+      },
+    },
     "packages/composition": {
       "name": "@agent/composition",
       "version": "0.0.0",
@@ -157,6 +173,8 @@
   },
   "packages": {
     "@agent/agent": ["@agent/agent@workspace:packages/agent"],
+
+    "@agent/api": ["@agent/api@workspace:packages/api"],
 
     "@agent/composition": ["@agent/composition@workspace:packages/composition"],
 
@@ -429,6 +447,8 @@
     "get-tsconfig": ["get-tsconfig@4.14.3", "", { "dependencies": { "resolve-pkg-maps": "^1.0.0" } }, "sha512-++QEw4DIY7WGoukz+/+A/8dGYPT9l9yIadnmSgZ8Rjr3YVSVDipQSO9CdnJo9ePqFqUUqh+wk9uIaoiAwsiPkA=="],
 
     "glob-parent": ["glob-parent@5.1.2", "", { "dependencies": { "is-glob": "^4.0.1" } }, "sha512-AOIgSQCepiJYwP3ARnGx+5VnTu2HBYdzbGP45eLw1vr3zB3vZLeyed1sC9hnbcOc9/SrMyM5RPQrkGz4aS9Zow=="],
+
+    "hono": ["hono@4.13.16", "", {}, "sha512-AOLOEhvrV+iH92xXCnFr/5+3KjPKcI3xP63XJtX5spAnkznPdHijlIsUTpi7/9EhWqrTCekw5c5zh1K+YsVw7A=="],
 
     "ioredis": ["ioredis@5.11.1", "", { "dependencies": { "@ioredis/commands": "1.10.0", "cluster-key-slot": "1.1.1", "debug": "4.4.3", "denque": "2.1.0", "redis-errors": "1.2.0", "redis-parser": "3.0.0", "standard-as-callback": "2.1.0" } }, "sha512-ehuGcf94bQXhfagULNXrJdfnWO38v070jxSx/qE87Kjzmu2fU7ro5EFAb+OPituLqgfyuQaym5DlrNydW2sJ9A=="],
 

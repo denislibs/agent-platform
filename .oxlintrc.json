@@ -99,6 +99,18 @@
               {
                 "name": "@aws-sdk/s3-request-presigner",
                 "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "hono",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "better-auth",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "@agent/api",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
               }
             ],
             "patterns": [
@@ -120,7 +132,10 @@
                   "@agent/worker/**",
                   "bullmq/**",
                   "ioredis/**",
-                  "@aws-sdk/**"
+                  "@aws-sdk/**",
+                  "hono/**",
+                  "better-auth/**",
+                  "@agent/api/**"
                 ],
                 "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
               }
@@ -199,6 +214,18 @@
               {
                 "name": "@aws-sdk/s3-request-presigner",
                 "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "hono",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "better-auth",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "@agent/api",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
               }
             ],
             "patterns": [
@@ -217,7 +244,10 @@
                   "@agent/queue/**",
                   "@agent/worker/**",
                   "ioredis/**",
-                  "@aws-sdk/**"
+                  "@aws-sdk/**",
+                  "hono/**",
+                  "better-auth/**",
+                  "@agent/api/**"
                 ],
                 "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
               },
@@ -296,6 +326,18 @@
               {
                 "name": "@aws-sdk/s3-request-presigner",
                 "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "hono",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "better-auth",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "@agent/api",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
               }
             ],
             "patterns": [
@@ -314,9 +356,71 @@
                   "@agent/queue/**",
                   "@agent/worker/**",
                   "ioredis/**",
-                  "@aws-sdk/**"
+                  "@aws-sdk/**",
+                  "hono/**",
+                  "better-auth/**",
+                  "@agent/api/**"
                 ],
                 "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/api/src/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "bullmq",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "ioredis",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "openai",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "@agent/llm",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "@agent/sandbox",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "@agent/search",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "@agent/queue",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
+                "name": "@agent/worker",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              }
+            ],
+            "patterns": [
+              {
+                "group": [
+                  "bullmq/**",
+                  "ioredis/**",
+                  "openai/**",
+                  "@agent/llm/**",
+                  "@agent/sandbox/**",
+                  "@agent/search/**",
+                  "@agent/queue/**",
+                  "@agent/worker/**"
+                ],
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
               }
             ]
           }
