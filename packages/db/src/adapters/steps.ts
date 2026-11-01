@@ -19,14 +19,17 @@ export class DrizzleStepLog implements StepLog {
     return this.db.transaction(async tx => {
       const [counter] = await tx
         .update(tasks)
-        .set({ lastSeq: sql`${tasks.lastSeq} + 1`, updatedAt: new Date() })
+        .set({ lastSeq: sql`${tasks.lastSeq} + 1`, updatedAt: sql`now()` })
         .where(eq(tasks.id, input.taskId))
         .returning({ seq: tasks.lastSeq });
       if (!counter) throw new NotFoundError('task', input.taskId);
       if (subtaskId) {
         // Исключение откатывает транзакцию вместе с увеличением lastSeq.
         const [sub] = isUuid(subtaskId)
-          ? await tx.select({ id: subtasks.id }).from(subtasks).where(eq(subtasks.id, subtaskId))
+          ? await tx
+              .select({ id: subtasks.id })
+              .from(subtasks)
+              .where(and(eq(subtasks.id, subtaskId), eq(subtasks.taskId, input.taskId)))
           : [];
         if (!sub) throw new NotFoundError('subtask', subtaskId);
       }

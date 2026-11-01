@@ -2,6 +2,9 @@ import { z } from 'zod';
 
 const required = z.string().min(1);
 const positiveInt = (def: number) => z.coerce.number().int().positive().default(def);
+/** Пустая или пробельная строка — «не задано»: иначе z.coerce превратит '' в 0 и модель станет бесплатной. */
+const blankAsUnset = (v: unknown) => (typeof v === 'string' && v.trim() === '' ? undefined : v);
+const price = (def: number) => z.preprocess(blankAsUnset, z.coerce.number().nonnegative().finite().default(def));
 
 const EnvSchema = z.object({
   DATABASE_URL: required,
@@ -15,6 +18,11 @@ const EnvSchema = z.object({
   LITELLM_API_KEY: required,
   PLANNER_MODEL: required,
   EXECUTOR_MODEL: required,
+  /** Цены моделей в кредитах за 1M токенов (спецификация 11). */
+  PLANNER_PRICE_IN: price(30),
+  PLANNER_PRICE_OUT: price(120),
+  EXECUTOR_PRICE_IN: price(30),
+  EXECUTOR_PRICE_OUT: price(120),
   MAX_SUBTASKS: positiveInt(12),
   MAX_EXECUTOR_STEPS: positiveInt(40),
   MAX_REVISIONS: positiveInt(2),
@@ -60,6 +68,10 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       baseURL: e.LITELLM_BASE_URL,
       apiKey: e.LITELLM_API_KEY,
       models: { planner: e.PLANNER_MODEL, executor: e.EXECUTOR_MODEL },
+    },
+    pricing: {
+      planner: { inputPerMillion: e.PLANNER_PRICE_IN, outputPerMillion: e.PLANNER_PRICE_OUT },
+      executor: { inputPerMillion: e.EXECUTOR_PRICE_IN, outputPerMillion: e.EXECUTOR_PRICE_OUT },
     },
     limits: {
       maxSubtasks: e.MAX_SUBTASKS,

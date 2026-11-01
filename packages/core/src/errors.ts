@@ -44,3 +44,35 @@ export class SearchError extends Error {
     this.name = 'SearchError';
   }
 }
+
+export type LimitKind = 'active_tasks' | 'credits';
+
+/** Действие пользователя упёрлось в лимит (спецификация 4.4, 11); API отвечает 429 или 402. */
+export class LimitExceededError extends Error {
+  constructor(
+    readonly limit: LimitKind,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'LimitExceededError';
+  }
+}
+
+export type LlmErrorCode = 'rate_limited' | 'unavailable' | 'timeout' | 'context_length' | 'bad_request' | 'auth';
+
+/**
+ * Ошибка вызова модели — уже после повторов внутри SDK (спецификация 7: до 4 повторов на 429/5xx).
+ * retryable = true: имеет смысл повторить позже — job падает, и BullMQ повторяет его (план 3c).
+ * retryable = false: повтор не поможет (ключ, формат запроса, переполненный контекст) — job не повторяется,
+ * вызывающий решает сам (например, ужимает контекст при context_length).
+ */
+export class LlmError extends Error {
+  constructor(
+    readonly code: LlmErrorCode,
+    message: string,
+    readonly retryable: boolean,
+  ) {
+    super(message);
+    this.name = 'LlmError';
+  }
+}

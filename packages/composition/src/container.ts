@@ -7,6 +7,7 @@ import {
   type AwilixContainer,
   type Resolver,
 } from 'awilix';
+import { agentServices, type AgentServices } from '@agent/agent';
 import { CryptoIds, SystemClock, type Ports } from '@agent/core';
 import {
   createDb,
@@ -15,6 +16,7 @@ import {
   DrizzleStepLog,
   DrizzleSubtaskRepository,
   DrizzleTaskRepository,
+  DrizzleUnitOfWork,
   type DbHandle,
 } from '@agent/db';
 import { createLlm } from '@agent/llm';
@@ -23,7 +25,7 @@ import { BraveSearchProvider, UnavailableSearchProvider } from '@agent/search';
 import type { Config } from '@agent/shared';
 import { S3FileStore } from '@agent/storage';
 
-export interface Cradle extends Ports {
+export interface Cradle extends Ports, AgentServices {
   config: Config;
   database: DbHandle;
 }
@@ -46,6 +48,8 @@ export function buildContainer(appConfig: Config, overrides: Overrides = {}): Ap
     subtasks: asClass(DrizzleSubtaskRepository).singleton(),
     ledger: asClass(DrizzleCreditLedger).singleton(),
     files: asClass(DrizzleFileRepository).singleton(),
+    // Через asFunction: в строгом PROXY-режиме обращение к незарегистрированному lockTimeoutMs бросило бы.
+    uow: asFunction(({ database }: Cradle) => new DrizzleUnitOfWork({ database })).singleton(),
     fileStore: asFunction(({ config }: Cradle) => new S3FileStore(config.s3)).singleton(),
     llm: asFunction(({ config }: Cradle) => createLlm(config.llm)).singleton(),
     sandboxes: asFunction(({ config }: Cradle) => new DockerSandboxProvider(config.sandbox)).singleton(),
@@ -54,6 +58,7 @@ export function buildContainer(appConfig: Config, overrides: Overrides = {}): Ap
         ? new BraveSearchProvider({ apiKey: config.search.braveApiKey, baseUrl: config.search.braveBaseUrl })
         : new UnavailableSearchProvider(),
     ).singleton(),
+    ...agentServices(),
     ...overrides,
   });
   return container;

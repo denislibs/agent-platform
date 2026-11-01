@@ -7,6 +7,7 @@ import {
   type StepLog,
   type SubtaskRepository,
   type TaskRepository,
+  type UnitOfWork,
 } from '@agent/core';
 
 export interface RepositoryHarness {
@@ -15,14 +16,23 @@ export interface RepositoryHarness {
   subtasks: SubtaskRepository;
   ledger: CreditLedger;
   files: FileRepository;
-  seedUser(p?: { credits?: number; email?: string }): Promise<string>;
+  uow: UnitOfWork;
+  seedUser(p?: { millicredits?: number; email?: string }): Promise<string>;
   /** Сколько событий расхода записано всего (для проверки, что неудачная запись ничего не оставила). */
   countUsageEvents(): Promise<number>;
+  /** Сдвинуть время хранилища вперёд: Postgres — реально подождать, in-memory — сдвинуть часы. */
+  elapse(ms: number): Promise<void>;
   reset(): Promise<void>;
 }
 
 const contract = (goal: string) => ({ goal, context: '', doneCriteria: `${goal} done`, expectedOutputs: [] });
 const msg = (text: string) => ({ type: 'message', role: 'assistant', text }) as const;
+/**
+ * В Postgres updated_at = now() = начало транзакции, а запись (BEGIN…COMMIT с fsync) в Docker на macOS
+ * иногда занимает 40+ мс. Поэтому порог зависания заметно больше худшей задержки записи.
+ */
+const STALE_MS = 200;
+const STALE_GAP_MS = 400;
 const MALFORMED_ID = 'abc';
 const upload = (userId: string, taskId?: string) => ({
   userId,
@@ -180,6 +190,45 @@ export function repositoryContract(
         await h.tasks.create({ userId: otherId, prompt: 'c' });
         expect(await h.tasks.countActive(userId)).toBe(1);
       });
+
+      test('listForUser returns the newest first, honours limit and ignores other users', async () => {
+        const a = await h.seedUser();
+        const b = await h.seedUser();
+        const first = await h.tasks.create({ userId: a, prompt: '1' });
+        await h.elapse(5);
+        const second = await h.tasks.create({ userId: a, prompt: '2' });
+        await h.tasks.create({ userId: b, prompt: 'other' });
+        expect((await h.tasks.listForUser(a)).map(t => t.id)).toEqual([second.id, first.id]);
+        expect((await h.tasks.listForUser(a, { limit: 1 })).map(t => t.id)).toEqual([second.id]);
+        expect(await h.tasks.listForUser('no-such-user')).toEqual([]);
+      });
+
+      test('findStale returns tasks in the given statuses untouched for longer than staleForMs, oldest first', async () => {
+        const userId = await h.seedUser();
+        const oldest = await h.tasks.create({ userId, prompt: 'oldest' });
+        await h.elapse(5);
+        const old = await h.tasks.create({ userId, prompt: 'old' });
+        const touched = await h.tasks.create({ userId, prompt: 'touched' });
+        const planning = await h.tasks.create({ userId, prompt: 'planning' });
+        await h.tasks.transition(planning.id, 'planning');
+        await h.elapse(STALE_GAP_MS);
+        await h.tasks.update(touched.id, {});
+
+        const queued = await h.tasks.findStale({ statuses: ['queued'], staleForMs: STALE_MS });
+        expect(queued.map(t => t.id)).toEqual([oldest.id, old.id]);
+        const both = await h.tasks.findStale({ statuses: ['queued', 'planning'], staleForMs: STALE_MS });
+        expect(both.map(t => t.id).toSorted()).toEqual([oldest.id, old.id, planning.id].toSorted());
+        expect(await h.tasks.findStale({ statuses: ['queued'], staleForMs: STALE_MS, limit: 1 })).toHaveLength(1);
+        expect(await h.tasks.findStale({ statuses: [], staleForMs: 0 })).toEqual([]);
+      });
+
+      test('appending a step counts as activity for findStale', async () => {
+        const userId = await h.seedUser();
+        const task = await h.tasks.create({ userId, prompt: 'x' });
+        await h.elapse(STALE_GAP_MS);
+        await h.steps.append({ taskId: task.id, agent: 'system', payload: msg('still alive') });
+        expect(await h.tasks.findStale({ statuses: ['queued'], staleForMs: STALE_MS })).toEqual([]);
+      });
     });
 
     describe('StepLog', () => {
@@ -263,6 +312,18 @@ export function repositoryContract(
         await h.steps.append({ taskId: task.id, subtaskId: sub!.id, agent: 'executor', payload: msg('sub') });
         expect((await h.steps.list(task.id, { afterSeq: 3 })).map(s => s.seq)).toEqual([4, 5]);
         expect((await h.steps.list(task.id, { subtaskId: sub!.id })).map(s => s.seq)).toEqual([5]);
+      });
+
+      test('append rejects a subtask that belongs to another task and does not advance lastSeq', async () => {
+        const userId = await h.seedUser();
+        const mine = await h.tasks.create({ userId, prompt: 'mine' });
+        const other = await h.tasks.create({ userId, prompt: 'other' });
+        const [foreign] = await h.subtasks.insertMany(other.id, [contract('foreign')]);
+        await expectNotFound(
+          h.steps.append({ taskId: mine.id, subtaskId: foreign!.id, agent: 'executor', payload: msg('x') }),
+          'subtask',
+        );
+        expect((await h.tasks.get(mine.id))?.lastSeq).toBe(0);
       });
     });
 
@@ -350,14 +411,47 @@ export function repositoryContract(
         await expect(h.subtasks.transition(s!.id, 'accepted')).rejects.toBeInstanceOf(InvalidTransitionError);
         await expect(h.subtasks.transition(crypto.randomUUID(), 'running')).rejects.toBeInstanceOf(NotFoundError);
       });
+
+      test('get returns a subtask by id; unknown and malformed ids give undefined', async () => {
+        const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
+        const [s] = await h.subtasks.insertMany(task.id, [contract('a')]);
+        expect(await h.subtasks.get(s!.id)).toMatchObject({ id: s!.id, goal: 'a', status: 'pending' });
+        expect(await h.subtasks.get(crypto.randomUUID())).toBeUndefined();
+        expect(await h.subtasks.get(MALFORMED_ID)).toBeUndefined();
+      });
+
+      test('updatePending edits only pending subtasks and keeps omitted fields', async () => {
+        const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
+        const [a, b] = await h.subtasks.insertMany(task.id, [contract('a'), contract('b')]);
+        const edited = await h.subtasks.updatePending(a!.id, { goal: 'a2', expectedOutputs: ['report.md'] });
+        expect(edited).toMatchObject({
+          goal: 'a2',
+          context: '',
+          doneCriteria: 'a done',
+          expectedOutputs: ['report.md'],
+          status: 'pending',
+        });
+        await h.subtasks.transition(b!.id, 'running');
+        await expect(h.subtasks.updatePending(b!.id, { goal: 'nope' })).rejects.toBeInstanceOf(InvalidTransitionError);
+        expect((await h.subtasks.get(b!.id))?.goal).toBe('b');
+        await expectNotFound(h.subtasks.updatePending(crypto.randomUUID(), { goal: 'x' }), 'subtask');
+        await expectNotFound(h.subtasks.updatePending(MALFORMED_ID, { goal: 'x' }), 'subtask');
+      });
     });
 
     describe('CreditLedger', () => {
       test('record debits credits and adds tokens to the task', async () => {
-        const userId = await h.seedUser({ credits: 100 });
+        const userId = await h.seedUser({ millicredits: 100 });
         const task = await h.tasks.create({ userId, prompt: 'x' });
         expect(
-          await h.ledger.record({ userId, taskId: task.id, model: 'qwen', tokensIn: 1000, tokensOut: 200, credits: 3 }),
+          await h.ledger.record({
+            userId,
+            taskId: task.id,
+            model: 'qwen',
+            tokensIn: 1000,
+            tokensOut: 200,
+            millicredits: 3,
+          }),
         ).toEqual({ balance: 97 });
         expect(
           await h.ledger.record({
@@ -366,16 +460,16 @@ export function repositoryContract(
             model: 'deepseek',
             tokensIn: 500,
             tokensOut: 100,
-            credits: 2,
+            millicredits: 2,
           }),
         ).toEqual({ balance: 95 });
         expect((await h.tasks.get(task.id))?.tokensUsed).toBe(1800);
       });
 
       test('balance may go negative; the caller decides what to do', async () => {
-        const userId = await h.seedUser({ credits: 1 });
+        const userId = await h.seedUser({ millicredits: 1 });
         expect(
-          await h.ledger.record({ userId, taskId: null, model: 'qwen', tokensIn: 1, tokensOut: 1, credits: 5 }),
+          await h.ledger.record({ userId, taskId: null, model: 'qwen', tokensIn: 1, tokensOut: 1, millicredits: 5 }),
         ).toEqual({ balance: -4 });
       });
 
@@ -387,17 +481,17 @@ export function repositoryContract(
             model: 'q',
             tokensIn: 1,
             tokensOut: 1,
-            credits: 1,
+            millicredits: 1,
           }),
         ).rejects.toBeInstanceOf(NotFoundError);
         await expect(h.ledger.grant('nobody@test.dev', 1)).rejects.toBeInstanceOf(NotFoundError);
       });
 
       test('record for an unknown or malformed task throws NotFoundError and writes nothing', async () => {
-        const userId = await h.seedUser({ credits: 100, email: 'ledger@test.dev' });
+        const userId = await h.seedUser({ millicredits: 100, email: 'ledger@test.dev' });
         for (const taskId of [crypto.randomUUID(), MALFORMED_ID]) {
           await expectNotFound(
-            h.ledger.record({ userId, taskId, model: 'qwen', tokensIn: 10, tokensOut: 10, credits: 7 }),
+            h.ledger.record({ userId, taskId, model: 'qwen', tokensIn: 10, tokensOut: 10, millicredits: 7 }),
             'task',
           );
         }
@@ -406,8 +500,22 @@ export function repositoryContract(
       });
 
       test('grant by email', async () => {
-        await h.seedUser({ credits: 0, email: 'beta@test.dev' });
+        await h.seedUser({ millicredits: 0, email: 'beta@test.dev' });
         expect(await h.ledger.grant('beta@test.dev', 500)).toEqual({ balance: 500 });
+      });
+
+      test('balance reads the current millicredits', async () => {
+        const userId = await h.seedUser({ millicredits: 2500 });
+        expect(await h.ledger.balance(userId)).toBe(2500);
+        await h.ledger.record({ userId, taskId: null, model: 'qwen', tokensIn: 1, tokensOut: 1, millicredits: 700 });
+        expect(await h.ledger.balance(userId)).toBe(1800);
+        await expectNotFound(h.ledger.balance('no-such-user'), 'user');
+      });
+
+      test('balances beyond 32-bit integers survive the round trip', async () => {
+        const userId = await h.seedUser({ millicredits: 5_000_000_000 });
+        await h.ledger.record({ userId, taskId: null, model: 'qwen', tokensIn: 1, tokensOut: 1, millicredits: 1 });
+        expect(await h.ledger.balance(userId)).toBe(4_999_999_999);
       });
     });
 
@@ -472,6 +580,139 @@ export function repositoryContract(
         }
         const task = await h.tasks.create({ userId, prompt: 'x' });
         expect(await h.files.attachToTask([mine.id], userId, task.id)).toBe(1);
+      });
+
+      test('get returns a file by id; unknown and malformed ids give undefined', async () => {
+        const userId = await h.seedUser();
+        const f = await h.files.insert(upload(userId));
+        expect(await h.files.get(f.id)).toMatchObject({ id: f.id, userId, path: 'data.csv', taskId: null });
+        expect(await h.files.get(crypto.randomUUID())).toBeUndefined();
+        expect(await h.files.get(MALFORMED_ID)).toBeUndefined();
+      });
+    });
+
+    describe('ids', () => {
+      test('ids are canonical lower-case UUIDs: an upper-case id behaves like an unknown one', async () => {
+        const userId = await h.seedUser();
+        const task = await h.tasks.create({ userId, prompt: 'x' });
+        const [s] = await h.subtasks.insertMany(task.id, [contract('a')]);
+        const f = await h.files.insert(upload(userId, task.id));
+        expect(await h.tasks.get(task.id.toUpperCase())).toBeUndefined();
+        await expectNotFound(h.tasks.update(task.id.toUpperCase(), {}), 'task');
+        expect(await h.steps.list(task.id.toUpperCase())).toEqual([]);
+        expect(await h.subtasks.get(s!.id.toUpperCase())).toBeUndefined();
+        expect(await h.files.get(f.id.toUpperCase())).toBeUndefined();
+      });
+    });
+
+    describe('UnitOfWork', () => {
+      test('commits every write when fn resolves', async () => {
+        const userId = await h.seedUser();
+        const task = await h.uow.run(async tx => {
+          const t = await tx.tasks.create({ userId, prompt: 'x' });
+          await tx.steps.append({ taskId: t.id, agent: 'user', payload: msg('hi') });
+          return t;
+        });
+        expect((await h.tasks.get(task.id))?.lastSeq).toBe(1);
+        expect(await h.steps.list(task.id)).toHaveLength(1);
+      });
+
+      test('rolls back every write, including nested transactional ones, and rethrows the same error', async () => {
+        const userId = await h.seedUser({ millicredits: 1000 });
+        const boom = new Error('boom');
+        let taskId = '';
+        const p = h.uow.run(async tx => {
+          const t = await tx.tasks.create({ userId, prompt: 'x' });
+          taskId = t.id;
+          await tx.steps.append({ taskId: t.id, agent: 'user', payload: msg('hi') });
+          await tx.subtasks.insertMany(t.id, [contract('a')]);
+          await tx.ledger.record({ userId, taskId: t.id, model: 'q', tokensIn: 1, tokensOut: 1, millicredits: 300 });
+          throw boom;
+        });
+        await expect(p).rejects.toBe(boom);
+        expect(taskId).not.toBe('');
+        expect(await h.tasks.get(taskId)).toBeUndefined();
+        expect(await h.tasks.countActive(userId)).toBe(0);
+        expect(await h.ledger.balance(userId)).toBe(1000);
+        expect(await h.countUsageEvents()).toBe(0);
+      });
+
+      test('a repository error inside fn rolls back the writes before it', async () => {
+        const userId = await h.seedUser();
+        const p = h.uow.run(async tx => {
+          await tx.tasks.create({ userId, prompt: 'not kept' });
+          await tx.steps.append({ taskId: crypto.randomUUID(), agent: 'user', payload: msg('x') });
+        });
+        await expectNotFound(p, 'task');
+        expect(await h.tasks.countActive(userId)).toBe(0);
+      });
+
+      test('lockUser serialises concurrent check-then-create for the same user', async () => {
+        const userId = await h.seedUser();
+        const attempt = () =>
+          h.uow.run(async tx => {
+            await tx.lockUser(userId);
+            if ((await tx.tasks.countActive(userId)) >= 1) return 'rejected';
+            await tx.tasks.create({ userId, prompt: 'x' });
+            return 'created';
+          });
+        const results = await Promise.all([attempt(), attempt(), attempt()]);
+        expect(results.toSorted()).toEqual(['created', 'rejected', 'rejected']);
+        expect(await h.tasks.countActive(userId)).toBe(1);
+      });
+
+      test('lockUser on an unknown user throws NotFoundError', async () => {
+        await expectNotFound(
+          h.uow.run(tx => tx.lockUser('no-such-user')),
+          'user',
+        );
+      });
+
+      test('a nested run is misuse: the outer run rejects and nothing is committed', async () => {
+        const userId = await h.seedUser({ millicredits: 1000 });
+        let taskId = '';
+        const p = h.uow.run(async tx => {
+          await tx.lockUser(userId);
+          taskId = (await tx.tasks.create({ userId, prompt: 'outer' })).id;
+          // In-memory бросает сразу; в Postgres вложенный run ждёт блокировку внешнего и падает по lock_timeout.
+          await h.uow.run(async inner => {
+            await inner.lockUser(userId);
+            await inner.ledger.record({
+              userId,
+              taskId: null,
+              model: 'q',
+              tokensIn: 1,
+              tokensOut: 1,
+              millicredits: 50,
+            });
+          });
+        });
+        await expect(p).rejects.toBeInstanceOf(Error);
+        expect(taskId).not.toBe('');
+        expect(await h.tasks.get(taskId)).toBeUndefined();
+        expect(await h.ledger.balance(userId)).toBe(1000);
+        expect(await h.countUsageEvents()).toBe(0);
+      });
+
+      test('parallel calls on tx run one at a time: a failed sibling does not undo a fulfilled write', async () => {
+        const userId = await h.seedUser({ millicredits: 1000 });
+        const task = await h.tasks.create({ userId, prompt: 'x' });
+        const settled = await h.uow.run(tx =>
+          Promise.allSettled([
+            tx.ledger.record({ userId, taskId: task.id, model: 'q', tokensIn: 1, tokensOut: 1, millicredits: 300 }),
+            tx.steps.append({ taskId: crypto.randomUUID(), agent: 'user', payload: msg('lost?') }),
+          ]),
+        );
+        const [recorded, appended] = settled;
+        expect(recorded).toEqual({ status: 'fulfilled', value: { balance: 700 } });
+        expect(appended?.status).toBe('rejected');
+        if (appended?.status === 'rejected') {
+          expect(appended.reason).toBeInstanceOf(NotFoundError);
+          expect(appended.reason).toHaveProperty('entity', 'task');
+        }
+        expect(await h.ledger.balance(userId)).toBe(700);
+        expect(await h.countUsageEvents()).toBe(1);
+        expect((await h.tasks.get(task.id))?.tokensUsed).toBe(2);
       });
     });
   });

@@ -81,4 +81,26 @@ describe('loadConfig', () => {
   test('rejects malformed sandbox memory', () => {
     expect(() => loadConfig({ ...base, SANDBOX_MEMORY: 'lots' })).toThrow(/SANDBOX_MEMORY/);
   });
+
+  test('model prices default to credits per 1M tokens and can be overridden', () => {
+    expect(loadConfig(base).pricing).toEqual({
+      planner: { inputPerMillion: 30, outputPerMillion: 120 },
+      executor: { inputPerMillion: 30, outputPerMillion: 120 },
+    });
+    const c = loadConfig({ ...base, PLANNER_PRICE_IN: '27.5', EXECUTOR_PRICE_OUT: '0' });
+    expect(c.pricing.planner.inputPerMillion).toBe(27.5);
+    expect(c.pricing.executor.outputPerMillion).toBe(0);
+  });
+
+  test('an empty or blank price means unset, not free', () => {
+    for (const blank of ['', '  ']) {
+      const c = loadConfig({ ...base, PLANNER_PRICE_IN: blank, EXECUTOR_PRICE_OUT: blank });
+      expect(c.pricing.planner.inputPerMillion).toBe(30);
+      expect(c.pricing.executor.outputPerMillion).toBe(120);
+    }
+  });
+
+  test('negative prices are rejected', () => {
+    expect(() => loadConfig({ ...base, EXECUTOR_PRICE_IN: '-1' })).toThrow(/EXECUTOR_PRICE_IN/);
+  });
 });

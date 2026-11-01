@@ -13,7 +13,7 @@ export function assertTestDatabaseUrl(url: string): void {
   }
 }
 
-function testDatabaseUrl(): string {
+export function testDatabaseUrl(): string {
   const url = process.env.TEST_DATABASE_URL;
   if (!url) throw new Error('TEST_DATABASE_URL is not set (see .env.test)');
   assertTestDatabaseUrl(url);
@@ -41,7 +41,7 @@ export async function createTestUser(db: Db, patch: Partial<typeof user.$inferIn
       id: crypto.randomUUID(),
       name: 'Test User',
       email: `${crypto.randomUUID()}@test.dev`,
-      credits: 100,
+      millicredits: 100_000,
       ...patch,
     })
     .returning();

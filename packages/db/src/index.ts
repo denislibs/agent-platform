@@ -7,3 +7,4 @@ export * from './adapters/steps';
 export * from './adapters/subtasks';
 export * from './adapters/ledger';
 export * from './adapters/files';
+export * from './adapters/unit-of-work';

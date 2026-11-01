@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
-import type { ChatResult, Llm, Role, ToolCall } from '@agent/core';
+import { LlmError, type ChatResult, type Llm, type Role, type ToolCall } from '@agent/core';
+import { toLlmError } from './errors';
 
 export interface LlmConfig {
   baseURL: string;
@@ -17,6 +18,10 @@ export function parseToolCall(id: string, name: string, rawArgs: string): ToolCa
   }
 }
 
+/**
+ * Клиент LiteLLM. SDK сам повторяет 408/409/429/5xx и сетевые сбои (maxRetries, по умолчанию 4 — спецификация 7);
+ * после этого наружу уходит LlmError с retryable, по которому план 3c решает, повторять ли job.
+ */
 export function createLlm(cfg: LlmConfig): Llm {
   const client = new OpenAI({
     baseURL: cfg.baseURL,
@@ -28,22 +33,28 @@ export function createLlm(cfg: LlmConfig): Llm {
   return {
     async chat(req): Promise<ChatResult> {
       const model = cfg.models[req.role];
-      const res = await client.chat.completions.create({
-        model,
-        messages: req.messages,
-        ...(req.tools?.length
-          ? {
-              tools: req.tools.map(t => ({
-                type: 'function' as const,
-                function: { name: t.name, description: t.description, parameters: t.parameters },
-              })),
-              tool_choice: req.toolChoice ?? 'auto',
-            }
-          : {}),
-        ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
-      });
+      let res: OpenAI.Chat.Completions.ChatCompletion;
+      try {
+        res = await client.chat.completions.create({
+          model,
+          messages: req.messages,
+          stream: false,
+          ...(req.tools?.length
+            ? {
+                tools: req.tools.map(t => ({
+                  type: 'function' as const,
+                  function: { name: t.name, description: t.description, parameters: t.parameters },
+                })),
+                tool_choice: req.toolChoice ?? 'auto',
+              }
+            : {}),
+          ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
+        });
+      } catch (err) {
+        throw toLlmError(err, model) ?? err;
+      }
       const choice = res.choices[0];
-      if (!choice) throw new Error(`LLM returned no choices (model ${model})`);
+      if (!choice) throw new LlmError('unavailable', `${model}: the response has no choices`, true);
       const toolCalls = (choice.message.tool_calls ?? []).flatMap(tc =>
         tc.type === 'function' ? [parseToolCall(tc.id, tc.function.name, tc.function.arguments)] : [],
       );

@@ -8,6 +8,20 @@
       "when": 1793444482125,
       "tag": "0000_small_boom_boom",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793465871091,
+      "tag": "0001_useful_lorna_dane",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793465873908,
+      "tag": "0002_large_beast",
+      "breakpoints": true
     }
   ]
 }

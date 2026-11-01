@@ -7,11 +7,13 @@ import {
   InMemoryStepLog,
   InMemorySubtaskRepository,
   InMemoryTaskRepository,
+  InMemoryUnitOfWork,
   repositoryContract,
 } from '@agent/testing';
 
 repositoryContract('in-memory', async () => {
-  let memory = new InMemoryState({ clock: new FixedClock(), ids: new CryptoIds() });
+  let clock = new FixedClock();
+  let memory = new InMemoryState({ clock, ids: new CryptoIds() });
   const deps = {
     get memory() {
       return memory;
@@ -24,10 +26,13 @@ repositoryContract('in-memory', async () => {
       subtasks: new InMemorySubtaskRepository(deps),
       ledger: new InMemoryCreditLedger(deps),
       files: new InMemoryFileRepository(deps),
+      uow: new InMemoryUnitOfWork(deps),
       seedUser: async (p = {}) => memory.seedUser(p),
       countUsageEvents: async () => memory.usage.length,
+      elapse: async ms => clock.advance(ms),
       reset: async () => {
-        memory = new InMemoryState({ clock: new FixedClock(), ids: new CryptoIds() });
+        clock = new FixedClock();
+        memory = new InMemoryState({ clock, ids: new CryptoIds() });
       },
     },
     close: async () => {},

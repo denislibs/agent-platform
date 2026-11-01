@@ -1,4 +1,4 @@
-import { and, count, eq, inArray, notInArray } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, lt, notInArray, sql } from 'drizzle-orm';
 import {
   InvalidTransitionError,
   NotFoundError,
@@ -53,7 +53,7 @@ export class DrizzleTaskRepository implements TaskRepository {
         ? []
         : await this.db
             .update(tasks)
-            .set({ ...patch, status: to, updatedAt: new Date() })
+            .set({ ...patch, status: to, updatedAt: sql`now()` })
             .where(and(eq(tasks.id, id), inArray(tasks.status, allowedFrom)))
             .returning();
     if (row) return row;
@@ -65,7 +65,7 @@ export class DrizzleTaskRepository implements TaskRepository {
     if (!isUuid(id)) throw new NotFoundError('task', id);
     const [row] = await this.db
       .update(tasks)
-      .set({ ...patch, updatedAt: new Date() })
+      .set({ ...patch, updatedAt: sql`now()` })
       .where(eq(tasks.id, id))
       .returning();
     if (!row) throw new NotFoundError('task', id);
@@ -78,5 +78,29 @@ export class DrizzleTaskRepository implements TaskRepository {
       .from(tasks)
       .where(and(eq(tasks.userId, userId), notInArray(tasks.status, [...TERMINAL_TASK_STATUSES])));
     return row?.n ?? 0;
+  }
+
+  async listForUser(userId: string, opts: { limit?: number } = {}): Promise<Task[]> {
+    return this.db
+      .select()
+      .from(tasks)
+      .where(eq(tasks.userId, userId))
+      .orderBy(desc(tasks.createdAt), desc(tasks.id))
+      .limit(opts.limit ?? 50);
+  }
+
+  async findStale(opts: { statuses: readonly TaskStatus[]; staleForMs: number; limit?: number }): Promise<Task[]> {
+    if (opts.statuses.length === 0) return [];
+    return this.db
+      .select()
+      .from(tasks)
+      .where(
+        and(
+          inArray(tasks.status, [...opts.statuses]),
+          lt(tasks.updatedAt, sql`now() - make_interval(secs => ${opts.staleForMs / 1000}::double precision)`),
+        ),
+      )
+      .orderBy(asc(tasks.updatedAt))
+      .limit(opts.limit ?? 100);
   }
 }

@@ -96,6 +96,23 @@ export class InMemoryTaskRepository implements TaskRepository {
   async countActive(userId: string): Promise<number> {
     return [...this.m.tasks.values()].filter(t => t.userId === userId && !isTerminalTask(t.status)).length;
   }
+
+  async listForUser(userId: string, opts: { limit?: number } = {}): Promise<Task[]> {
+    return [...this.m.tasks.values()]
+      .filter(t => t.userId === userId)
+      .toSorted((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
+      .slice(0, opts.limit ?? 50)
+      .map(copy);
+  }
+
+  async findStale(opts: { statuses: readonly TaskStatus[]; staleForMs: number; limit?: number }): Promise<Task[]> {
+    const cutoff = this.m.clock.now().getTime() - opts.staleForMs;
+    return [...this.m.tasks.values()]
+      .filter(t => opts.statuses.includes(t.status) && t.updatedAt.getTime() < cutoff)
+      .toSorted((a, b) => a.updatedAt.getTime() - b.updatedAt.getTime())
+      .slice(0, opts.limit ?? 100)
+      .map(copy);
+  }
 }
 
 export class InMemoryStepLog implements StepLog {
@@ -108,7 +125,8 @@ export class InMemoryStepLog implements StepLog {
     const payload = StepPayloadSchema.parse(input.payload);
     const task = this.m.tasks.get(input.taskId);
     if (!task) throw new NotFoundError('task', input.taskId);
-    if (input.subtaskId && !this.m.subtasks.has(input.subtaskId)) throw new NotFoundError('subtask', input.subtaskId);
+    const sub = input.subtaskId ? this.m.subtasks.get(input.subtaskId) : undefined;
+    if (input.subtaskId && sub?.taskId !== input.taskId) throw new NotFoundError('subtask', input.subtaskId);
     task.lastSeq += 1;
     task.updatedAt = this.m.clock.now();
     const step: Step = {
@@ -180,6 +198,24 @@ export class InMemorySubtaskRepository implements SubtaskRepository {
       .map(copy);
   }
 
+  async get(id: string): Promise<Subtask | undefined> {
+    const s = this.m.subtasks.get(id);
+    return s && copy(s);
+  }
+
+  async updatePending(id: string, patch: Partial<SubtaskContract>): Promise<Subtask> {
+    const s = this.m.subtasks.get(id);
+    if (!s) throw new NotFoundError('subtask', id);
+    if (s.status !== 'pending') throw new InvalidTransitionError('subtask', id, 'pending');
+    const { goal, context, doneCriteria, expectedOutputs } = patch;
+    Object.assign(
+      s,
+      definedOnly({ goal, context, doneCriteria, expectedOutputs: expectedOutputs && [...expectedOutputs] }),
+      { updatedAt: this.m.clock.now() },
+    );
+    return copy(s);
+  }
+
   async nextPending(taskId: string): Promise<Subtask | undefined> {
     return (await this.list(taskId)).find(s => s.status === 'pending');
   }
@@ -214,17 +250,23 @@ export class InMemoryCreditLedger implements CreditLedger {
     if (!user) throw new NotFoundError('user', e.userId);
     const task = e.taskId ? this.m.tasks.get(e.taskId) : undefined;
     if (e.taskId && !task) throw new NotFoundError('task', e.taskId);
-    user.credits -= e.credits;
+    user.millicredits -= e.millicredits;
     this.m.usage.push({ ...e, createdAt: this.m.clock.now() });
     if (task) task.tokensUsed += e.tokensIn + e.tokensOut;
-    return { balance: user.credits };
+    return { balance: user.millicredits };
   }
 
-  async grant(email: string, amount: number): Promise<{ balance: number }> {
+  async grant(email: string, millicredits: number): Promise<{ balance: number }> {
     const user = [...this.m.users.values()].find(u => u.email === email);
     if (!user) throw new NotFoundError('user', email);
-    user.credits += amount;
-    return { balance: user.credits };
+    user.millicredits += millicredits;
+    return { balance: user.millicredits };
+  }
+
+  async balance(userId: string): Promise<number> {
+    const user = this.m.users.get(userId);
+    if (!user) throw new NotFoundError('user', userId);
+    return user.millicredits;
   }
 }
 
@@ -245,6 +287,11 @@ export class InMemoryFileRepository implements FileRepository {
     };
     this.m.files.set(f.id, f);
     return copy(f);
+  }
+
+  async get(id: string): Promise<FileRecord | undefined> {
+    const f = this.m.files.get(id);
+    return f && copy(f);
   }
 
   async listForTask(taskId: string, kind?: FileKind): Promise<FileRecord[]> {

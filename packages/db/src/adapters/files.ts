@@ -26,6 +26,12 @@ export class DrizzleFileRepository implements FileRepository {
     return row!;
   }
 
+  async get(id: string): Promise<FileRecord | undefined> {
+    if (!isUuid(id)) return undefined;
+    const [row] = await this.db.select().from(files).where(eq(files.id, id));
+    return row;
+  }
+
   async listForTask(taskId: string, kind?: FileKind): Promise<FileRecord[]> {
     if (!isUuid(taskId)) return [];
     const where = kind ? and(eq(files.taskId, taskId), eq(files.kind, kind)) : eq(files.taskId, taskId);

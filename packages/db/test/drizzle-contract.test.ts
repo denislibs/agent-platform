@@ -6,6 +6,7 @@ import {
   DrizzleStepLog,
   DrizzleSubtaskRepository,
   DrizzleTaskRepository,
+  DrizzleUnitOfWork,
   usageEvents,
 } from '../src';
 import { createTestUser, resetDb, setupTestDb } from './helpers';
@@ -20,12 +21,20 @@ repositoryContract('drizzle/postgres', async () => {
       subtasks: new DrizzleSubtaskRepository(deps),
       ledger: new DrizzleCreditLedger(deps),
       files: new DrizzleFileRepository(deps),
+      // Вложенный run в контракте падает по lock_timeout; 1 с вместо 10 по умолчанию, чтобы тест не тянулся.
+      uow: new DrizzleUnitOfWork({ ...deps, lockTimeoutMs: 1000 }),
       seedUser: async (p = {}) =>
-        (await createTestUser(database.db, { credits: p.credits ?? 100, ...(p.email ? { email: p.email } : {}) })).id,
+        (
+          await createTestUser(database.db, {
+            millicredits: p.millicredits ?? 100_000,
+            ...(p.email ? { email: p.email } : {}),
+          })
+        ).id,
       countUsageEvents: async () => {
         const [row] = await database.db.select({ n: count() }).from(usageEvents);
         return row?.n ?? 0;
       },
+      elapse: ms => Bun.sleep(ms),
       reset: () => resetDb(database.db),
     },
     close: () => database.close(),

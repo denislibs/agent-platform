@@ -57,6 +57,32 @@ export class DrizzleSubtaskRepository implements SubtaskRepository {
     return this.db.select().from(subtasks).where(eq(subtasks.taskId, taskId)).orderBy(asc(subtasks.idx));
   }
 
+  async get(id: string): Promise<Subtask | undefined> {
+    if (!isUuid(id)) return undefined;
+    const [row] = await this.db.select().from(subtasks).where(eq(subtasks.id, id));
+    return row;
+  }
+
+  async updatePending(id: string, patch: Partial<SubtaskContract>): Promise<Subtask> {
+    if (!isUuid(id)) throw new NotFoundError('subtask', id);
+    const fields = Object.fromEntries(
+      Object.entries({
+        goal: patch.goal,
+        context: patch.context,
+        doneCriteria: patch.doneCriteria,
+        expectedOutputs: patch.expectedOutputs,
+      }).filter(([, v]) => v !== undefined),
+    ) as Partial<typeof subtasks.$inferInsert>;
+    const [row] = await this.db
+      .update(subtasks)
+      .set({ ...fields, updatedAt: sql`now()` })
+      .where(and(eq(subtasks.id, id), eq(subtasks.status, 'pending')))
+      .returning();
+    if (row) return row;
+    if (!(await this.get(id))) throw new NotFoundError('subtask', id);
+    throw new InvalidTransitionError('subtask', id, 'pending');
+  }
+
   async nextPending(taskId: string): Promise<Subtask | undefined> {
     if (!isUuid(taskId)) return undefined;
     const [row] = await this.db
@@ -86,7 +112,7 @@ export class DrizzleSubtaskRepository implements SubtaskRepository {
             .update(subtasks)
             .set({
               status: to,
-              updatedAt: new Date(),
+              updatedAt: sql`now()`,
               ...(patch.report ? { report: patch.report } : {}),
               ...(patch.incrementAttempts ? { attempts: sql`${subtasks.attempts} + 1` } : {}),
             })

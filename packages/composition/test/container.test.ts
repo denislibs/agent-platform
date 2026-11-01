@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, expect, test } from 'bun:test';
 import { asValue } from 'awilix';
-import { CryptoIds, SystemClock } from '@agent/core';
+import { CryptoIds, LimitExceededError, SystemClock } from '@agent/core';
 import { buildContainer, type AppContainer } from '@agent/composition';
 import {
   DrizzleCreditLedger,
@@ -8,6 +8,7 @@ import {
   DrizzleStepLog,
   DrizzleSubtaskRepository,
   DrizzleTaskRepository,
+  DrizzleUnitOfWork,
   runMigrations,
   user,
 } from '@agent/db';
@@ -36,6 +37,7 @@ test('registers a real adapter for every port', () => {
   expect(c.subtasks).toBeInstanceOf(DrizzleSubtaskRepository);
   expect(c.ledger).toBeInstanceOf(DrizzleCreditLedger);
   expect(c.files).toBeInstanceOf(DrizzleFileRepository);
+  expect(c.uow).toBeInstanceOf(DrizzleUnitOfWork);
   expect(c.fileStore).toBeInstanceOf(S3FileStore);
   expect(c.clock).toBeInstanceOf(SystemClock);
   expect(c.ids).toBeInstanceOf(CryptoIds);
@@ -63,7 +65,7 @@ test('wired adapters work together against real infrastructure', async () => {
       id: crypto.randomUUID(),
       name: 'C',
       email: `${crypto.randomUUID()}@test.dev`,
-      credits: 10,
+      millicredits: 10,
     })
     .returning();
   const task = await tasks.create({ userId: u!.id, prompt: 'wired' });
@@ -79,7 +81,7 @@ test('wired adapters work together against real infrastructure', async () => {
       model: 'qwen',
       tokensIn: 1,
       tokensOut: 1,
-      credits: 2,
+      millicredits: 2,
     }),
   ).toEqual({ balance: 8 });
   const key = `tasks/${task.id}/outputs/hello.txt`;
@@ -107,4 +109,19 @@ test('dispose closes the database pool', async () => {
   await c.dispose();
   // Drizzle query builders are thenables, not Promises — wrap so `.rejects` can attach.
   await expect(Promise.resolve(database.db.select().from(user).limit(1))).rejects.toThrow();
+});
+
+test('task intake enforces the active task limit against Postgres under concurrency', async () => {
+  container = buildContainer({ ...config, limits: { ...config.limits, maxActiveTasksPerUser: 2 } });
+  const { database, intake, tasks } = container.cradle;
+  const [u] = await database.db
+    .insert(user)
+    .values({ id: crypto.randomUUID(), name: 'I', email: `${crypto.randomUUID()}@test.dev`, millicredits: 1000 })
+    .returning();
+  const results = await Promise.allSettled(
+    Array.from({ length: 5 }, (_, i) => intake.create({ userId: u!.id, prompt: `t${i}` })),
+  );
+  expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(2);
+  for (const r of results) if (r.status === 'rejected') expect(r.reason).toBeInstanceOf(LimitExceededError);
+  expect(await tasks.countActive(u!.id)).toBe(2);
 });
