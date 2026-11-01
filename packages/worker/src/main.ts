@@ -12,8 +12,13 @@ async function shutdown(signal: string): Promise<void> {
   if (closing) return;
   closing = true;
   console.log(`[worker] ${signal}: finishing current jobs`);
-  await worker.close();
-  await container.dispose();
+  try {
+    await worker.close();
+    await container.dispose();
+  } catch (err) {
+    console.error('[worker] shutdown failed:', err);
+    process.exit(1);
+  }
   process.exit(0);
 }
 process.once('SIGTERM', () => void shutdown('SIGTERM'));

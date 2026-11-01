@@ -51,6 +51,8 @@ const EnvSchema = z.object({
     .regex(/^\d+[kmg]$/i, 'expected a Docker memory size like 4g or 512m')
     .default('4g'),
   SANDBOX_PIDS: positiveInt(512),
+  /** Пространство имён песочниц (метка agent.sandbox.ns): сборщик разработки и тестов не видит чужих песочниц. */
+  SANDBOX_NAMESPACE: z.string().min(1).default('dev'),
   BRAVE_API_KEY: z.preprocess(v => (v === '' ? undefined : v), z.string().min(1).optional()),
   BRAVE_BASE_URL: z.url().default('https://api.search.brave.com'),
 });
@@ -110,6 +112,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       cpus: e.SANDBOX_CPUS,
       memory: e.SANDBOX_MEMORY,
       pids: e.SANDBOX_PIDS,
+      namespace: e.SANDBOX_NAMESPACE,
     },
     search: {
       braveApiKey: e.BRAVE_API_KEY ?? null,

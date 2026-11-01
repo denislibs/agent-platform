@@ -24,11 +24,14 @@ export interface DockerSandboxConfig {
   cpus: number;
   memory: string;
   pids: number;
+  /** Пространство имён (метка agent.sandbox.ns): list() видит только свои песочницы. */
+  namespace: string;
 }
 
 const NAME_PREFIX = 'agent-sbx-';
 const LABEL = 'agent.sandbox';
 const TASK_LABEL = 'agent.task';
+const NS_LABEL = 'agent.sandbox.ns';
 const BROWSERD_HEALTH = 'http://127.0.0.1:9230/health';
 const BROWSERD_ACTION = 'http://127.0.0.1:9230/action';
 const SAFE_TASK_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}$/;
@@ -563,6 +566,8 @@ export class DockerSandboxProvider implements SandboxProvider {
         '--label',
         `${LABEL}=1`,
         '--label',
+        `${NS_LABEL}=${this.cfg.namespace}`,
+        '--label',
         `${TASK_LABEL}=${taskId}`,
         volumeName(taskId),
       ]);
@@ -611,6 +616,8 @@ export class DockerSandboxProvider implements SandboxProvider {
       '--label',
       `${LABEL}=1`,
       '--label',
+      `${NS_LABEL}=${this.cfg.namespace}`,
+      '--label',
       `${TASK_LABEL}=${taskId}`,
       '--network',
       this.cfg.network,
@@ -638,8 +645,21 @@ export class DockerSandboxProvider implements SandboxProvider {
     return new DockerSandbox(sandboxId, sandboxId.slice(NAME_PREFIX.length), info.containerId, this.cli, this.settings);
   }
 
+  /**
+   * Песочницы своего пространства имён: иначе сборщик разработки счёл бы песочницы тестов (задач нет в его базе)
+   * сиротами и уничтожил бы их, и наоборот. Контейнеры без метки ns (созданные до её появления) не видны.
+   */
   async list(): Promise<SandboxInfo[]> {
-    const out = await this.cli.ok(['ps', '-a', '--filter', `label=${LABEL}=1`, '--format', `{{.Names}}\t{{.State}}`]);
+    const out = await this.cli.ok([
+      'ps',
+      '-a',
+      '--filter',
+      `label=${LABEL}=1`,
+      '--filter',
+      `label=${NS_LABEL}=${this.cfg.namespace}`,
+      '--format',
+      `{{.Names}}\t{{.State}}`,
+    ]);
     return out
       .split('\n')
       .filter(Boolean)

@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { asValue } from 'awilix';
+import { Queue } from 'bullmq';
 import { buildContainer, type AppContainer } from '@agent/composition';
 import { runMigrations, user } from '@agent/db';
+import { AGENT_QUEUE } from '@agent/queue';
 import { loadConfig } from '@agent/shared';
 import { ScriptedLlm, toolCall, type ScriptedTurn } from '@agent/testing';
 import { startWorker, type RunningWorker } from '../src';
@@ -22,6 +24,7 @@ const llm = new ScriptedLlm([
 ]);
 let container: AppContainer;
 let worker: RunningWorker;
+let taskId: string | undefined;
 
 beforeAll(async () => {
   await runMigrations(config.databaseUrl);
@@ -31,6 +34,14 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await worker?.close();
+  if (container) {
+    const c = container.cradle;
+    // Песочница упавшего теста и ключи BullMQ под его префиксом не должны пережить прогон.
+    if (taskId) await (await c.sandboxes.get(`agent-sbx-${taskId}`))?.destroy();
+    const raw = new Queue(AGENT_QUEUE, { connection: c.redis, prefix: config.worker.queuePrefix });
+    await raw.obliterate({ force: true });
+    await raw.close();
+  }
   await container?.dispose();
 }, 60_000);
 
@@ -51,6 +62,7 @@ test('a task goes from intake to done through BullMQ, Postgres, Docker and S3', 
     .values({ id: crypto.randomUUID(), name: 'E2E', email: `${crypto.randomUUID()}@test.dev`, millicredits: 1_000_000 })
     .returning();
   const task = await c.intake.create({ userId: u!.id, prompt: 'Write hello.md' });
+  taskId = task.id;
 
   const done = await waitFor(
     () => c.tasks.get(task.id),
