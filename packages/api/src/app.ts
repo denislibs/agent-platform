@@ -5,6 +5,7 @@ import { requireUser } from './auth/middleware';
 import type { ApiDeps, ApiEnv } from './deps';
 import { mapError } from './errors';
 import { meRoutes } from './routes/me';
+import { taskRoutes } from './routes/tasks';
 
 /** Тела запросов /api/auth/* — JSON с адресом и URL; больше этого Better Auth читать незачем. */
 export const AUTH_BODY_LIMIT_BYTES = 64 * 1024;
@@ -41,5 +42,6 @@ export function createApp(deps: ApiDeps): Hono<ApiEnv> {
   );
 
   meRoutes(app, deps);
+  taskRoutes(app, deps);
   return app;
 }
