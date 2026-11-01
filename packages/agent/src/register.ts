@@ -7,6 +7,7 @@ import {
   ModelGateway,
   PlannerStage,
   ResultComposer,
+  Sweeper,
   TaskGuard,
   ToolExecutor,
 } from './agent';
@@ -23,6 +24,7 @@ export interface AgentServices {
   composer: ResultComposer;
   finalizer: Finalizer;
   runner: JobRunner;
+  sweeper: Sweeper;
 }
 
 /**
@@ -41,5 +43,6 @@ export function agentServices(): { [K in keyof AgentServices]: Resolver<AgentSer
     composer: asClass(ResultComposer).singleton(),
     finalizer: asClass(Finalizer).singleton(),
     runner: asClass(JobRunner).singleton(),
+    sweeper: asClass(Sweeper).singleton(),
   };
 }
