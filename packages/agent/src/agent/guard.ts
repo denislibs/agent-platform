@@ -16,6 +16,8 @@ export type GuardVerdict =
   | { kind: 'ok'; task: Task }
   /** Задачи нет или она в финальном статусе. */
   | { kind: 'stop' }
+  /** Задача уже в finalizing (устаревший или повторный job): лимиты не проверяются, дальше finalize. */
+  | { kind: 'finalizing' }
   | { kind: 'limit'; task: Task; reason: Exclude<StopReason, 'no_plan'> };
 
 /** Бюджет токенов считается исчерпанным при 95 %: 5 % оставлены на попытку finish (спецификация 4.4). */
@@ -36,6 +38,7 @@ export class TaskGuard {
   async check(taskId: string): Promise<GuardVerdict> {
     const task = await this.deps.tasks.get(taskId);
     if (!task || isTerminalTask(task.status)) return { kind: 'stop' };
+    if (task.status === 'finalizing') return { kind: 'finalizing' };
     const { taskTokenBudget, taskWallTimeMs } = this.deps.config.limits;
     if (task.tokensUsed >= taskTokenBudget * BUDGET_SHARE) return { kind: 'limit', task, reason: 'token_budget' };
     if (task.activeMs >= taskWallTimeMs) return { kind: 'limit', task, reason: 'wall_time' };

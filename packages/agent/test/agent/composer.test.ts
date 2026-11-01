@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { LlmError } from '@agent/core';
+import { LlmError, NotFoundError } from '@agent/core';
 import { calls, planned, say, setupAgent } from './fixtures';
 
 type C = ReturnType<typeof setupAgent>;
@@ -98,5 +98,18 @@ describe('ResultComposer', () => {
     const c = setupAgent();
     const task = await planned(c);
     await expect(c.composer.compose(task.id)).rejects.toThrow(/finalizing/);
+  });
+});
+
+describe('ResultComposer — a lost sandbox', () => {
+  test('a missing sandbox is not swallowed while listing outputs', async () => {
+    const c = setupAgent();
+    const task = await finalizing(c);
+    const sandbox = await c.sandboxes.create(task.id);
+    sandbox.list = async () => {
+      throw new NotFoundError('sandbox', 'gone');
+    };
+    c.llm.push(calls(['finish', { answer: 'Composed', files: [] }]));
+    await expect(c.composer.compose(task.id)).rejects.toBeInstanceOf(NotFoundError);
   });
 });

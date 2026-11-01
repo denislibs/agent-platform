@@ -145,6 +145,7 @@ export class PlannerStage {
     const { guard, config } = this.deps;
     const first = await guard.check(taskId);
     if (first.kind === 'stop') return { next: 'stop' };
+    if (first.kind === 'finalizing') return { next: 'finalize' };
     if (first.kind === 'limit') {
       // Из queued в finalizing перехода нет: сначала старт, иначе задача навсегда осталась бы в queued.
       let limited = first.task;
@@ -180,6 +181,7 @@ export class PlannerStage {
     for (let i = 0; i < config.limits.stepsPerJob; i++) {
       const verdict = await guard.check(taskId);
       if (verdict.kind === 'stop') return { next: 'stop' };
+      if (verdict.kind === 'finalizing') return { next: 'finalize' };
       if (verdict.kind === 'limit') return guard.stopForLimitOrStop(verdict.task, verdict.reason);
       task = verdict.task;
       const r = await this.step(task, sandbox);
@@ -322,6 +324,7 @@ export class PlannerStage {
     const { guard, config } = this.deps;
     const first = await guard.check(taskId);
     if (first.kind === 'stop') return { next: 'stop' };
+    if (first.kind === 'finalizing') return { next: 'finalize' };
     if (first.kind === 'limit') return guard.stopForLimitOrStop(first.task, first.reason);
     let task = first.task;
     if (task.status === 'waiting_user') {
@@ -349,6 +352,7 @@ export class PlannerStage {
     for (let i = 0; i < config.limits.stepsPerJob; i++) {
       const verdict = await guard.check(taskId);
       if (verdict.kind === 'stop') return { next: 'stop' };
+      if (verdict.kind === 'finalizing') return { next: 'finalize' };
       if (verdict.kind === 'limit') return guard.stopForLimitOrStop(verdict.task, verdict.reason);
       task = verdict.task;
       const r = await this.reviewStep(task, sub, tools, canReplan, sandbox);

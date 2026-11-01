@@ -468,3 +468,40 @@ describe('ExecutorStage — recovery and stale jobs', () => {
     expect(c.llm.calls).toHaveLength(0);
   });
 });
+
+describe('ExecutorStage — a stale job on a finalizing task', () => {
+  test('a spent budget on a finalizing task goes to finalize without throwing or calling the model', async () => {
+    const c = setupAgent({ TASK_TOKEN_BUDGET: '100' });
+    const task = await planned(c);
+    await c.ledger.record({
+      userId: task.userId,
+      taskId: task.id,
+      model: 'm',
+      tokensIn: 100,
+      tokensOut: 0,
+      millicredits: 1,
+    });
+    await c.tasks.transition(task.id, 'finalizing', {
+      currentKind: 'finalize',
+      partial: true,
+      stopReason: 'token_budget',
+    });
+    expect(await c.executorStage.run(task.id)).toEqual({ next: 'finalize' });
+    expect(c.llm.calls).toHaveLength(0);
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'finalizing', stopReason: 'token_budget' });
+  });
+});
+
+describe('ExecutorStage — a retried job after a failed subtask', () => {
+  test('goes to review and leaves the next pending subtask alone', async () => {
+    const c = setupAgent();
+    const task = await planned(c, ['collect', 'write']);
+    const [first, second] = await c.subtasks.list(task.id);
+    await c.subtasks.transition(first!.id, 'running');
+    await c.subtasks.transition(first!.id, 'failed', { report: { summary: 'invalid calls', files: [], issues: [] } });
+    await c.tasks.update(task.id, { currentKind: 'review' });
+    expect(await c.executorStage.run(task.id)).toEqual({ next: 'review' });
+    expect(c.llm.calls).toHaveLength(0);
+    expect((await c.subtasks.get(second!.id))?.status).toBe('pending');
+  });
+});

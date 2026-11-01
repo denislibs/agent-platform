@@ -404,3 +404,29 @@ describe('PlannerStage.plan — recovery and stale jobs', () => {
     expect(c.llm.calls).toHaveLength(0);
   });
 });
+
+describe('PlannerStage.plan — a stale job on a finalizing task', () => {
+  test('a spent budget on a finalizing task goes to finalize without throwing or calling the model', async () => {
+    const c = setupAgent({ TASK_TOKEN_BUDGET: '100' });
+    const task = await seedTask(c).then(async t => {
+      await c.tasks.transition(t.id, 'planning', { currentKind: 'plan' });
+      return t;
+    });
+    await c.ledger.record({
+      userId: task.userId,
+      taskId: task.id,
+      model: 'm',
+      tokensIn: 100,
+      tokensOut: 0,
+      millicredits: 1,
+    });
+    await c.tasks.transition(task.id, 'finalizing', {
+      currentKind: 'finalize',
+      partial: true,
+      stopReason: 'token_budget',
+    });
+    expect(await c.plannerStage.plan(task.id)).toEqual({ next: 'finalize' });
+    expect(c.llm.calls).toHaveLength(0);
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'finalizing', stopReason: 'token_budget' });
+  });
+});

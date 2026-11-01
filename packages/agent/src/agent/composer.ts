@@ -102,7 +102,7 @@ export class ResultComposer {
     try {
       outputs = (await sandbox.list('outputs', 10)).filter(e => e.type === 'file').map(e => e.path);
     } catch (err) {
-      if (!(err instanceof NotFoundError)) throw err;
+      if (!(err instanceof NotFoundError && err.entity === 'file')) throw err;
     }
     const files = [...new Set([...result.files, ...outputs].map(normalise))];
     await this.deps.tasks.update(task.id, { result: result.answer });
