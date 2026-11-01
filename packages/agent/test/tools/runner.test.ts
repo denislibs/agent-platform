@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { NotFoundError, SandboxError, SearchError } from '@agent/core';
+import { NotFoundError, SandboxError, SearchError, type SandboxErrorCode } from '@agent/core';
 import { z } from 'zod';
 import { defineTool, limitOutput, runToolCall, ToolError, TOOL_OUTPUT_EDGE, TOOL_OUTPUT_LIMIT } from '../../src';
 import { toolContext } from './helpers';
@@ -76,11 +76,17 @@ describe('runToolCall', () => {
 
   test('expected domain errors become error results', async () => {
     const ctx = await toolContext();
+    const codes: SandboxErrorCode[] = [
+      'path_outside_workspace',
+      'element_not_found',
+      'file_too_large',
+      'not_a_file',
+      'browser_failed',
+    ];
     for (const err of [
       new ToolError('old text not found'),
       new NotFoundError('file', 'a.txt'),
-      new SandboxError('element_not_found', 'no element 9'),
-      new SandboxError('file_too_large', 'too big'),
+      ...codes.map(code => new SandboxError(code, `sandbox says ${code}`)),
       new SearchError('unavailable', 'search is down', true),
     ]) {
       const r = await runToolCall([throwing(err)], call('boom', {}), ctx);
@@ -91,13 +97,43 @@ describe('runToolCall', () => {
 
   test('infrastructure errors propagate to the loop', async () => {
     const ctx = await toolContext();
+    const codes: SandboxErrorCode[] = ['not_running', 'browser_unavailable'];
     for (const err of [
       new NotFoundError('sandbox', 'agent-sbx-task-1'),
-      new SandboxError('not_running', 'stopped'),
+      new NotFoundError('task', 't1'),
+      new NotFoundError('object', 'k'),
+      ...codes.map(code => new SandboxError(code, `sandbox says ${code}`)),
       new Error('docker exploded'),
     ]) {
       await expect(runToolCall([throwing(err)], call('boom', {}), ctx)).rejects.toBe(err);
     }
+  });
+
+  test('arguments that are not an object are invalid, only missing arguments default to {}', async () => {
+    const ctx = await toolContext();
+    const noArgs = defineTool({
+      name: 'noargs',
+      description: 'No args',
+      schema: z.object({}),
+      run: async () => ({ ok: true, output: 'ran' }),
+    });
+    expect(await runToolCall([noArgs], { id: 'c1', name: 'noargs', rawArgs: '', args: undefined }, ctx)).toEqual({
+      ok: true,
+      output: 'ran',
+    });
+    for (const args of [null, [], 'text', 5]) {
+      const r = await runToolCall([noArgs], call('noargs', args), ctx);
+      expect(r.ok).toBe(false);
+      expect(r.output).toContain('invalid arguments');
+    }
+  });
+
+  test('the echoed tool name and parse error are capped at 200 characters', async () => {
+    const ctx = await toolContext();
+    const unknown = await runToolCall([echo], call('n'.repeat(500), {}), ctx);
+    expect(unknown.output).not.toContain('n'.repeat(201));
+    const bad = await runToolCall([echo], call('echo', undefined, { rawArgs: '{', parseError: 'p'.repeat(500) }), ctx);
+    expect(bad.output).not.toContain('p'.repeat(201));
   });
 });
 
@@ -131,5 +167,53 @@ describe('limitOutput', () => {
     const r = await runToolCall([loud], call('loud', {}), ctx);
     expect(r.fullOutputPath).toBe('.tool-outputs/7-0.txt');
     expect(r.control).toEqual({ kind: 'accept' });
+  });
+
+  test('output of exactly the limit is returned unchanged, an error outcome over the limit is limited', async () => {
+    const ctx = await toolContext();
+    const exact = { ok: true, output: 'x'.repeat(TOOL_OUTPUT_LIMIT) };
+    expect(await limitOutput(exact, ctx)).toBe(exact);
+    const r = await limitOutput({ ok: false, output: 'e'.repeat(TOOL_OUTPUT_LIMIT + 1) }, ctx);
+    expect(r.ok).toBe(false);
+    expect(r.fullOutputPath).toBe('.tool-outputs/7-0.txt');
+  });
+
+  test('the cut never splits a surrogate pair', async () => {
+    const ctx = await toolContext();
+    // The emoji is two UTF-16 units: put one across the head boundary and one across the tail boundary.
+    const long = `${'a'.repeat(TOOL_OUTPUT_EDGE - 1)}😀${'m'.repeat(5000)}😀${'z'.repeat(TOOL_OUTPUT_EDGE - 1)}`;
+    const r = await limitOutput({ ok: true, output: long }, ctx);
+    expect(r.output.isWellFormed()).toBe(true);
+    expect(r.output.startsWith('a'.repeat(TOOL_OUTPUT_EDGE - 1))).toBe(true);
+    expect(r.output.endsWith('z'.repeat(TOOL_OUTPUT_EDGE - 1))).toBe(true);
+    expect(r.output).toContain(`${long.length - 2 * TOOL_OUTPUT_EDGE + 2} characters omitted`);
+  });
+
+  test('when the full output cannot be saved the model still gets head and tail without a path', async () => {
+    const ctx = await toolContext();
+    const long = 'a'.repeat(5000) + 'z'.repeat(5000);
+    for (const err of [new Error('ENOSPC: no space left'), new SandboxError('file_too_large', 'too big')]) {
+      ctx.sandbox.writeFile = async () => {
+        throw err;
+      };
+      const r = await limitOutput({ ok: true, output: long }, ctx);
+      expect(r.fullOutputPath).toBeUndefined();
+      expect(r.ok).toBe(true);
+      expect(r.output).toContain('the full output could not be saved');
+      expect(r.output).toContain(err.message);
+      expect(r.output.startsWith('a'.repeat(TOOL_OUTPUT_EDGE))).toBe(true);
+      expect(r.output.endsWith('z'.repeat(TOOL_OUTPUT_EDGE))).toBe(true);
+    }
+  });
+
+  test('infrastructure errors from the save propagate', async () => {
+    const ctx = await toolContext();
+    const long = 'a'.repeat(TOOL_OUTPUT_LIMIT + 1);
+    for (const err of [new SandboxError('not_running', 'stopped'), new NotFoundError('sandbox', 'agent-sbx-task-1')]) {
+      ctx.sandbox.writeFile = async () => {
+        throw err;
+      };
+      await expect(limitOutput({ ok: true, output: long }, ctx)).rejects.toBe(err);
+    }
   });
 });

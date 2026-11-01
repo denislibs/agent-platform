@@ -148,7 +148,7 @@ export class InMemorySandbox implements Sandbox {
   async browser(action: BrowserAction): Promise<PageSnapshot> {
     this.ensureRunning();
     const handler = this.provider.handlers.browser;
-    if (!handler) throw new SandboxError('browser_failed', 'no browser handler scripted');
+    if (!handler) throw new SandboxError('browser_unavailable', 'no browser handler scripted');
     return handler(action, this);
   }
 

@@ -69,7 +69,7 @@ export interface PageSnapshot {
  * Изолированный компьютер задачи. Ошибки:
  * уничтоженная песочница → NotFoundError('sandbox'); нет файла/папки → NotFoundError('file', относительный путь);
  * песочница остановлена → SandboxError('not_running'); путь вне /workspace → SandboxError('path_outside_workspace');
- * неизвестный номер элемента → SandboxError('element_not_found'); прочие сбои браузера → SandboxError('browser_failed');
+ * неизвестный номер элемента → SandboxError('element_not_found'); сбой страницы или действия, о котором сообщил браузер (навигация, DNS) → SandboxError('browser_failed'); сам браузер недоступен (не поднялся, не отвечает, мусорный ответ) → SandboxError('browser_unavailable');
  * файл больше лимита чтения → SandboxError('file_too_large'); readFile папки → SandboxError('not_a_file').
  */
 export interface Sandbox {

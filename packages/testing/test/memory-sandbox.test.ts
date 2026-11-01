@@ -35,7 +35,7 @@ test('without handlers exec returns 127 and browser fails clearly', async () => 
     caught = err;
   }
   expect(caught).toBeInstanceOf(SandboxError);
-  expect((caught as SandboxError).code).toBe('browser_failed');
+  expect((caught as SandboxError).code).toBe('browser_unavailable');
 });
 
 test('the double caps exec output at 1 MiB per stream and readFile at 50 MiB by default', async () => {

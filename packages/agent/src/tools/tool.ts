@@ -53,7 +53,12 @@ export class ToolError extends Error {
   }
 }
 
-export class ToolArgumentsError extends ToolError {}
+export class ToolArgumentsError extends ToolError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ToolArgumentsError';
+  }
+}
 
 export function defineTool<S extends z.ZodType>(spec: {
   name: string;

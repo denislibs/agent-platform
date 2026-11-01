@@ -245,23 +245,26 @@ export class DockerSandbox implements Sandbox {
         await waitForBrowserd(this.cli, this.containerId, this.id);
       } catch (err) {
         if (err instanceof DockerError)
-          throw new SandboxError('browser_failed', `browserd did not come back: ${err.message}`);
+          throw new SandboxError('browser_unavailable', `browserd did not come back: ${err.message}`);
         throw err;
       }
       r = await this.browserRequest(action);
     }
     if (r.exitCode !== 0) {
-      throw new SandboxError('browser_failed', `browserd is unreachable (curl exit ${r.exitCode}): ${r.stderr.trim()}`);
+      throw new SandboxError(
+        'browser_unavailable',
+        `browserd is unreachable (curl exit ${r.exitCode}): ${r.stderr.trim()}`,
+      );
     }
     let json: unknown;
     try {
       json = JSON.parse(decode(r.stdout));
     } catch {
-      throw new SandboxError('browser_failed', 'browserd returned a response that is not valid JSON');
+      throw new SandboxError('browser_unavailable', 'browserd returned a response that is not valid JSON');
     }
     const parsed = BrowserdResponseSchema.safeParse(json);
     if (!parsed.success) {
-      throw new SandboxError('browser_failed', `unexpected browserd response: ${parsed.error.message}`);
+      throw new SandboxError('browser_unavailable', `unexpected browserd response: ${parsed.error.message}`);
     }
     const body = parsed.data;
     if (!body.ok) {
