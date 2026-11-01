@@ -1,7 +1,9 @@
 import { asValue } from 'awilix';
+import { Queue } from 'bullmq';
 import { inArray } from 'drizzle-orm';
 import { buildContainer, type Overrides } from '@agent/composition';
 import { user } from '@agent/db';
+import { AGENT_QUEUE } from '@agent/queue';
 import { loadConfig } from '@agent/shared';
 import { createApp, type SessionUser } from '../../src';
 import { FakeAuth } from '../fake-auth';
@@ -16,7 +18,12 @@ function testDatabaseUrl(): string {
 
 /** API на настоящих адаптерах (Postgres, Valkey, Garage) с FakeAuth: вход Better Auth проверяет auth.test.ts. */
 export function setupRealApi(overrides: Overrides = {}) {
-  const config = loadConfig({ ...process.env, DATABASE_URL: testDatabaseUrl() });
+  // Свой префикс ключей BullMQ: job тестов не попадут к воркеру разработки и не переживут прогон.
+  const config = loadConfig({
+    ...process.env,
+    DATABASE_URL: testDatabaseUrl(),
+    QUEUE_PREFIX: `api-it-${crypto.randomUUID()}`,
+  });
   const auth = new FakeAuth();
   const container = buildContainer(config, overrides).register({ auth: asValue(auth) });
   const app = createApp(container.cradle);
@@ -34,9 +41,16 @@ export function setupRealApi(overrides: Overrides = {}) {
     return { user: session, headers: { cookie: `session=${auth.signIn(session)}`, origin } };
   }
 
-  /** Удаляет созданных пользователей (задачи и файлы уходят каскадом) и закрывает соединения. */
+  /** Удаляет созданных пользователей (задачи и файлы уходят каскадом), очередь теста и закрывает соединения. */
   async function dispose() {
-    if (userIds.length > 0) await container.cradle.database.db.delete(user).where(inArray(user.id, userIds));
+    const c = container.cradle;
+    if (userIds.length > 0) await c.database.db.delete(user).where(inArray(user.id, userIds));
+    const raw = new Queue(AGENT_QUEUE, { connection: c.redis, prefix: config.worker.queuePrefix });
+    try {
+      await raw.obliterate({ force: true });
+    } finally {
+      await raw.close();
+    }
     await container.dispose();
   }
 
