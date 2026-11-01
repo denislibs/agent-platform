@@ -12,7 +12,7 @@
     "@agent/core": "workspace:*",
     "@agent/queue": "workspace:*",
     "@agent/shared": "workspace:*",
-    "bullmq": "^5"
+    "bullmq": "5.81.5"
   },
   "devDependencies": {
     "@agent/db": "workspace:*",

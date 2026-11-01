@@ -9,7 +9,7 @@
   "dependencies": {
     "@agent/core": "workspace:*",
     "@agent/shared": "workspace:*",
-    "bullmq": "^5",
+    "bullmq": "5.81.5",
     "ioredis": "^5"
   },
   "devDependencies": {
