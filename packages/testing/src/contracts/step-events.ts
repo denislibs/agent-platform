@@ -46,7 +46,12 @@ export function stepEventsContract(
       const offB = await events.subscribe(b, seq => gotB.push(seq));
       await events.publish(b, 1);
       await until(() => gotB.length === 1);
-      expect(gotA).toEqual([]);
+      // Сторож: у настоящего брокера уведомление чужой задачи могло бы прийти позже, чем проверка. Порядок доставки
+      // сохраняется, поэтому всё, что ушло бы A до сторожа, лежит в gotA к моменту его прихода.
+      await events.publish(a, 99);
+      await until(() => gotA.length > 0);
+      expect(gotA).toEqual([99]);
+      expect(gotB).toEqual([1]);
       await offA();
       await offB();
     });

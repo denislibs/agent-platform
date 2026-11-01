@@ -1,19 +1,25 @@
 import { afterEach, beforeAll, expect, test } from 'bun:test';
 import { asValue } from 'awilix';
-import { ConsoleLogger, CryptoIds, LimitExceededError, LogMailer, SystemClock } from '@agent/core';
+import {
+  ConsoleLogger,
+  CryptoIds,
+  LimitExceededError,
+  LogMailer,
+  PublishingStepLog,
+  PublishingUnitOfWork,
+  SystemClock,
+} from '@agent/core';
 import { ExecutorStage, PlannerStage, ResultComposer } from '@agent/agent';
 import { buildContainer, type AppContainer } from '@agent/composition';
 import {
   DrizzleCreditLedger,
   DrizzleFileRepository,
-  DrizzleStepLog,
   DrizzleSubtaskRepository,
   DrizzleTaskRepository,
-  DrizzleUnitOfWork,
   runMigrations,
   user,
 } from '@agent/db';
-import { BullJobQueue, TaskLock } from '@agent/queue';
+import { BullJobQueue, TaskLock, ValkeyStepEvents } from '@agent/queue';
 import { DockerSandboxProvider } from '@agent/sandbox';
 import { BraveSearchProvider, UnavailableSearchProvider } from '@agent/search';
 import { S3FileStore } from '@agent/storage';
@@ -35,11 +41,12 @@ test('registers a real adapter for every port', () => {
   container = buildContainer(config);
   const c = container.cradle;
   expect(c.tasks).toBeInstanceOf(DrizzleTaskRepository);
-  expect(c.steps).toBeInstanceOf(DrizzleStepLog);
+  expect(c.steps).toBeInstanceOf(PublishingStepLog);
   expect(c.subtasks).toBeInstanceOf(DrizzleSubtaskRepository);
   expect(c.ledger).toBeInstanceOf(DrizzleCreditLedger);
   expect(c.files).toBeInstanceOf(DrizzleFileRepository);
-  expect(c.uow).toBeInstanceOf(DrizzleUnitOfWork);
+  expect(c.uow).toBeInstanceOf(PublishingUnitOfWork);
+  expect(c.stepEvents).toBeInstanceOf(ValkeyStepEvents);
   expect(c.fileStore).toBeInstanceOf(S3FileStore);
   expect(c.queue).toBeInstanceOf(BullJobQueue);
   expect(c.taskLock).toBeInstanceOf(TaskLock);
@@ -49,6 +56,34 @@ test('registers a real adapter for every port', () => {
   expect(c.mailer).toBeInstanceOf(LogMailer);
   expect(typeof c.llm.chat).toBe('function');
   expect(c.config).toBe(config);
+});
+
+test('steps written through the container are announced on Valkey, a transaction after its commit', async () => {
+  container = buildContainer(config);
+  const { database, tasks, steps, uow, stepEvents } = container.cradle;
+  const [u] = await database.db
+    .insert(user)
+    .values({ id: crypto.randomUUID(), name: 'E', email: `${crypto.randomUUID()}@test.dev`, millicredits: 10 })
+    .returning();
+  const task = await tasks.create({ userId: u!.id, prompt: 'events' });
+  const got: number[] = [];
+  const off = await stepEvents.subscribe(task.id, seq => got.push(seq));
+  await steps.append({ taskId: task.id, agent: 'system', payload: { type: 'message', role: 'assistant', text: 'a' } });
+  await uow.run(async tx => {
+    await tx.steps.append({
+      taskId: task.id,
+      agent: 'system',
+      payload: { type: 'message', role: 'assistant', text: 'b' },
+    });
+    await tx.steps.append({
+      taskId: task.id,
+      agent: 'system',
+      payload: { type: 'message', role: 'assistant', text: 'c' },
+    });
+  });
+  for (let i = 0; i < 100 && got.length < 2; i++) await Bun.sleep(20);
+  expect(got).toEqual([1, 3]);
+  await off();
 });
 
 test('agent stages resolve against the real adapters', () => {
