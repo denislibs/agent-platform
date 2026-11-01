@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { SandboxError } from '@agent/core';
+import { MAX_EXEC_TIMEOUT_MS, SandboxError } from '@agent/core';
 import { contractExecHandler, InMemorySandboxProvider, sandboxContract } from '@agent/testing';
 
 sandboxContract('in-memory', async limits => ({
@@ -19,6 +19,7 @@ test('exec and browser delegate to scripted handlers with a resolved cwd', async
     }),
   });
   const s = await provider.create(crypto.randomUUID());
+  await s.writeFile('outputs/r.csv', 'a'); // cwd должен существовать
   expect((await s.exec('ls', { timeoutMs: 1000, cwd: 'outputs' })).stdout).toBe('/workspace/outputs$ ls');
   expect((await s.browser({ type: 'open', url: 'https://example.com' })).url).toBe('https://example.com');
 });
@@ -62,4 +63,18 @@ test('a handler that reports truncated keeps the flag', async () => {
   });
   const s = await provider.create(crypto.randomUUID());
   expect((await s.exec('x', { timeoutMs: 1000 })).truncated).toBe(true);
+});
+
+test('exec hands the handler a timeoutMs capped at MAX_EXEC_TIMEOUT_MS', async () => {
+  const seen: number[] = [];
+  const provider = new InMemorySandboxProvider({
+    exec: (_cmd, opts) => {
+      seen.push(opts.timeoutMs);
+      return { stdout: '', stderr: '', exitCode: 0, timedOut: false };
+    },
+  });
+  const s = await provider.create(crypto.randomUUID());
+  await s.exec('true', { timeoutMs: 10 * 60 * 60 * 1000 });
+  await s.exec('true', { timeoutMs: 5_000 });
+  expect(seen).toEqual([MAX_EXEC_TIMEOUT_MS, 5_000]);
 });

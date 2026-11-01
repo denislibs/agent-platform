@@ -20,7 +20,7 @@ export class NotFoundError extends Error {
 }
 
 export type SandboxErrorCode =
-  'path_outside_workspace' | 'element_not_found' | 'browser_failed' | 'not_running' | 'file_too_large';
+  'path_outside_workspace' | 'element_not_found' | 'browser_failed' | 'not_running' | 'file_too_large' | 'not_a_file';
 
 export class SandboxError extends Error {
   constructor(

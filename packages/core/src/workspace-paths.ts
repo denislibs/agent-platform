@@ -2,6 +2,9 @@ import { SandboxError } from './errors';
 
 export const WORKSPACE_ROOT = '/workspace';
 
+/** Верхний предел ExecOptions.timeoutMs (30 минут): больше — урезается. */
+export const MAX_EXEC_TIMEOUT_MS = 1_800_000;
+
 const outside = (path: string) =>
   new SandboxError('path_outside_workspace', `path "${path}" is outside ${WORKSPACE_ROOT}`);
 

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { Sandbox } from '@agent/core';
 import { loadConfig } from '@agent/shared';
-import { DockerCli, DockerSandboxProvider } from '../src';
+import { DockerCli, DockerError, DockerSandboxProvider, type CliResult, type RunOptions } from '../src';
 import { requireSandboxImage } from './helpers';
 import {
   EXPECTED_HOST_ALIASES,
@@ -173,6 +173,16 @@ describe('network isolation', () => {
     const r = await sh('curl -sI --max-time 15 -o /dev/null -w "%{http_code}" https://example.com');
     expect(r.stdout).toMatch(/^[23]\d\d$/);
   });
+
+  test('the sandbox has no global IPv6 address or route', async () => {
+    // Допустимы только link-local (scope 20) и ::1 на lo (scope 10): ни того, ни другого наружу не пустит.
+    const addr = await sh(
+      'cat /proc/net/if_inet6 2>/dev/null | awk \'!($4 == "20" || ($1 == "00000000000000000000000000000001" && $6 == "lo")) {print}\'',
+    );
+    expect(addr.stdout.trim()).toBe('');
+    const route = await sh('ip -6 route show default 2>/dev/null');
+    expect(route.stdout.trim()).toBe('');
+  });
 });
 
 /** Отправляет payload с хоста и возвращает первые байты ответа (пусто — ответа не было). */
@@ -280,6 +290,30 @@ with open('/tmp/race-hits.log', 'a') as hits:
     await new DockerSandboxProvider(cfg).create(sandbox.taskId);
     await new DockerSandboxProvider(cfg).create(sandbox.taskId);
     expect(await blackholes()).toEqual(before);
+  }, 60_000);
+
+  test('a rule error other than "File exists" still fails the helper and stops the sandbox', async () => {
+    /** Настоящий docker CLI, но помощнику egress добавлено назначение, которое `ip rule add` отвергнет. */
+    class BadRuleCli extends DockerCli {
+      override async run(args: string[], opts?: RunOptions): Promise<CliResult> {
+        if (args[0] === 'run' && args.includes('NET_ADMIN')) return super.run([...args, '300.0.0.0/8'], opts);
+        return super.run(args, opts);
+      }
+    }
+    const own = await new DockerSandboxProvider(cfg).create(crypto.randomUUID());
+    try {
+      let caught: unknown;
+      try {
+        await new DockerSandboxProvider(cfg, new BadRuleCli()).create(own.taskId);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(DockerError);
+      expect((caught as DockerError).stderr).toMatch(/valid prefix/);
+      expect(await cli.ok(['inspect', '--format', '{{.State.Running}}', own.id])).toBe('false');
+    } finally {
+      await own.destroy();
+    }
   }, 60_000);
 });
 

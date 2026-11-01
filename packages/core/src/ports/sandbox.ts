@@ -1,7 +1,13 @@
 export interface ExecOptions {
-  /** Предел времени команды. NaN, ±Infinity и значения ≤ 0 заменяются значением по умолчанию — 120 с. */
+  /**
+   * Предел времени команды. NaN, ±Infinity и значения ≤ 0 заменяются значением по умолчанию — 120 с.
+   * Больше 30 минут (1 800 000 мс, MAX_EXEC_TIMEOUT_MS) урезается до 30 минут.
+   */
   timeoutMs: number;
-  /** Рабочая папка; по умолчанию /workspace. Разрешается через resolveWorkspacePath. */
+  /**
+   * Рабочая папка; по умолчанию /workspace. Разрешается через resolveWorkspacePath.
+   * Несуществующая папка — NotFoundError('file', относительный путь).
+   */
   cwd?: string;
   stdin?: string;
 }
@@ -58,7 +64,7 @@ export interface PageSnapshot {
  * уничтоженная песочница → NotFoundError('sandbox'); нет файла/папки → NotFoundError('file', относительный путь);
  * песочница остановлена → SandboxError('not_running'); путь вне /workspace → SandboxError('path_outside_workspace');
  * неизвестный номер элемента → SandboxError('element_not_found'); прочие сбои браузера → SandboxError('browser_failed');
- * файл больше лимита чтения → SandboxError('file_too_large').
+ * файл больше лимита чтения → SandboxError('file_too_large'); readFile папки → SandboxError('not_a_file').
  */
 export interface Sandbox {
   readonly id: string;
@@ -71,11 +77,12 @@ export interface Sandbox {
   readFile(path: string): Promise<Uint8Array>;
   /** Создаёт недостающие родительские папки, перезаписывает файл. */
   writeFile(path: string, data: string | Uint8Array): Promise<void>;
-  /** Записи на глубину depth (1 = прямые потомки), отсортированы по path. */
+  /** Записи на глубину depth (1 = прямые потомки; depth < 1 работает как 1), отсортированы по path. */
   list(path: string, depth: number): Promise<FileEntry[]>;
   browser(action: BrowserAction): Promise<PageSnapshot>;
-  /** Освобождает CPU/RAM, файлы сохраняются. */
+  /** Освобождает CPU/RAM, файлы сохраняются. Идемпотентен: stop остановленной песочницы — не ошибка. */
   stop(): Promise<void>;
+  /** Идемпотентен: start запущенной песочницы — не ошибка. */
   start(): Promise<void>;
   /** Удаляет песочницу и её файлы. Повторный вызов безопасен. */
   destroy(): Promise<void>;

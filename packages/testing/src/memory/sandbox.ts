@@ -1,4 +1,5 @@
 import {
+  MAX_EXEC_TIMEOUT_MS,
   NotFoundError,
   resolveWorkspacePath,
   SandboxError,
@@ -66,6 +67,7 @@ export class InMemorySandbox implements Sandbox {
   async exec(cmd: string, opts: ExecOptions): Promise<ExecResult> {
     const cwd = resolveWorkspacePath(opts.cwd ?? WORKSPACE_ROOT);
     this.ensureRunning();
+    if (cwd !== WORKSPACE_ROOT && !this.hasEntriesUnder(cwd)) throw new NotFoundError('file', toWorkspaceRelative(cwd));
     const handler = this.provider.handlers.exec;
     if (!handler) {
       return {
@@ -76,7 +78,7 @@ export class InMemorySandbox implements Sandbox {
         truncated: false,
       };
     }
-    const r = await handler(cmd, { ...opts, cwd }, this);
+    const r = await handler(cmd, { ...opts, cwd, timeoutMs: Math.min(opts.timeoutMs, MAX_EXEC_TIMEOUT_MS) }, this);
     const limit = this.provider.limits.maxExecOutputBytes;
     const stdout = capBytes(r.stdout, limit);
     const stderr = capBytes(r.stderr, limit);
@@ -93,7 +95,10 @@ export class InMemorySandbox implements Sandbox {
     const abs = resolveWorkspacePath(path);
     this.ensureRunning();
     const bytes = this.files.get(abs);
-    if (!bytes) throw new NotFoundError('file', toWorkspaceRelative(abs));
+    if (!bytes) {
+      if (this.hasEntriesUnder(abs)) throw new SandboxError('not_a_file', `${toWorkspaceRelative(abs)} is a folder`);
+      throw new NotFoundError('file', toWorkspaceRelative(abs));
+    }
     const limit = this.provider.limits.maxReadFileBytes;
     if (bytes.length > limit) {
       throw new SandboxError(
@@ -120,7 +125,7 @@ export class InMemorySandbox implements Sandbox {
     const entries = new Map<string, FileEntry>();
     for (const abs of keys) {
       const parts = abs.slice(prefix.length).split('/');
-      for (let i = 1; i <= Math.min(parts.length, depth); i++) {
+      for (let i = 1; i <= Math.min(parts.length, Math.max(1, depth)); i++) {
         const p = `${prefix}${parts.slice(0, i).join('/')}`;
         const isFile = i === parts.length;
         entries.set(p, {
@@ -131,6 +136,13 @@ export class InMemorySandbox implements Sandbox {
       }
     }
     return [...entries.values()].toSorted(byPath);
+  }
+
+  /** Папки в памяти нет отдельно от файлов: она существует, пока под ней лежит хоть один файл. */
+  private hasEntriesUnder(abs: string): boolean {
+    const prefix = `${abs}/`;
+    for (const key of this.files.keys()) if (key.startsWith(prefix)) return true;
+    return false;
   }
 
   async browser(action: BrowserAction): Promise<PageSnapshot> {
