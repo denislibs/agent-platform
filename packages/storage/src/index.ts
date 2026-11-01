@@ -14,11 +14,27 @@ export interface FileStoreConfig {
 }
 
 const DEFAULT_EXPIRES_SEC = 900;
+/** Потолок срока жизни presigned URL: ссылка из лога или истории браузера не должна жить часами. */
+const MAX_EXPIRES_SEC = 3600;
+/** Предел длины имени до кодирования: заголовок не должен раздуваться от длинного имени. */
+const MAX_DOWNLOAD_NAME_LENGTH = 200;
 
-/** Content-Disposition вложения: ASCII-замена для старых клиентов и точное имя в filename* (RFC 6266/5987). */
-export function attachmentDisposition(name: string): string {
-  const ascii = name.replace(/[^\x20-\x7e]|["\\]/g, '_');
-  const encoded = encodeURIComponent(name).replace(/['()*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+function clampExpires(sec: number | undefined): number {
+  return Math.min(Math.max(1, Math.trunc(sec ?? DEFAULT_EXPIRES_SEC)), MAX_EXPIRES_SEC);
+}
+
+/**
+ * Content-Disposition вложения: ASCII-замена для старых клиентов и точное имя в filename* (RFC 6266/5987).
+ * Без имени (пустое после обработки) — `download`. Имя нормализуется toWellFormed (одиночные суррогаты
+ * ломают encodeURIComponent) и обрезается до 200 символов; в ASCII-замене `%`, кавычка и `\` становятся `_`.
+ */
+export function attachmentDisposition(name?: string): string {
+  const safe = Array.from((name ?? '').toWellFormed())
+    .slice(0, MAX_DOWNLOAD_NAME_LENGTH)
+    .join('');
+  const clean = safe === '' ? 'download' : safe;
+  const ascii = clean.replace(/[^\x20-\x7e]|["\\%]/g, '_');
+  const encoded = encodeURIComponent(clean).replace(/['()*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
   return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }
 
@@ -80,14 +96,16 @@ export class S3FileStore implements FileStore {
     }
   }
 
+  /** Скачивание всегда как вложение (html/svg из результатов модели не открываются в нашем домене); срок ≤ 1 часа. */
   async presignGet(key: string, opts: PresignGetOptions = {}): Promise<string> {
     return this.publicS3.presign(key, {
       method: 'GET',
-      expiresIn: opts.expiresInSec ?? DEFAULT_EXPIRES_SEC,
-      ...(opts.downloadName === undefined ? {} : { contentDisposition: attachmentDisposition(opts.downloadName) }),
+      expiresIn: clampExpires(opts.expiresInSec),
+      contentDisposition: attachmentDisposition(opts.downloadName),
     });
   }
 
+  /** Срок ≤ 1 часа. Подпись включает Content-Length и Content-Type: загрузка с другим типом или размером — 403. */
   async presignPut(key: string, opts: PresignPutOptions): Promise<string> {
     if (!Number.isSafeInteger(opts.size) || opts.size <= 0)
       throw new RangeError(`size must be a positive integer, got ${opts.size}`);
@@ -97,7 +115,11 @@ export class S3FileStore implements FileStore {
       ContentType: opts.contentType,
       ContentLength: opts.size,
     });
-    return getSignedUrl(this.signer, command, { expiresIn: opts.expiresInSec ?? DEFAULT_EXPIRES_SEC });
+    return getSignedUrl(this.signer, command, {
+      expiresIn: clampExpires(opts.expiresInSec),
+      // По умолчанию presigner выносит content-type из подписи; требуем его в подписанных заголовках.
+      signableHeaders: new Set(['content-type']),
+    });
   }
 }
 

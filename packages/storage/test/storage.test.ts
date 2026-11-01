@@ -70,3 +70,39 @@ test('attachmentDisposition neutralises header injection and keeps the value on 
   expect(value.match(/^attachment; filename="([^"]*)"/)?.[1]).not.toContain('\\');
   expect(decodeURIComponent(value.split("filename*=UTF-8''")[1] ?? '')).toBe(hostile);
 });
+
+test('presigned PUT signs the Content-Type: a different type is rejected', async () => {
+  const k = key('typed.json');
+  const body = '{"ok":true}';
+  const url = await store.presignPut(k, { contentType: 'application/json', size: body.length, expiresInSec: 60 });
+  const wrong = await fetch(url, { method: 'PUT', headers: { 'content-type': 'text/html' }, body });
+  expect(wrong.status).toBe(403);
+  expect(await store.exists(k)).toBe(false);
+  const ok = await fetch(url, { method: 'PUT', headers: { 'content-type': 'application/json' }, body });
+  expect(ok.status).toBe(200);
+});
+
+test('presigned GET without a download name is still an attachment', async () => {
+  const k = key('plain.svg');
+  await store.put(k, '<svg/>', 'image/svg+xml');
+  const res = await fetch(await store.presignGet(k));
+  expect(res.headers.get('content-disposition')).toBe(attachmentDisposition('download'));
+});
+
+const expires = async (url: Promise<string>) => Number(new URL(await url).searchParams.get('X-Amz-Expires'));
+
+test('presigned URL lifetime is clamped to one hour', async () => {
+  expect(await expires(store.presignGet('k', { expiresInSec: 86_400 }))).toBe(3600);
+  expect(await expires(store.presignPut('k', { contentType: 'text/plain', size: 1, expiresInSec: 86_400 }))).toBe(3600);
+  expect(await expires(store.presignGet('k'))).toBe(900);
+});
+
+test('attachmentDisposition survives lone surrogates, percent signs, empty and very long names', () => {
+  expect(() => attachmentDisposition('bad\ud800name.txt')).not.toThrow();
+  expect(attachmentDisposition('bad\ud800name.txt')).toContain("filename*=UTF-8''bad%EF%BF%BDname.txt");
+  expect(attachmentDisposition('100%.csv')).toStartWith('attachment; filename="100_.csv"; ');
+  expect(attachmentDisposition('')).toBe(`attachment; filename="download"; filename*=UTF-8''download`);
+  const long = attachmentDisposition(`${'я'.repeat(500)}.txt`);
+  expect(decodeURIComponent(long.split("filename*=UTF-8''")[1] ?? '')).toBe('я'.repeat(200));
+  expect(long.length).toBeLessThan(1500);
+});

@@ -33,11 +33,11 @@ export class InMemoryFileStore implements FileStore {
 
   async presignGet(key: string, opts: PresignGetOptions = {}): Promise<string> {
     const download = opts.downloadName === undefined ? '' : `&download=${encodeURIComponent(opts.downloadName)}`;
-    return `memory://${key}?op=get&expires=${opts.expiresInSec ?? 900}${download}`;
+    return `memory://${key}?op=get&expires=${Math.min(opts.expiresInSec ?? 900, 3600)}${download}`;
   }
 
   async presignPut(key: string, opts: PresignPutOptions): Promise<string> {
     const type = encodeURIComponent(opts.contentType);
-    return `memory://${key}?op=put&type=${type}&size=${opts.size}&expires=${opts.expiresInSec ?? 900}`;
+    return `memory://${key}?op=put&type=${type}&size=${opts.size}&expires=${Math.min(opts.expiresInSec ?? 900, 3600)}`;
   }
 }

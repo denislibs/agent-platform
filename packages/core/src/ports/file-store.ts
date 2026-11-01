@@ -1,13 +1,18 @@
 export interface PresignGetOptions {
-  /** Имя файла для Content-Disposition: attachment — браузер скачивает файл, а не открывает его в нашем домене. */
+  /**
+   * Имя файла в Content-Disposition. Скачивание всегда идёт как attachment (браузер не открывает файл в нашем
+   * домене); без имени подставляется `download`.
+   */
   downloadName?: string;
+  /** Срок жизни, секунды: по умолчанию 900, не больше 3600. */
   expiresInSec?: number;
 }
 
 export interface PresignPutOptions {
   contentType: string;
-  /** Подпись включает Content-Length: тело другой длины S3 отвергнет. */
+  /** Подпись включает Content-Length: тело другой длины S3 отвергнет. Content-Type тоже подписан. */
   size: number;
+  /** Срок жизни, секунды: по умолчанию 900, не больше 3600. */
   expiresInSec?: number;
 }
 
@@ -21,7 +26,7 @@ export interface FileStore {
   exists(key: string): Promise<boolean>;
   /** Идемпотентно: удаление отсутствующего ключа не ошибка. */
   delete(key: string): Promise<void>;
-  /** URL для браузера (публичный адрес хранилища); по умолчанию живёт 15 минут. */
+  /** URL для браузера (публичный адрес хранилища); скачивание всегда как вложение. */
   presignGet(key: string, opts?: PresignGetOptions): Promise<string>;
   /** URL для загрузки браузером ровно opts.size байт. */
   presignPut(key: string, opts: PresignPutOptions): Promise<string>;
