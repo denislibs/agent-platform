@@ -1,5 +1,14 @@
 import { asClass, type Resolver } from 'awilix';
-import { Compactor, ExecutorStage, ModelGateway, PlannerStage, ResultComposer, TaskGuard, ToolExecutor } from './agent';
+import {
+  Compactor,
+  ExecutorStage,
+  Finalizer,
+  ModelGateway,
+  PlannerStage,
+  ResultComposer,
+  TaskGuard,
+  ToolExecutor,
+} from './agent';
 import { TaskIntake } from './task-intake';
 
 export interface AgentServices {
@@ -11,6 +20,7 @@ export interface AgentServices {
   executorStage: ExecutorStage;
   plannerStage: PlannerStage;
   composer: ResultComposer;
+  finalizer: Finalizer;
 }
 
 /**
@@ -27,5 +37,6 @@ export function agentServices(): { [K in keyof AgentServices]: Resolver<AgentSer
     executorStage: asClass(ExecutorStage).singleton(),
     plannerStage: asClass(PlannerStage).singleton(),
     composer: asClass(ResultComposer).singleton(),
+    finalizer: asClass(Finalizer).singleton(),
   };
 }
