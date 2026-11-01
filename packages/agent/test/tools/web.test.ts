@@ -118,20 +118,71 @@ describe('browser tools', () => {
     expect(r.output).toContain('no element 9');
   });
 
-  test('browser_failed is retried once', async () => {
-    let calls = 0;
+  test('browser_failed on open and scroll resends the same action once', async () => {
+    for (const [name, args, action] of [
+      ['browser_open', { url: 'https://example.com' }, { type: 'open', url: 'https://example.com', shot: '7-0' }],
+      ['browser_scroll', { direction: 'down' }, { type: 'scroll', direction: 'down', shot: '7-0' }],
+    ] as const) {
+      const actions: BrowserAction[] = [];
+      const ctx = await toolContext({
+        handlers: {
+          browser: a => {
+            actions.push(a);
+            if (actions.length === 1) throw new SandboxError('browser_failed', 'chromium crashed');
+            return page();
+          },
+        },
+      });
+      const r = await runToolCall(browserTools, call(name, args), ctx);
+      expect(r.ok).toBe(true);
+      expect(r.output).toBe(formatSnapshot(page()));
+      expect(actions).toEqual([action, action]);
+    }
+  });
+
+  test('browser_failed on click and type is never resent: a snapshot shows the current page instead', async () => {
+    for (const [name, args, action] of [
+      ['browser_click', { id: 1 }, { type: 'click', id: 1, shot: '7-0' }],
+      [
+        'browser_type',
+        { id: 2, text: 'bun', submit: true },
+        { type: 'type', id: 2, text: 'bun', submit: true, shot: '7-0' },
+      ],
+    ] as const) {
+      const actions: BrowserAction[] = [];
+      const after = page({ url: 'https://example.com/next', title: 'Next' });
+      const ctx = await toolContext({
+        handlers: {
+          browser: a => {
+            actions.push(a);
+            if (actions.length === 1) throw new SandboxError('browser_failed', 'Execution context was destroyed');
+            return after;
+          },
+        },
+      });
+      const r = await runToolCall(browserTools, call(name, args), ctx);
+      expect(actions).toEqual([action, { type: 'snapshot', shot: '7-0' }]);
+      expect(r.ok).toBe(true);
+      expect(r.output).toBe(
+        `The page changed while the action ran; the action may have completed. Current page:\n\n${formatSnapshot(after)}`,
+      );
+    }
+  });
+
+  test('when the follow-up snapshot also fails, the original click error is the result', async () => {
+    const actions: BrowserAction[] = [];
     const ctx = await toolContext({
       handlers: {
-        browser: () => {
-          calls += 1;
-          if (calls === 1) throw new SandboxError('browser_failed', 'chromium crashed');
-          return page();
+        browser: a => {
+          actions.push(a);
+          throw new SandboxError('browser_failed', actions.length === 1 ? 'click failed' : 'snapshot failed');
         },
       },
     });
-    const r = await runToolCall(browserTools, call('browser_open', { url: 'https://example.com' }), ctx);
-    expect(r.ok).toBe(true);
-    expect(calls).toBe(2);
+    const r = await runToolCall(browserTools, call('browser_click', { id: 1 }), ctx);
+    expect(actions.map(a => a.type)).toEqual(['click', 'snapshot']);
+    expect(r.ok).toBe(false);
+    expect(r.output).toBe('click failed');
   });
 
   test('a second browser_failed becomes an error result', async () => {

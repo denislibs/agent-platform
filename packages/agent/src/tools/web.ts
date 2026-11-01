@@ -15,17 +15,33 @@ export function formatSnapshot(s: PageSnapshot): string {
   return lines.join('\n');
 }
 
+export const PAGE_CHANGED_PREFIX =
+  'The page changed while the action ran; the action may have completed. Current page:\n\n';
+
 /**
- * Действие браузера с одним повтором на browser_failed (browserd мог перезапустить Chromium).
+ * Действие браузера; на browser_failed (browserd мог перезапустить Chromium, страница могла уйти в навигацию):
+ * open и scroll повторяются один раз — они идемпотентны. click и type не повторяются никогда: чаще всего сбой —
+ * это навигация, начатая самим действием, и повтор отправил бы форму второй раз. Вместо повтора — снимок
+ * текущей страницы с пометкой, что действие могло выполниться; не удался и снимок — модель видит исходную ошибку.
  * browser_unavailable (сам browserd недоступен) не ловится: это инфраструктура, её обрабатывает цикл.
  */
 async function browse(action: BrowserAction, ctx: ToolContext): Promise<ToolOutcome> {
-  const withShot = { ...action, shot: ctx.callKey };
+  const shot = ctx.callKey;
   try {
-    return { ok: true, output: formatSnapshot(await ctx.sandbox.browser(withShot)) };
+    return { ok: true, output: formatSnapshot(await ctx.sandbox.browser({ ...action, shot })) };
   } catch (err) {
     if (!(err instanceof SandboxError) || err.code !== 'browser_failed') throw err;
-    return { ok: true, output: formatSnapshot(await ctx.sandbox.browser(withShot)) };
+    if (action.type !== 'click' && action.type !== 'type') {
+      return { ok: true, output: formatSnapshot(await ctx.sandbox.browser({ ...action, shot })) };
+    }
+    let current: PageSnapshot;
+    try {
+      current = await ctx.sandbox.browser({ type: 'snapshot', shot });
+    } catch (snapErr) {
+      if (snapErr instanceof SandboxError && snapErr.code === 'browser_failed') throw err;
+      throw snapErr;
+    }
+    return { ok: true, output: PAGE_CHANGED_PREFIX + formatSnapshot(current) };
   }
 }
 
