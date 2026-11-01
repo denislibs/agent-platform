@@ -5,6 +5,7 @@ import {
   formatCredits,
   ListTasksQuerySchema,
   MAX_FILES_PER_TASK,
+  parseCredits,
   ReplyBodySchema,
   UploadBodySchema,
   wellFormed,
@@ -22,6 +23,41 @@ describe('formatCredits', () => {
 
   test('rejects a non-integer amount', () => {
     expect(() => formatCredits(1.5)).toThrow(RangeError);
+  });
+});
+
+describe('parseCredits', () => {
+  test('turns credits with up to 3 decimals into integer millicredits', () => {
+    expect(parseCredits('10')).toBe(10_000);
+    expect(parseCredits('0.5')).toBe(500);
+    expect(parseCredits('2.5')).toBe(2500);
+    expect(parseCredits('1.234')).toBe(1234);
+    expect(parseCredits('0.001')).toBe(1);
+    expect(parseCredits('0.1')).toBe(100);
+    expect(parseCredits('0.3')).toBe(300);
+    expect(parseCredits('1.005')).toBe(1005);
+    expect(parseCredits(' 3 ')).toBe(3000);
+  });
+
+  test('refuses zero, negatives, finer fractions, other notations and unsafe sizes', () => {
+    for (const bad of [
+      '0',
+      '0.000',
+      '-1',
+      '+1',
+      '1.2345',
+      '0.0005',
+      'abc',
+      '',
+      '1e3',
+      '.5',
+      '1.',
+      '1,5',
+      '9007199254740993',
+      '9007199254741',
+    ]) {
+      expect(() => parseCredits(bad)).toThrow(RangeError);
+    }
   });
 });
 

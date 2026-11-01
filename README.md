@@ -105,3 +105,9 @@ Local runs use `NODE_ENV=development`. Any other value, unset included, counts a
 is on and the API warns at startup while magic links still go to the log. Origin and CSRF checks are on everywhere.
 The Better Auth integration tests (`packages/api/test/integration`) run on Postgres from `infra:up`
 and are not part of `test:unit`.
+
+Credits are granted by hand during the beta (the user must have signed in once):
+
+```bash
+bun run admin:grant someone@example.com 10        # 10 credits = 10000 millicredits; up to 3 decimals
+```

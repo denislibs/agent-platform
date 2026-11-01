@@ -425,15 +425,15 @@
               },
               {
                 "name": "@agent/db",
-                "message": "@agent/db and @agent/composition are allowed in @agent/api only in src/auth/better-auth.ts and src/main.ts: routes take ports as one object."
+                "message": "@agent/db and @agent/composition are allowed in @agent/api only in src/auth/better-auth.ts, src/main.ts and src/admin-grant.ts: routes take ports as one object."
               },
               {
                 "name": "@agent/composition",
-                "message": "@agent/db and @agent/composition are allowed in @agent/api only in src/auth/better-auth.ts and src/main.ts: routes take ports as one object."
+                "message": "@agent/db and @agent/composition are allowed in @agent/api only in src/auth/better-auth.ts, src/main.ts and src/admin-grant.ts: routes take ports as one object."
               },
               {
                 "name": "awilix",
-                "message": "awilix is allowed in @agent/api only in src/auth/better-auth.ts and src/main.ts: routes take their dependencies as one object."
+                "message": "awilix is allowed in @agent/api only in src/auth/better-auth.ts, src/main.ts and src/admin-grant.ts: routes take their dependencies as one object."
               }
             ],
             "patterns": [
@@ -456,11 +456,11 @@
               },
               {
                 "group": ["@agent/db/**", "@agent/composition/**"],
-                "message": "@agent/db and @agent/composition are allowed in @agent/api only in src/auth/better-auth.ts and src/main.ts: routes take ports as one object."
+                "message": "@agent/db and @agent/composition are allowed in @agent/api only in src/auth/better-auth.ts, src/main.ts and src/admin-grant.ts: routes take ports as one object."
               },
               {
                 "group": ["awilix/**"],
-                "message": "awilix is allowed in @agent/api only in src/auth/better-auth.ts and src/main.ts: routes take their dependencies as one object."
+                "message": "awilix is allowed in @agent/api only in src/auth/better-auth.ts, src/main.ts and src/admin-grant.ts: routes take their dependencies as one object."
               }
             ]
           }
@@ -468,7 +468,7 @@
       }
     },
     {
-      "files": ["packages/api/src/auth/better-auth.ts", "packages/api/src/main.ts"],
+      "files": ["packages/api/src/auth/better-auth.ts", "packages/api/src/main.ts", "packages/api/src/admin-grant.ts"],
       "rules": {
         "no-restricted-imports": [
           "error",
