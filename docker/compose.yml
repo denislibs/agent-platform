@@ -42,6 +42,26 @@ services:
       - garagemeta:/var/lib/garage/meta
       - garagedata:/var/lib/garage/data
 
+  worker:
+    profiles: ['app']
+    build:
+      context: ..
+      dockerfile: docker/backend/Dockerfile
+    image: agent-backend:dev
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgres://agent:agent@postgres:5432/agent
+      VALKEY_URL: redis://valkey:6379
+      S3_ENDPOINT: http://garage:3900
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      postgres: { condition: service_healthy }
+      valkey: { condition: service_healthy }
+      garage: { condition: service_started }
+    restart: unless-stopped
+    stop_grace_period: 60s
+
 volumes:
   pgdata:
   valkeydata:
