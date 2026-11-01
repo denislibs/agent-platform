@@ -47,6 +47,7 @@ services:
     profiles: ['app']
     # Образ собирает сервис worker (bun run backend:build).
     image: agent-backend:dev
+    pull_policy: never # образ собирает сервис worker
     command: ['bun', 'packages/db/src/migrate.ts']
     # Миграциям нужен только DATABASE_URL: секреты из .env сюда не передаются.
     environment:
@@ -87,6 +88,7 @@ services:
     profiles: ['app']
     # Образ собирает сервис worker (bun run backend:build); команда — API.
     image: agent-backend:dev
+    pull_policy: never # образ собирает сервис worker
     command: ['bun', 'packages/api/src/main.ts']
     env_file: ../.env
     environment:
