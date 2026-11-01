@@ -107,6 +107,8 @@ export interface SandboxInfo {
  * Одна песочница на задачу: create идемпотентен (остановленную — запускает), id = agent-sbx-<taskId>.
  * Неожиданный SandboxError('not_running') — песочница упала сама (например, агент убил её процессы или
  * пришёл OOM) — восстановим: `provider.create(taskId)` снова запускает её с теми же файлами.
+ * Если под именем песочницы уже есть контейнер без метки провайдера, create бросает
+ * SandboxError('foreign_container'): чужой контейнер не трогаем, ошибка неисправимая, и воркер не повторяет job.
  */
 export interface SandboxProvider {
   create(taskId: string): Promise<Sandbox>;

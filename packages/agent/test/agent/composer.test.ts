@@ -4,7 +4,7 @@ import { calls, planned, say, setupAgent } from './fixtures';
 
 type C = ReturnType<typeof setupAgent>;
 
-async function finalizing(c: C, opts: { accept?: boolean; partial?: boolean } = {}) {
+async function finalizing(c: C, opts: { accept?: boolean; partial?: boolean; statusStep?: boolean } = {}) {
   const task = await planned(c, ['collect']);
   const [sub] = await c.subtasks.list(task.id);
   if (opts.accept !== false) {
@@ -18,6 +18,14 @@ async function finalizing(c: C, opts: { accept?: boolean; partial?: boolean } = 
     currentKind: 'finalize',
     ...(opts.partial ? { partial: true, stopReason: 'token_budget' } : {}),
   });
+  // Как guard.toFinalizing: попытка финализации отсчитывается от этого шага.
+  if (opts.statusStep !== false) {
+    await c.steps.append({
+      taskId: task.id,
+      agent: 'system',
+      payload: { type: 'status', from: 'running', to: 'finalizing' },
+    });
+  }
   const sandbox = await c.sandboxes.create(task.id);
   await sandbox.writeFile('outputs/table.md', '| a |');
   return task;
@@ -80,6 +88,20 @@ describe('ResultComposer', () => {
     const first = await c.composer.compose(task.id);
     const second = await c.composer.compose(task.id);
     expect(second).toEqual(first);
+    expect(c.llm.calls).toHaveLength(1);
+  });
+
+  test('without a finalizing status step an earlier planner reply does not count as an attempt', async () => {
+    const c = setupAgent();
+    const task = await finalizing(c, { statusStep: false });
+    // Ответ планировщика уровня задачи до финализации, шага status → finalizing в истории нет.
+    await c.steps.append({
+      taskId: task.id,
+      agent: 'planner',
+      payload: { type: 'llm_call', model: 'm', content: 'planning', toolCalls: [], finishReason: 'stop' },
+    });
+    c.llm.push(calls(['finish', { answer: 'Composed', files: [] }]));
+    expect((await c.composer.compose(task.id)).answer).toBe('Composed');
     expect(c.llm.calls).toHaveLength(1);
   });
 

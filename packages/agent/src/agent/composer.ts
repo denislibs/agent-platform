@@ -61,10 +61,15 @@ export class ResultComposer {
 
     // Одна попытка на финализацию: llm_call планировщика уровня задачи после последнего перехода в finalizing
     // значит, что модель уже отвечала (без finish) и оплачена. Повтор сразу отдаёт запасной ответ.
+    // Без шага status → finalizing попытки не было: иначе ответы планировщика с начала задачи сочлись бы за неё.
     const since = history.findLastIndex(s => s.payload.type === 'status' && s.payload.to === 'finalizing');
-    const attempted = history
-      .slice(since + 1)
-      .some(s => s.agent === 'planner' && s.subtaskId === null && s.payload.type === 'llm_call' && !s.payload.purpose);
+    const attempted =
+      since >= 0 &&
+      history
+        .slice(since + 1)
+        .some(
+          s => s.agent === 'planner' && s.subtaskId === null && s.payload.type === 'llm_call' && !s.payload.purpose,
+        );
 
     if (!result && !attempted) {
       const context = [
