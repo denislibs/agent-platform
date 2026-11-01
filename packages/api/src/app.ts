@@ -5,6 +5,7 @@ import { requireUser } from './auth/middleware';
 import type { ApiDeps, ApiEnv } from './deps';
 import { mapError } from './errors';
 import { meRoutes } from './routes/me';
+import { taskActionRoutes } from './routes/task-actions';
 import { taskRoutes } from './routes/tasks';
 
 /** Тела запросов /api/auth/* — JSON с адресом и URL; больше этого Better Auth читать незачем. */
@@ -49,5 +50,6 @@ export function createApp(deps: ApiDeps): Hono<ApiEnv> {
 
   meRoutes(app, deps);
   taskRoutes(app, deps);
+  taskActionRoutes(app, deps);
   return app;
 }

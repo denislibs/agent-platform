@@ -1,5 +1,6 @@
 import { asValue } from 'awilix';
 import { agentServices } from '@agent/agent';
+import type { Task } from '@agent/core';
 import { createTestContainer, testConfig } from '@agent/testing';
 import { createApp, type SessionUser } from '../../src';
 import { FakeAuth } from '../fake-auth';
@@ -32,3 +33,17 @@ export function setupApi(env: Record<string, string> = {}) {
 }
 
 export type ApiTest = ReturnType<typeof setupApi>;
+
+/** Задача с планом из одной подзадачи, остановленная ask_user на исполнении: lastSeq = 2 (запрос, пауза). */
+export async function pausedTask(t: ApiTest, userId: string): Promise<Task> {
+  const { c } = t;
+  const task = await c.intake.create({ userId, prompt: 'Find suppliers' });
+  c.queue.next(); // job plan не нужен: план «составлен» вручную
+  await c.tasks.transition(task.id, 'planning', { currentKind: 'plan' });
+  await c.subtasks.insertMany(task.id, [
+    { goal: 'collect suppliers', context: '', doneCriteria: 'a list exists', expectedOutputs: [] },
+  ]);
+  const running = await c.tasks.transition(task.id, 'running', { currentKind: 'execute' });
+  await c.guard.pause(running, 'execute');
+  return (await c.tasks.get(task.id))!;
+}
