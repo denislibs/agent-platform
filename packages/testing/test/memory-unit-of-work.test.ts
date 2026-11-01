@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { CryptoIds } from '@agent/core';
-import { FixedClock, InMemoryState, InMemoryUnitOfWork } from '@agent/testing';
+import { createTestContainer, FixedClock, InMemoryState, InMemoryUnitOfWork } from '@agent/testing';
 
 const NESTED = 'UnitOfWork.run cannot be nested: use the tx passed to fn';
 const setup = () =>
@@ -41,5 +41,46 @@ describe('InMemoryUnitOfWork', () => {
     const uow = setup();
     await uow.run(async () => 'first');
     expect(await uow.run(async () => 'second')).toBe('second');
+  });
+});
+
+describe('InMemoryUnitOfWork misuse', () => {
+  test('a container repository used inside run throws and the run rolls back', async () => {
+    const { uow, tasks, memory } = createTestContainer().cradle;
+    const userId = memory.seedUser();
+    const p = uow.run(async tx => {
+      await tx.tasks.create({ userId, prompt: 'kept?' });
+      await tasks.countActive(userId); // репозиторий из контейнера, а не tx
+    });
+    await expect(p).rejects.toThrow(/repository from the container used inside UnitOfWork\.run/);
+    expect(await tasks.countActive(userId)).toBe(0);
+  });
+
+  test('container repositories keep working outside run, even while a run is in flight', async () => {
+    const { uow, tasks, memory } = createTestContainer().cradle;
+    const userId = memory.seedUser();
+    let release!: () => void;
+    const gate = new Promise<void>(r => (release = r));
+    let created!: () => void;
+    const ready = new Promise<void>(r => (created = r));
+    const running = uow.run(async tx => {
+      await tx.tasks.create({ userId, prompt: 'x' });
+      created();
+      await gate;
+    });
+    await ready; // run уже внутри fn и ждёт gate
+    expect(await tasks.countActive(userId)).toBe(1); // другой асинхронный контекст — не ошибка
+    release();
+    await running;
+  });
+
+  test('tx repositories work inside run as before', async () => {
+    const { uow, tasks, memory } = createTestContainer().cradle;
+    const userId = memory.seedUser();
+    await uow.run(async tx => {
+      const t = await tx.tasks.create({ userId, prompt: 'x' });
+      expect((await tx.tasks.get(t.id))?.prompt).toBe('x');
+    });
+    expect(await tasks.countActive(userId)).toBe(1);
   });
 });
