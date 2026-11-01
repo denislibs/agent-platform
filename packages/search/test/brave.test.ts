@@ -112,7 +112,10 @@ describe('BraveSearchProvider tails', () => {
       await p.search('q', { count: Number.NaN });
       await p.search('q', { count: 2.9 });
       await p.search('q', { count: 1e9 });
-      expect(brave.requests.map(r => r.count)).toEqual(['8', '2', '20']);
+      await p.search('q', { count: Number.POSITIVE_INFINITY });
+      await p.search('q', { count: 0 });
+      await p.search('q', { count: -5 });
+      expect(brave.requests.map(r => r.count)).toEqual(['8', '2', '20', '20', '1', '1']);
     } finally {
       brave.stop();
     }
@@ -134,7 +137,51 @@ describe('BraveSearchProvider tails', () => {
       const p = new BraveSearchProvider({ apiKey: 'k', baseUrl: brave.baseUrl, timeoutMs: 200 });
       const err = await p.search('q').catch(e => e);
       expect(err).toBeInstanceOf(SearchError);
+      expect(err).toMatchObject({ code: 'unavailable', retryable: true, message: 'search response timed out' });
+    } finally {
+      brave.stop();
+    }
+  });
+
+  test('a connection reset mid-body is a retryable unavailable error', async () => {
+    const brave = fakeBrave(
+      () =>
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(new TextEncoder().encode('{"web":'));
+              setTimeout(() => c.error(new Error('reset')), 50);
+            },
+          }),
+          { headers: { 'content-type': 'application/json' } },
+        ),
+    );
+    try {
+      const p = new BraveSearchProvider({ apiKey: 'k', baseUrl: brave.baseUrl });
+      const err = await p.search('q').catch(e => e);
+      expect(err).toBeInstanceOf(SearchError);
       expect(err).toMatchObject({ code: 'unavailable', retryable: true });
+      expect(err.message).not.toBe('search response timed out');
+    } finally {
+      brave.stop();
+    }
+  });
+
+  test('broken items are skipped before the count slice', async () => {
+    const brave = fakeBrave(() =>
+      Response.json({
+        web: {
+          results: [
+            { title: 1, url: 'https://broken.dev' },
+            { title: 'A', url: 'https://a.dev' },
+            { title: 'B', url: 'https://b.dev' },
+          ],
+        },
+      }),
+    );
+    try {
+      const p = new BraveSearchProvider({ apiKey: 'k', baseUrl: brave.baseUrl });
+      expect(await p.search('q', { count: 1 })).toEqual([{ title: 'A', url: 'https://a.dev', snippet: '' }]);
     } finally {
       brave.stop();
     }
@@ -161,6 +208,16 @@ describe('BraveSearchProvider tails', () => {
 test('stripHtml decodes numeric entities and &apos; and never yields tags', () => {
   expect(stripHtml('it&#39;s &#x27;ok&#x27; &apos;yes&apos; &#8212; done')).toBe("it's 'ok' 'yes' — done");
   expect(stripHtml('&lt;b&gt;bold&lt;/b&gt;')).toBe('bold');
+});
+
+test('stripHtml does not resolve entity names through Object.prototype', () => {
+  expect(stripHtml('use &constructor; and &toString;')).toBe('use &constructor; and &toString;');
+});
+
+test('stripHtml keeps decoded angle brackets that are not HTML tags', () => {
+  expect(stripHtml('x &lt; y &amp;&amp; y &gt; z')).toBe('x < y && y > z');
+  expect(stripHtml('List&lt;String&gt; items')).toBe('List<String> items');
+  expect(stripHtml('a &lt;a href="x"&gt;link&lt;/a&gt; &lt;br/&gt;b')).toBe('a link b');
 });
 
 test('stripHtml collapses whitespace and decodes common entities once', () => {
