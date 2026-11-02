@@ -24,6 +24,11 @@
   outline: none;
   box-shadow: var(--shadow-focus);
 }
+/* Сюда фокус переносит само приложение при смене страницы (для скринридера), с клавиатуры они недостижимы — кольцу нечего показывать. */
+.ui-root main:focus-visible,
+.ui-root h1[tabindex='-1']:focus-visible {
+  box-shadow: none;
+}
 .ui-root ::selection {
   background: var(--accent-soft);
 }
