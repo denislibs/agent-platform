@@ -77,8 +77,24 @@ function TaskNav() {
           }
         />
       ))}
-      {items.length === 0 && tasks.loaded.value && (
-        <p class="ui-hint">{tasks.query.value ? 'No tasks match your search.' : 'No tasks yet.'}</p>
+      {items.length === 0 && tasks.error.value && tasks.query.value ? (
+        <>
+          <p class="ui-hint">Could not search your tasks.</p>
+          <Button
+            variant="ghost"
+            size="sm"
+            block
+            loading={tasks.loading.value}
+            onClick={() => void tasks.search(tasks.query.value)}
+          >
+            Try again
+          </Button>
+        </>
+      ) : (
+        items.length === 0 &&
+        tasks.loaded.value && (
+          <p class="ui-hint">{tasks.query.value ? 'No tasks match your search.' : 'No tasks yet.'}</p>
+        )
       )}
       {tasks.nextCursor.value !== null && (
         <Button variant="ghost" size="sm" block loading={tasks.loading.value} onClick={() => void tasks.more()}>

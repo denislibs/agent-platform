@@ -18,7 +18,11 @@ export function createTaskList(api: Api) {
   /** Номер последнего запроса: ответ на устаревший (другой поиск, выход) отбрасывается. */
   let latest = 0;
 
-  async function fetchPage(before: string | undefined, merge: (page: TaskSummary[]) => TaskSummary[]) {
+  async function fetchPage(
+    before: string | undefined,
+    merge: (page: TaskSummary[]) => TaskSummary[],
+    onFailure?: () => void,
+  ) {
     const mine = ++latest;
     loading.value = true;
     try {
@@ -31,7 +35,10 @@ export function createTaskList(api: Api) {
         error.value = null;
       });
     } catch (err) {
-      if (mine === latest && err instanceof ApiRequestError) error.value = err;
+      if (mine === latest) {
+        if (err instanceof ApiRequestError) error.value = err;
+        onFailure?.();
+      }
     } finally {
       if (mine === latest) loading.value = false;
     }
@@ -47,7 +54,17 @@ export function createTaskList(api: Api) {
     /** Новый поиск: список заменяется первой страницей совпадений; пустая строка возвращает весь список. */
     search(text: string): Promise<void> {
       query.value = text.trim();
-      return fetchPage(undefined, page => page);
+      // Неудача не оставляет старых строк и курсора: иначе «Load more» нёс бы старый курсор с новым запросом.
+      return fetchPage(
+        undefined,
+        page => page,
+        () => {
+          batch(() => {
+            items.value = [];
+            nextCursor.value = null;
+          });
+        },
+      );
     },
     /** Первая страница заново; уже подгруженные «старые» страницы отбрасываются. */
     reload: () => fetchPage(undefined, page => page),

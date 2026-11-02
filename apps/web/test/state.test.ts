@@ -192,3 +192,61 @@ test('clear forgets the search of the session that ended', async () => {
   state.tasks.clear();
   expect(state.tasks.query.value).toBe('');
 });
+
+test('a failed search leaves no old rows or cursor; the same search runs again and fills the list, clearing the error', async () => {
+  let fail = true;
+  const state = createAppState({
+    fetch: fakeFetch({
+      'GET /api/tasks?limit=20': json({ tasks: [t('alpha'), t('beta')], nextCursor: 'c1' }),
+      'GET /api/tasks?limit=20&q=alp': () =>
+        fail
+          ? json({ error: { code: 'internal', message: 'boom' } }, 500)
+          : json({ tasks: [t('alpha')], nextCursor: null }),
+    }).fetch,
+  });
+  await state.tasks.reload();
+  await state.tasks.search('alp');
+  expect(state.tasks.items.value).toEqual([]);
+  expect(state.tasks.nextCursor.value).toBeNull();
+  expect(state.tasks.query.value).toBe('alp');
+  expect(state.tasks.error.value).not.toBeNull();
+  fail = false;
+  await state.tasks.search('alp');
+  expect(state.tasks.items.value.map(x => x.id)).toEqual(['alpha']);
+  expect(state.tasks.error.value).toBeNull();
+});
+
+test('clear() drops a response still in flight and resets loading', async () => {
+  const slow = Promise.withResolvers<Response>();
+  const state = createAppState({
+    fetch: fakeFetch({ 'GET /api/tasks?limit=20': () => slow.promise }).fetch,
+  });
+  const pending = state.tasks.reload();
+  expect(state.tasks.loading.value).toBe(true);
+  state.tasks.clear();
+  expect(state.tasks.loading.value).toBe(false);
+  slow.resolve(json({ tasks: [t('a')], nextCursor: null }));
+  await pending;
+  expect(state.tasks.items.value).toEqual([]);
+  expect(state.tasks.loaded.value).toBe(false);
+  expect(state.tasks.loading.value).toBe(false);
+});
+
+test('a more() still in flight is dropped when a search starts', async () => {
+  const slow = Promise.withResolvers<Response>();
+  const state = createAppState({
+    fetch: fakeFetch({
+      'GET /api/tasks?limit=20': json({ tasks: [t('alpha')], nextCursor: 'c1' }),
+      'GET /api/tasks?limit=20&before=c1': () => slow.promise,
+      'GET /api/tasks?limit=20&q=be': json({ tasks: [t('beta')], nextCursor: null }),
+    }).fetch,
+  });
+  await state.tasks.reload();
+  const more = state.tasks.more();
+  await state.tasks.search('be');
+  slow.resolve(json({ tasks: [t('gamma')], nextCursor: 'c2' }));
+  await more;
+  expect(state.tasks.items.value.map(x => x.id)).toEqual(['beta']);
+  expect(state.tasks.nextCursor.value).toBeNull();
+  expect(state.tasks.loading.value).toBe(false);
+});

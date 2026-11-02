@@ -125,3 +125,26 @@ test('the search stays when the Shell is mounted again on another screen', async
   expect((screen.getByRole('searchbox', { name: 'Search tasks' }) as HTMLInputElement).value).toBe('sup');
   expect(calls.filter(c => c.path.startsWith('/api/tasks'))).toHaveLength(1);
 });
+
+test('a failed search shows a hint, and Try again repeats the same search', async () => {
+  let failures = 1;
+  const { view, calls } = setup({
+    ...signedIn(),
+    'GET /api/tasks?limit=20': listed({ id: 't1', prompt: 'Find suppliers' }, { id: 't2', prompt: 'Plan a trip' }),
+    'GET /api/tasks?limit=20&q=sup': () =>
+      failures-- > 0
+        ? json({ error: { code: 'internal', message: 'boom' } }, 500)
+        : listed({ id: 't1', prompt: 'Find suppliers' }),
+  });
+  view(app);
+  await screen.findByRole('link', { name: /Plan a trip/ });
+  await userEvent.type(screen.getByRole('searchbox', { name: 'Search tasks' }), 'sup');
+  await screen.findByText('Could not search your tasks.');
+  expect(screen.queryByRole('link', { name: /Plan a trip/ })).toBeNull();
+  expect(screen.queryByText('No tasks match your search.')).toBeNull();
+
+  await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  await screen.findByRole('link', { name: /Find suppliers/ });
+  expect(screen.queryByText('Could not search your tasks.')).toBeNull();
+  expect(calls.filter(c => c.path === '/api/tasks?limit=20&q=sup')).toHaveLength(2);
+});
