@@ -35,6 +35,10 @@
   padding: var(--space-3) var(--space-4) 0;
   outline: none;
 }
+/* Фокус показывает рамка всего композера (:focus-within): кольцо вокруг внутреннего поля не совпадает с её скруглением. */
+.ui-composer__input:focus-visible {
+  box-shadow: none;
+}
 .ui-composer__input::placeholder {
   color: var(--text-quaternary);
 }
