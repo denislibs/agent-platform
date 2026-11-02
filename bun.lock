@@ -65,6 +65,7 @@
       },
       "devDependencies": {
         "@agent/queue": "workspace:*",
+        "@agent/storage": "workspace:*",
         "@agent/testing": "workspace:*",
         "@agent/worker": "workspace:*",
         "bullmq": "5.81.5",

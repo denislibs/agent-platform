@@ -21,6 +21,35 @@ bun test                    # all tests (needs infra)
 bun run test:unit           # fast tests, no Docker needed
 ```
 
+## Run the app
+
+`.env` needs `BETTER_AUTH_SECRET` (API, `openssl rand -base64 32`) and `LITELLM_BASE_URL`, `LITELLM_API_KEY`,
+`PLANNER_MODEL`, `EXECUTOR_MODEL` (worker); the rest of `.env.example` works as is. The worker also needs the sandbox
+image (`bun run sandbox:build`).
+
+In Docker, on `http://localhost:8080`:
+
+```bash
+bun run stack:up            # infra, migrations, bucket CORS, worker, API, web app (Vite with HMR) behind nginx
+bun run stack:logs          # the magic link is printed here (no mail provider yet)
+docker compose -f docker/compose.yml --profile app exec api bun packages/api/src/admin-grant.ts you@example.com 10
+```
+
+Without Docker, on `http://localhost:5173` (each command in its own terminal):
+
+```bash
+bun run infra:up && bun run infra:wait && bun run db:migrate
+bun run s3:cors             # once per Garage volume
+NODE_ENV=development BETTER_AUTH_URL=http://localhost:5173 bun run api
+bun run worker
+bun run web:dev
+bun run admin:grant you@example.com 10
+```
+
+Sign in with your email, open the link from the logs (API log without Docker), then grant credits: a user exists
+after the first sign-in, and a new account has none. `NODE_ENV=development` is for local runs only: it turns off
+Better Auth rate limiting and the production warning; the Docker stack leaves it unset.
+
 ## UI kit
 
 ```bash
@@ -42,6 +71,14 @@ bun run web:build           # production build in apps/web/dist (nginx serves it
 bun run test:web            # component tests (happy-dom in its own process; part of test:unit)
 bun run test:e2e:web        # Playwright: the real API and worker on ScriptedLlm (needs infra:up and Chromium)
 ```
+
+The end-to-end test (`apps/web/e2e`, not part of `test` or `test:unit`) starts two servers itself: the backend
+`packages/api/test/web-stack.ts` (API and worker in one process on the `*_test` database, scripted model, in-memory
+sandbox, captured mail) on `127.0.0.1:5197` and Vite on `http://localhost:5199`. In Chromium it signs in with the
+magic link, attaches a file (a real presigned PUT to Garage), runs a task, answers the agent's question and downloads
+the result. It adds `http://localhost:5199` to the bucket CORS and on exit deletes its users (`@web-e2e.test.dev`,
+tasks and files cascade), their S3 objects and its queue. Install the browser once: `bunx playwright install chromium`
+(from `apps/web`).
 
 Without Docker, start the API with the app's origin: Better Auth compares `Origin` with `BETTER_AUTH_URL`.
 
