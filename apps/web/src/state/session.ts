@@ -13,10 +13,13 @@ export function createSession(api: Api) {
   const status = signal<SessionStatus>('loading');
   const me = signal<MeResponse | null>(null);
   const config = signal<ClientConfig | null>(null);
+  /** Пользователь вышел сам (кнопка «Sign out»): вход открывается без памятки о странице возврата. */
+  const leftOnPurpose = signal(false);
 
   const applyProfile = (profile: MeResponse) => {
     batch(() => {
       me.value = profile;
+      leftOnPurpose.value = false;
       status.value = 'signed_in';
     });
     setTheme(profile.user.theme);
@@ -26,6 +29,7 @@ export function createSession(api: Api) {
     status,
     me,
     config,
+    leftOnPurpose,
     async load(): Promise<void> {
       const [cfg, profile] = await Promise.allSettled([api.config(), api.me()]);
       if (cfg.status === 'fulfilled') config.value = cfg.value;
@@ -54,11 +58,13 @@ export function createSession(api: Api) {
     },
     async signOut(): Promise<void> {
       await api.signOut();
-      this.signedOut();
+      this.signedOut(true);
     },
-    signedOut(): void {
+    /** Сессии больше нет; byUser — вышел сам, иначе она кончилась (401, get-session без сессии). */
+    signedOut(byUser = false): void {
       batch(() => {
         me.value = null;
+        leftOnPurpose.value = byUser;
         status.value = 'signed_out';
       });
     },

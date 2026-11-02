@@ -44,10 +44,22 @@ export function createTaskList(api: Api) {
         return [...items.value, ...page.filter(t => !known.has(t.id))];
       });
     },
-    /** Новая задача — в начало; известная — заменяется на месте (статус с экрана задачи). */
+    /**
+     * Известная задача заменяется на месте (статус с экрана задачи). Неизвестная встаёт по времени создания — список
+     * идёт от новых к старым: новее первой — в начало, между загруженными — на своё место. Старше всех загруженных —
+     * только когда страниц больше нет; иначе она придёт с «Load more» (старая задача, открытая по ссылке, не прыгает
+     * наверх).
+     */
     upsert(task: TaskSummary): void {
-      const at = items.value.findIndex(t => t.id === task.id);
-      items.value = at === -1 ? [task, ...items.value] : items.value.map(t => (t.id === task.id ? task : t));
+      const list = items.value;
+      if (list.some(t => t.id === task.id)) {
+        items.value = list.map(t => (t.id === task.id ? task : t));
+        return;
+      }
+      const created = Date.parse(task.createdAt);
+      const at = list.findIndex(t => Date.parse(t.createdAt) < created);
+      if (at !== -1) items.value = [...list.slice(0, at), task, ...list.slice(at)];
+      else if (nextCursor.value === null) items.value = [...list, task];
     },
     clear(): void {
       batch(() => {

@@ -59,6 +59,19 @@ test('a 401 in the middle of work ends the session and shows sign-in', async () 
   expect(location.pathname).toBe('/sign-in');
 });
 
+test('Sign out leads to a clean sign-in page, without a return to the settings', async () => {
+  start({ ...signedIn(), 'POST /api/auth/sign-out': json({ success: true }) }, '/settings');
+  await userEvent.click(await screen.findByRole('button', { name: 'Sign out' }));
+  await screen.findByRole('button', { name: 'Email me a sign-in link' });
+  expect(location.pathname + location.search).toBe('/sign-in');
+});
+
+test('a 401 on the settings page remembers it for after sign-in', async () => {
+  start({ ...signedIn(), 'GET /api/tasks': unauthorized }, '/settings');
+  await screen.findByRole('button', { name: 'Email me a sign-in link' });
+  expect(location.pathname + location.search).toBe('/sign-in?next=%2Fsettings');
+});
+
 test('the task route opens the task screen; an unknown path is a not-found page inside the shell', async () => {
   start(
     {

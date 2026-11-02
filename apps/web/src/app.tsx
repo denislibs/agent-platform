@@ -54,17 +54,14 @@ function TaskRoute({ id }: { id: string }) {
  * (таймеры скрытой вкладки браузер притормаживает). Работает только с сессией; сбой сети молчит, «сессии нет» — вход.
  */
 function useSessionRefresh(): void {
-  const { session, api } = useApp();
-  const status = session.status.value;
+  const app = useApp();
+  const status = app.session.status.value;
   useEffect(() => {
     if (status !== 'signed_in') return;
     let last = Date.now();
     const touch = () => {
       last = Date.now();
-      api.touchSession().then(
-        alive => alive || session.signedOut(),
-        () => undefined,
-      );
+      app.touchSession().catch(() => undefined);
     };
     const timer = setInterval(() => {
       if (document.visibilityState === 'visible') touch();
@@ -77,7 +74,7 @@ function useSessionRefresh(): void {
       clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [status, api, session]);
+  }, [status, app]);
 }
 
 /** Охрана маршрутов: без сессии — только вход; с сессией вход не нужен. 401 посреди работы переводит сюда же. */
@@ -93,9 +90,10 @@ function Routes() {
   // Без сессии вход помнит страницу, на которую вернуться; после входа — назад на неё (только путь этого приложения).
   const returnTo = safeReturnPath(query[RETURN_PARAM]) ?? '/';
   useEffect(() => {
-    if (status === 'signed_out' && !onSignIn) route(signInPath(url), true);
+    // Вышел сам — вход без памятки: возвращать на настройки, откуда нажали «Sign out», незачем.
+    if (status === 'signed_out' && !onSignIn) route(session.leftOnPurpose.peek() ? '/sign-in' : signInPath(url), true);
     if (status === 'signed_in' && onSignIn) route(returnTo, true);
-  }, [status, onSignIn, url, returnTo, route]);
+  }, [status, onSignIn, url, returnTo, route, session]);
   useSessionRefresh();
 
   if (status === 'unreachable')
