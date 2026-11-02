@@ -38,3 +38,8 @@ test('every ui-* class used by the components and the showcase exists in the sty
   }
   expect([...missing]).toEqual([]);
 });
+
+test('the composer shows focus on its frame, not as a ring around the inner field', () => {
+  expect(styles).toMatch(/\.ui-composer:focus-within\s*\{[^}]*border-color/);
+  expect(styles).toMatch(/\.ui-composer__input:focus-visible\s*\{[^}]*box-shadow:\s*none/);
+});
