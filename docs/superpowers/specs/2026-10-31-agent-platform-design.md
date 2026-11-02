@@ -21,7 +21,7 @@ SaaS для международного рынка: пользователь с
 | Язык и инструменты | TypeScript 7 (нативный компилятор на Go) во всех пакетах, линтер oxlint, форматтер prettier |
 | API | Hono на Bun |
 | Фронтенд | Preact + `@preact/signals`, Vite (запуск через `bunx --bun vite`), роутер `preact-iso`, Tailwind CSS |
-| Дизайн-система | [docs/design/design-system.md](../../design/design-system.md): отдельный пакет `packages/ui` (ui-kit) — токены (темы dark / light / auto), CSS-компоненты `ui-*`, Preact-обёртки, паттерны агента; шрифты Geist / Instrument Serif / Geist Mono, иконки `lucide-preact`. Исходники до создания пакета — `design/` |
+| Дизайн-система | [docs/design/design-system.md](../../design/design-system.md): отдельный пакет `packages/ui` (ui-kit) — токены (темы dark / light / auto), CSS-компоненты `ui-*`, Preact-обёртки, паттерны агента; шрифты Geist / Instrument Serif / Geist Mono, иконки `lucide-preact`. Живая витрина — `bun run ui:dev` |
 | Модели | Свои Qwen и DeepSeek через LiteLLM (OpenAI-совместимый API), клиент — `openai` SDK с подменённым `baseURL` |
 | Ядро агента | Планировщик (DeepSeek) + исполнители (Qwen), подзадачи выполняются последовательно |
 | Очереди | BullMQ на Valkey |
@@ -353,7 +353,7 @@ usage_events     id, user_id, task_id, model, tokens_in, tokens_out,
 ## 12. Фронтенд
 
 Внешний вид, компоненты и анимации — только из ui-kit `packages/ui`
-([дизайн-система](../../design/design-system.md), эталон вёрстки — `design/preview.html`).
+([дизайн-система](../../design/design-system.md), эталон вёрстки — витрина `packages/ui/showcase` (`bun run ui:dev`)).
 `apps/web` не пишет собственных стилей для того, что есть в ui-kit. Тема (dark / light / auto)
 выбирается в настройках и хранится в профиле пользователя.
 

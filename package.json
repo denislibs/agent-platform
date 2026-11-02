@@ -6,13 +6,16 @@
     "packages/*"
   ],
   "scripts": {
-    "test": "bun test",
-    "test:unit": "bun test packages/shared packages/core packages/testing packages/llm packages/search packages/agent packages/api/test/unit",
+    "test": "bun test && bun run test:ui",
+    "test:unit": "bun test packages/shared packages/core packages/testing packages/llm packages/search packages/agent packages/api/test/unit && bun run test:ui",
+    "test:ui": "bun test --preload ./packages/ui/test/dom.ts --path-ignore-patterns '**/node_modules/**' packages/ui",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "oxlint",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "bun run typecheck && bun run lint && bun run format:check",
+    "ui:dev": "bun run --cwd packages/ui dev",
+    "ui:build": "bun run --cwd packages/ui build",
     "sandbox:build": "docker build -t agent-sandbox:dev docker/sandbox",
     "infra:up": "docker compose -f docker/compose.yml up -d",
     "infra:down": "docker compose -f docker/compose.yml down",

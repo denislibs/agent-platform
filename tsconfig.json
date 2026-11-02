@@ -11,7 +11,9 @@
     "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact"
   },
-  "include": ["packages/*/src", "packages/*/test", "packages/*/*.ts", "scripts"]
+  "include": ["packages/*/src", "packages/*/test", "packages/*/*.ts", "packages/ui/showcase", "scripts"]
 }

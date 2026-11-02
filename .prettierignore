@@ -2,8 +2,8 @@ bun.lock
 node_modules
 packages/db/drizzle
 docs
-design
 .claude
 backlog.md
 .superpowers
 docker/sandbox/browserd/package-lock.json
+packages/ui/showcase/dist

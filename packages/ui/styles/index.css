@@ -1,0 +1,12 @@
+/* ui-kit: токены и все компоненты. Шрифты — отдельно: @agent/ui/fonts.css */
+@import '../tokens.css';
+@import './base.css';
+@import './buttons.css';
+@import './fields.css';
+@import './selection.css';
+@import './navigation.css';
+@import './overlays.css';
+@import './feedback.css';
+@import './data.css';
+@import './agent.css';
+@import './motion.css';

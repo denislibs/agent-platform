@@ -1,0 +1,110 @@
+/* ═════════ Основа ═════════ */
+.ui-root,
+.ui-root *,
+.ui-root *::before,
+.ui-root *::after {
+  box-sizing: border-box;
+}
+.ui-root {
+  margin: 0;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font: var(--weight-regular) var(--text-base)/var(--leading-base) var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+.ui-root button,
+.ui-root input,
+.ui-root select,
+.ui-root textarea {
+  font: inherit;
+  color: inherit;
+}
+.ui-root :focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+.ui-root ::selection {
+  background: var(--accent-soft);
+}
+
+/* Иконки Lucide */
+.ui-root svg.lucide {
+  width: var(--icon-md);
+  height: var(--icon-md);
+  stroke-width: 2;
+  flex: none;
+}
+.ui-icon-xs svg.lucide,
+svg.lucide.ui-icon-xs {
+  width: var(--icon-xs);
+  height: var(--icon-xs);
+}
+.ui-icon-sm svg.lucide,
+svg.lucide.ui-icon-sm {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+}
+.ui-icon-lg svg.lucide,
+svg.lucide.ui-icon-lg {
+  width: var(--icon-lg);
+  height: var(--icon-lg);
+  stroke-width: 1.75;
+}
+.ui-icon-xl svg.lucide,
+svg.lucide.ui-icon-xl {
+  width: var(--icon-xl);
+  height: var(--icon-xl);
+  stroke-width: 1.75;
+}
+
+/* Текстовые стили */
+.ui-display {
+  font: var(--weight-regular) var(--text-display)/var(--leading-display) var(--font-display);
+  letter-spacing: var(--tracking-tight);
+}
+.ui-h1 {
+  font: var(--weight-medium) var(--text-xl)/var(--leading-xl) var(--font-sans);
+  letter-spacing: var(--tracking-tight);
+}
+.ui-h2 {
+  font: var(--weight-medium) var(--text-lg)/var(--leading-lg) var(--font-sans);
+}
+.ui-h3 {
+  font: var(--weight-medium) var(--text-md)/var(--leading-md) var(--font-sans);
+}
+.ui-serif {
+  font-family: var(--font-display);
+  font-weight: var(--weight-regular);
+}
+.ui-text-secondary {
+  color: var(--text-secondary);
+}
+.ui-text-tertiary {
+  color: var(--text-tertiary);
+}
+.ui-text-sm {
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+.ui-text-xs {
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+}
+.ui-mono {
+  font-family: var(--font-mono);
+}
+.ui-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.ui-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

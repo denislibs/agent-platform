@@ -1,26 +1,36 @@
 /*
  * Слой 1 — дизайн-токены.
  * Темы: тёмная по умолчанию, светлая — data-theme="light", системная — data-theme="auto".
- * Компоненты (слой 2, ui.css) используют только семантические токены отсюда.
+ * Компоненты (слой 2, styles/*.css) используют только семантические токены отсюда.
+ * Значения для JS — src/tokens.ts (тест сверяет их с этим файлом).
  * Описание: docs/design/design-system.md
  */
 
 /* ───────── Тема-независимые токены ───────── */
 :root {
   /* Типографика */
-  --font-sans: "Geist", -apple-system, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
-  --font-display: "Instrument Serif", "Iowan Old Style", Georgia, serif;
-  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-sans: 'Geist Variable', 'Geist', -apple-system, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
+  --font-display: 'Instrument Serif', 'Iowan Old Style', Georgia, serif;
+  --font-mono: 'Geist Mono Variable', 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 
-  --text-xs: 12px;      --leading-xs: 16px;
-  --text-sm: 13px;      --leading-sm: 18px;
-  --text-base: 14px;    --leading-base: 20px;
-  --text-md: 16px;      --leading-md: 24px;
-  --text-lg: 18px;      --leading-lg: 26px;
-  --text-xl: 22px;      --leading-xl: 28px;
-  --text-2xl: 28px;     --leading-2xl: 34px;
-  --text-3xl: 36px;     --leading-3xl: 40px;
-  --text-display: 44px; --leading-display: 48px;
+  --text-xs: 12px;
+  --leading-xs: 16px;
+  --text-sm: 13px;
+  --leading-sm: 18px;
+  --text-base: 14px;
+  --leading-base: 20px;
+  --text-md: 16px;
+  --leading-md: 24px;
+  --text-lg: 18px;
+  --leading-lg: 26px;
+  --text-xl: 22px;
+  --leading-xl: 28px;
+  --text-2xl: 28px;
+  --leading-2xl: 34px;
+  --text-3xl: 36px;
+  --leading-3xl: 40px;
+  --text-display: 44px;
+  --leading-display: 48px;
 
   --weight-regular: 400;
   --weight-medium: 500;
@@ -69,12 +79,12 @@
   /* Брейкпоинты (для справки, в CSS — литералы): sm 640, md 900, lg 1200, xl 1440 */
 
   /* Радиусы */
-  --radius-2xs: 4px;   /* чекбокс, мелкие плашки */
-  --radius-xs: 6px;    /* бейджи, клавиши */
-  --radius-sm: 8px;    /* поля, строки меню, маленькие кнопки */
-  --radius-md: 10px;   /* кнопки */
-  --radius-lg: 14px;   /* карточки, меню, таблицы */
-  --radius-xl: 20px;   /* модалки, шиты */
+  --radius-2xs: 4px; /* чекбокс, мелкие плашки */
+  --radius-xs: 6px; /* бейджи, клавиши */
+  --radius-sm: 8px; /* поля, строки меню, маленькие кнопки */
+  --radius-md: 10px; /* кнопки */
+  --radius-lg: 14px; /* карточки, меню, таблицы */
+  --radius-xl: 20px; /* модалки, шиты */
   --radius-composer: 24px;
   --radius-full: 9999px;
 
@@ -104,7 +114,7 @@
 
 /* ───────── Тёмная тема (по умолчанию) ───────── */
 :root,
-:root[data-theme="dark"] {
+:root[data-theme='dark'] {
   color-scheme: dark;
 
   /* Поверхности, от глубины к пользователю */
@@ -114,7 +124,7 @@
   --bg-app: #19191b;
   --bg-surface: #222225;
   --bg-surface-raised: #2b2b2f;
-  --bg-inset: #121214;          /* поля внутри карточек, код */
+  --bg-inset: #121214; /* поля внутри карточек, код */
   --bg-overlay: rgb(0 0 0 / 0.6);
   --bg-tooltip: #f4f4f5;
 
@@ -191,7 +201,7 @@
 }
 
 /* ───────── Светлая тема ───────── */
-:root[data-theme="light"] {
+:root[data-theme='light'] {
   color-scheme: light;
   --bg-void: #f4f4f2;
   --bg-panel: #f6f6f4;
@@ -248,7 +258,7 @@
 }
 
 @media (prefers-color-scheme: light) {
-  :root[data-theme="auto"] {
+  :root[data-theme='auto'] {
     color-scheme: light;
     --bg-void: #f4f4f2;
     --bg-panel: #f6f6f4;
