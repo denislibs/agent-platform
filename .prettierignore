@@ -7,3 +7,4 @@ design
 backlog.md
 .superpowers
 docker/sandbox/browserd/package-lock.json
+packages/ui/showcase/dist

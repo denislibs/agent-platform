@@ -3,6 +3,10 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "scripts": {
+    "dev": "bunx --bun vite --config showcase/vite.config.ts",
+    "build": "bunx --bun vite build --config showcase/vite.config.ts"
+  },
   "exports": {
     ".": "./src/index.ts",
     "./styles.css": "./styles/index.css",

@@ -26,8 +26,8 @@ test('components take colours from tokens: no hex or rgb literals except the whi
   expect(literals.filter(l => !allowed.has(l))).toEqual([]);
 });
 
-test('every ui-* class used by the Preact components exists in the stylesheets', async () => {
-  const sources = [...new Bun.Glob('src/**/*.tsx').scanSync(root)];
+test('every ui-* class used by the components and the showcase exists in the stylesheets', async () => {
+  const sources = ['src/**/*.tsx', 'showcase/src/**/*.tsx'].flatMap(glob => [...new Bun.Glob(glob).scanSync(root)]);
   const css = new Set([...styles.matchAll(/\.(ui-[\w-]+)/g)].map(m => m[1]!));
   const missing = new Set<string>();
   for (const file of sources) {
