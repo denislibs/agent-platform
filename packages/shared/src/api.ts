@@ -87,6 +87,9 @@ export const UpdateMeBodySchema = z
   })
   .refine(body => body.theme !== undefined || body.name !== undefined, 'nothing to update');
 
+/** Удаление аккаунта: email вводит сам пользователь, сравнение без учёта регистра — в маршруте. */
+export const DeleteMeBodySchema = z.object({ email: z.string().min(1).max(320) });
+
 /** Строка поиска в запросе. Пустая — фильтра нет; символы, которые Postgres не примет, — 400. */
 const SearchQuerySchema = z
   .string()

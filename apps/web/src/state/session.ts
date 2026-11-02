@@ -60,6 +60,11 @@ export function createSession(api: Api) {
     async saveName(name: string): Promise<void> {
       me.value = await api.setName(name);
     },
+    /** Аккаунт удалён: вход без памятки о странице возврата, как после «Sign out». */
+    async deleteAccount(email: string): Promise<void> {
+      await api.deleteAccount(email);
+      this.signedOut(true);
+    },
     async signOut(): Promise<void> {
       await api.signOut();
       this.signedOut(true);

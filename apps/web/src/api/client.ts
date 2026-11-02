@@ -121,6 +121,7 @@ export function createApi(opts: ApiOptions = {}) {
     setTheme: (theme: ProfileTheme) => send('PATCH', '/api/me', MeResponseSchema, { theme }),
     setName: (name: string) => send('PATCH', '/api/me', MeResponseSchema, { name }),
     usage: () => send('GET', '/api/usage', UsageResponseSchema),
+    deleteAccount: (email: string) => send('DELETE', '/api/me', NoContentSchema, { email }),
     listTasks: (before?: string, q?: string) =>
       send('GET', `/api/tasks?${queryString({ limit: TASKS_PAGE, before, q })}`, TaskListResponseSchema),
     getTask: (id: string) => send('GET', task(id), TaskResponseSchema),

@@ -6,7 +6,7 @@ import type { StepDto } from '@agent/shared';
 import { openTaskEvents } from '../src/api/events.ts';
 import { resetPageFocus } from '../src/layout/page.ts';
 import { safeReturnPath } from '../src/state/return-to.ts';
-import { fakeFetch, json, status, step, taskSummary, toolStep } from './fixtures.ts';
+import { fakeFetch, json, noContent, status, step, taskSummary, toolStep } from './fixtures.ts';
 import { signedIn, until } from './render.tsx';
 import { FakeEventSource } from './sse.ts';
 
@@ -51,6 +51,16 @@ test('with a session /sign-in leads home', async () => {
   start(signedIn(), '/sign-in');
   await screen.findByRole('heading', { name: 'What should your agent do?' });
   expect(location.pathname).toBe('/');
+});
+
+test('after deleting the account the app shows sign-in without a return address', async () => {
+  start({ ...signedIn(), 'DELETE /api/me': noContent }, '/settings');
+  await userEvent.click(await screen.findByRole('button', { name: 'Delete account' }));
+  const dialog = await screen.findByRole('alertdialog');
+  await userEvent.type(within(dialog).getByRole('textbox'), 'ada@example.com');
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Delete account' }));
+  await screen.findByRole('button', { name: 'Email me a sign-in link' });
+  expect(location.pathname + location.search).toBe('/sign-in');
 });
 
 test('a 401 in the middle of work ends the session and shows sign-in', async () => {

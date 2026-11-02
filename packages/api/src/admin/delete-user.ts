@@ -5,18 +5,14 @@ import {
   type FileRepository,
   type FileStore,
   type SandboxProvider,
-  type Task,
   type TaskRepository,
 } from '@agent/core';
-import { isTerminalTask } from '@agent/shared';
+import { allTasks, countRecentlyFinished, DELETE_USER_IDLE_MINUTES, purgeUser } from '../account-deletion';
 import type { AuthGateway } from '../auth/gateway';
 import { UsageError } from './grant';
 
 const CONFIRM = '--yes';
 const IDLE_FLAG = '--idle-minutes=';
-/** Сколько минут после завершения последней задачи ждать: финализатор отменённой задачи ещё может грузить файлы. */
-export const DELETE_USER_IDLE_MINUTES = 10;
-
 export const DELETE_USER_USAGE =
   `usage: bun run admin:delete-user <email> [${CONFIRM}] [${IDLE_FLAG}N]` +
   `   (without ${CONFIRM}: only lists what would be deleted; N: minutes since the user's last task finished, default ${DELETE_USER_IDLE_MINUTES})`;
@@ -50,20 +46,6 @@ function parseArgs(args: readonly string[]): { email: string; confirmed: boolean
   return { email: rawEmail.trim().toLowerCase(), confirmed: confirmations === 1, idleMinutes };
 }
 
-/** Все задачи пользователя — страницами по курсору. */
-async function allTasks(tasks: TaskRepository, userId: string): Promise<Task[]> {
-  const out: Task[] = [];
-  for (;;) {
-    const last = out.at(-1);
-    const page = await tasks.listForUser(userId, {
-      limit: 100,
-      ...(last ? { before: { createdAt: last.createdAt, id: last.id } } : {}),
-    });
-    out.push(...page);
-    if (page.length < 100) return out;
-  }
-}
-
 /**
  * Задачи в работе, песочницы задач и задачи, завершённые меньше idleMinutes назад, мешают удалению: их job,
  * песочница или финализатор ещё могут записать шаги и файлы (объекты S3 остались бы без записей).
@@ -86,9 +68,7 @@ async function assertIdle(deps: Deps, email: string, userId: string, idleMinutes
   const left = sandboxes.filter(s => ids.has(s.taskId)).length;
   if (left > 0)
     throw new Error(`${email} still has ${left} sandbox(es) of their tasks: wait until the sweeper removes them`);
-  const since = deps.clock.now().getTime() - idleMinutes * 60_000;
-  const recent = tasks.filter(t => isTerminalTask(t.status) && t.updatedAt.getTime() > since).length;
-  if (recent > 0)
+  if (countRecentlyFinished(tasks, deps.clock, idleMinutes) > 0)
     throw new Error(
       `${email} has task(s) that finished less than ${idleMinutes} minute(s) ago: wait, or pass ${IDLE_FLAG}N`,
     );
@@ -98,11 +78,8 @@ async function assertIdle(deps: Deps, email: string, userId: string, idleMinutes
  * Удаление данных пользователя по запросу (docs/beta-checklist.md). Без --yes ничего не меняется: печатается,
  * кого и какие объекты удалит запуск с --yes (удаление необратимо).
  * С --yes: сначала отзываются все сессии — новые задачи и загрузки не начнутся; затем проверки (assertIdle);
- * затем объекты S3 всех файлов пользователя; затем повторная проверка — если запрос, прошедший до отзыва сессий,
- * успел создать задачу или файл, удаление останавливается до пользователя (повтор доделает); последним —
- * сам пользователь: задачи, шаги, подзадачи, файлы, аккаунты OAuth и события расхода уходят каскадом.
- * Повтор после сбоя безопасен: удаление объекта S3 идемпотентно (уже удалённый объект — не ошибка), пользователь
- * удаляется последним. Ссылки входа (verification) живут 15 минут и истекают сами.
+ * затем purgeUser: объекты S3, повторная проверка, сам пользователь. Самостоятельное удаление из приложения —
+ * deleteOwnAccount. Ссылки входа (verification) живут 15 минут и истекают сами.
  */
 export async function deleteUserData(deps: Deps, args: readonly string[]): Promise<string> {
   const { email, confirmed, idleMinutes } = parseArgs(args);
@@ -117,11 +94,7 @@ export async function deleteUserData(deps: Deps, args: readonly string[]): Promi
       ...files.map(f => `  ${f.storageKey}`),
       `with their tasks, sessions and usage events; rerun with ${CONFIRM} to delete`,
     ].join('\n');
-  for (const file of files) await deps.fileStore.delete(file.storageKey);
-  const known = new Set(files.map(f => f.id));
-  const after = await deps.files.listForUser(userId);
-  if (after.some(f => !known.has(f.id)) || (await deps.tasks.countActive(userId)) > 0)
+  if (!(await purgeUser(deps, userId, files)))
     throw new Error(`${email} changed during the deletion (a request started before the sign-out): run it again`);
-  await deps.auth.deleteUser(userId);
   return `deleted ${email}: ${files.length} file(s)`;
 }

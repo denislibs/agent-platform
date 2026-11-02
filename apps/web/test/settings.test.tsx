@@ -1,8 +1,8 @@
 import { expect, test } from 'bun:test';
-import { screen } from '@testing-library/preact';
+import { screen, within } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 import { SettingsPage } from '../src/routes/settings.tsx';
-import { json, me } from './fixtures.ts';
+import { json, me, noContent, taskSummary } from './fixtures.ts';
 import { setup, signedIn, until } from './render.tsx';
 
 test('choosing a theme applies it at once and saves it in the profile', async () => {
@@ -157,4 +157,57 @@ test('an empty history and a failed load say so', async () => {
   await broken.state.session.load();
   broken.view(<SettingsPage />);
   await screen.findByText('Could not load the usage history.');
+});
+
+async function openDeleteDialog(routes: Parameters<typeof setup>[0]) {
+  const env = setup({ ...signedIn(), ...routes }, '/settings');
+  await env.state.session.load();
+  await env.state.tasks.reload();
+  env.view(<SettingsPage />);
+  await userEvent.click(screen.getByRole('button', { name: 'Delete account' }));
+  const dialog = await screen.findByRole('alertdialog', { name: 'Delete your account?' });
+  return {
+    ...env,
+    dialog,
+    field: within(dialog).getByRole('textbox', { name: 'Type your email to confirm' }),
+    confirm: within(dialog).getByRole('button', { name: 'Delete account' }) as HTMLButtonElement,
+  };
+}
+
+test('deleting the account needs the email typed; success ends the session and forgets the tasks', async () => {
+  const { field, confirm, calls, state } = await openDeleteDialog({
+    'GET /api/tasks': json({ tasks: [taskSummary()], nextCursor: null }),
+    'DELETE /api/me': noContent,
+  });
+  expect(confirm.disabled).toBe(true);
+  await userEvent.type(field, 'someone@else.dev');
+  expect(confirm.disabled).toBe(true);
+  await userEvent.clear(field);
+  await userEvent.type(field, 'ADA@example.com');
+  expect(confirm.disabled).toBe(false);
+  await userEvent.click(confirm);
+  await until(() => state.session.status.value === 'signed_out');
+  expect(calls.find(c => c.method === 'DELETE')).toMatchObject({
+    path: '/api/me',
+    body: { email: 'ADA@example.com' },
+  });
+  expect(state.session.leftOnPurpose.value).toBe(true);
+  expect(state.tasks.items.value).toEqual([]);
+});
+
+test('Enter in the email field submits; a refusal is shown in the dialog and the session stays', async () => {
+  const { dialog, field, state } = await openDeleteDialog({
+    'DELETE /api/me': json({ error: { code: 'conflict', message: 'you have running tasks' } }, 409),
+  });
+  await userEvent.type(field, 'ada@example.com{Enter}');
+  await within(dialog).findByText('you have running tasks');
+  expect(state.session.status.value).toBe('signed_in');
+  expect(screen.getByRole('alertdialog')).toBeTruthy();
+});
+
+test('Cancel closes the dialog and deletes nothing', async () => {
+  const { dialog, calls } = await openDeleteDialog({ 'DELETE /api/me': noContent });
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+  await until(() => screen.queryByRole('alertdialog') === null);
+  expect(calls.some(c => c.method === 'DELETE')).toBe(false);
 });

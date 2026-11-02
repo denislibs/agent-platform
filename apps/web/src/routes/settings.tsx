@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
-import { LogOut, Monitor, Moon, Sun } from 'lucide-preact';
-import { Avatar, Button, ChoiceGroup, CreditBalance, Field, Input, Spinner, useToast } from '@agent/ui';
+import { LogOut, Monitor, Moon, Sun, Trash2 } from 'lucide-preact';
+import { Avatar, Button, ChoiceGroup, CreditBalance, Dialog, Field, Input, Spinner, useToast } from '@agent/ui';
 import { MAX_NAME_CHARS, type MeResponse, type ProfileTheme, type UsageRow } from '@agent/shared';
 import { usePage } from '../layout/page.ts';
 import { Shell, taskTitle } from '../layout/shell.tsx';
@@ -99,12 +99,72 @@ function UsageSection() {
   );
 }
 
+const DELETE_FORM_ID = 'delete-account';
+
+/** Подтверждение удаления аккаунта: кнопка включается, когда введён email аккаунта. */
+function DeleteAccountDialog({ email, open, onClose }: { email: string; open: boolean; onClose(): void }) {
+  const { session, tasks } = useApp();
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const matches = typed.trim().toLowerCase() === email.toLowerCase();
+
+  const submit = async (event: Event) => {
+    event.preventDefault();
+    if (!matches) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await session.deleteAccount(typed);
+      tasks.clear();
+    } catch (err) {
+      setError(errorText(err));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open={open}
+      // Пока удаление идёт, Esc не закрывает: результат некуда было бы показать.
+      onOpenChange={next => busy || next || onClose()}
+      role="alertdialog"
+      size="sm"
+      title="Delete your account?"
+      description="Your tasks, files and usage history will be deleted. This cannot be undone."
+      footer={
+        <>
+          <Button variant="secondary" disabled={busy} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="danger" type="submit" form={DELETE_FORM_ID} disabled={!matches} loading={busy}>
+            Delete account
+          </Button>
+        </>
+      }
+    >
+      <form id={DELETE_FORM_ID} onSubmit={event => void submit(event)}>
+        <Field label="Type your email to confirm" error={error}>
+          <Input
+            type="email"
+            autoComplete="off"
+            data-autofocus
+            value={typed}
+            onInput={event => setTyped(event.currentTarget.value)}
+          />
+        </Field>
+      </form>
+    </Dialog>
+  );
+}
+
 /** Настройки: профиль, тема (спецификация 12), баланс, история расхода, аккаунт и выход. */
 export function SettingsPage() {
   usePage('Settings');
   const { session, tasks } = useApp();
   const toast = useToast();
   const [leaving, setLeaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const me = session.me.value;
   if (!me) return null;
 
@@ -181,7 +241,19 @@ export function SettingsPage() {
                 </Button>
               </div>
             </div>
+            <div class="ui-row">
+              <div class="ui-row__body">
+                <span class="ui-row__title">Delete account</span>
+                <span class="ui-row__desc">Deletes your tasks, files and usage history.</span>
+              </div>
+              <div class="ui-row__control">
+                <Button variant="danger-outline" size="sm" icon={Trash2} onClick={() => setDeleting(true)}>
+                  Delete account
+                </Button>
+              </div>
+            </div>
           </div>
+          <DeleteAccountDialog email={me.user.email} open={deleting} onClose={() => setDeleting(false)} />
         </section>
       </div>
     </Shell>
