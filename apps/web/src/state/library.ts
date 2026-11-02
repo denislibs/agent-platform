@@ -16,7 +16,14 @@ export function createLibrary(api: Api) {
   /** Номер последнего запроса: ответ на устаревший фильтр или поиск отбрасывается. */
   let latest = 0;
 
-  async function fetchPage(before?: string) {
+  /** Неудача смены фильтра или поиска: строки и курсор прежнего запроса к новому не относятся. */
+  const dropRows = () =>
+    batch(() => {
+      files.value = [];
+      nextCursor.value = null;
+    });
+
+  async function fetchPage(before?: string, onFailure?: () => void) {
     const mine = ++latest;
     loading.value = true;
     try {
@@ -35,7 +42,10 @@ export function createLibrary(api: Api) {
         failure.value = null;
       });
     } catch (err) {
-      if (mine === latest) failure.value = err;
+      if (mine === latest) {
+        failure.value = err;
+        onFailure?.();
+      }
     } finally {
       if (mine === latest) loading.value = false;
     }
@@ -53,18 +63,27 @@ export function createLibrary(api: Api) {
     more: () => (nextCursor.value === null ? Promise.resolve() : fetchPage(nextCursor.value)),
     setFilter(next: LibraryFilter): Promise<void> {
       filter.value = next;
-      return fetchPage();
+      return fetchPage(undefined, dropRows);
     },
     /** Новый поиск; та же строка (пробелы по краям не в счёт) запроса не шлёт. */
     search(text: string): Promise<void> {
       if (text.trim() === query.value) return Promise.resolve();
       query.value = text.trim();
-      return fetchPage();
+      return fetchPage(undefined, dropRows);
     },
-    /** Удаляет файл на сервере и из списка; ошибка запроса пробрасывается, список не меняется. */
+    /**
+     * Удаляет файл на сервере и из списка; ошибка запроса пробрасывается, список не меняется. Список, который шёл
+     * до удаления, отбрасывается: его ответ мог вернуть файл. Если такой запрос был, первая страница грузится заново.
+     */
     async remove(id: string): Promise<void> {
       await api.deleteFile(id);
-      files.value = files.value.filter(f => f.id !== id);
+      const inFlight = loading.value;
+      latest++;
+      batch(() => {
+        files.value = files.value.filter(f => f.id !== id);
+        loading.value = false;
+      });
+      if (inFlight) await fetchPage();
     },
   };
 }

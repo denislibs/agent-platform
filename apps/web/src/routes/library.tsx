@@ -83,7 +83,7 @@ export function LibraryPage() {
           </Alert>
         )}
         {!library.loaded.value && failure === null && <Spinner label="Loading files" />}
-        {library.loaded.value && files.length === 0 && (
+        {library.loaded.value && failure === null && files.length === 0 && (
           <EmptyState
             icon={FolderOpen}
             title={unfiltered ? 'No files yet' : 'No files match'}
@@ -102,7 +102,11 @@ export function LibraryPage() {
                 </div>
                 <div class="ui-row__control">
                   {file.taskId && (
-                    <a class="ui-link" href={`/tasks/${encodeURIComponent(file.taskId)}`}>
+                    <a
+                      class="ui-link"
+                      href={`/tasks/${encodeURIComponent(file.taskId)}`}
+                      aria-label={`Open task of ${baseName(file.path)}`}
+                    >
                       Open task
                     </a>
                   )}
