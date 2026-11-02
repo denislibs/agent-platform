@@ -98,11 +98,15 @@ export function Tooltip({ content, side = 'top', delay = TOOLTIP_DELAY_MS, child
   }, [wanted, delay]);
   useEffect(() => {
     if (!open) return;
+    // На погружении и с preventDefault: Esc скрывает только тултип, а слой под ним (диалог,
+    // поповер) не закрывается — useDismiss пропускает уже обработанное событие.
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
+      if (event.key !== 'Escape' || event.isComposing) return;
+      event.preventDefault();
+      setOpen(false);
     };
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
   }, [open]);
 
   const own = children.props as Record<string, unknown>;

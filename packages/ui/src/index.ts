@@ -20,3 +20,7 @@ export { useFloating, type FloatingOptions, type Placement } from './lib/floatin
 export * from './components/menu.tsx';
 export * from './components/select.tsx';
 export * from './components/popover.tsx';
+export { tabbables, useFocusTrap, useScrollLock } from './lib/focus.ts';
+export { useHotkey, type HotkeyOptions } from './lib/hotkey.ts';
+export * from './components/dialog.tsx';
+export * from './components/command.tsx';

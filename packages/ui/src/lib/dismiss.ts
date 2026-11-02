@@ -31,7 +31,8 @@ export function useDismiss({ open, onDismiss, inside, outsidePress = true }: Dis
     if (!open) return;
     const isTop = () => layers.at(-1) === token;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || !isTop() || event.defaultPrevented) return;
+      // Esc во время набора через IME отменяет композицию, а не закрывает слой.
+      if (event.key !== 'Escape' || event.isComposing || !isTop() || event.defaultPrevented) return;
       event.preventDefault();
       onDismiss('escape');
     };

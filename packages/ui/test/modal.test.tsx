@@ -1,0 +1,411 @@
+import { expect, mock, test } from 'bun:test';
+import { fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import userEvent from '@testing-library/user-event';
+import { useState } from 'preact/hooks';
+import { Copy, Settings, SquarePen } from 'lucide-preact';
+import {
+  Button,
+  CommandPalette,
+  ConfirmDialog,
+  Dialog,
+  filterCommands,
+  IconButton,
+  Input,
+  Select,
+  Sheet,
+  Tooltip,
+  useHotkey,
+  type CommandGroup,
+} from '../src/index.ts';
+import { gone, trackGlobalListeners } from './helpers.ts';
+
+function KeyDialog() {
+  const [open, setOpen] = useState(false);
+  const [expiry, setExpiry] = useState<'30' | '90' | undefined>('30');
+  return (
+    <>
+      <Button onClick={() => setOpen(true)}>Create key</Button>
+      <Dialog
+        open={open}
+        onOpenChange={setOpen}
+        title="Create API key"
+        description="Keys let your code start tasks."
+        footer={<Button variant="primary">Create</Button>}
+      >
+        <Input aria-label="Name" />
+        <Select
+          label="Expires"
+          value={expiry}
+          onChange={setExpiry}
+          options={[
+            { value: '30', label: 'In 30 days' },
+            { value: '90', label: 'In 90 days' },
+          ]}
+        />
+      </Dialog>
+    </>
+  );
+}
+
+test('Dialog moves focus to the first field, traps Tab and returns focus on Escape', async () => {
+  const user = userEvent.setup();
+  render(<KeyDialog />);
+  const opener = screen.getByRole('button', { name: 'Create key' });
+  await user.click(opener);
+  const dialog = screen.getByRole('dialog', { name: 'Create API key' });
+  expect(dialog.getAttribute('aria-modal')).toBe('true');
+  expect(dialog.getAttribute('aria-describedby')).toBe(screen.getByText('Keys let your code start tasks.').id);
+  expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Name' }));
+  expect(document.body.style.overflow).toBe('hidden');
+  await user.keyboard('{Shift>}{Tab}{/Shift}');
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close' }));
+  await user.tab();
+  expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Name' }));
+  await user.keyboard('{Escape}');
+  expect(document.activeElement).toBe(opener);
+  expect(document.body.style.overflow).toBe('');
+  await gone(() => screen.queryByRole('dialog'));
+});
+
+test('a click on the backdrop closes the dialog, a click inside does not', async () => {
+  const user = userEvent.setup();
+  render(<KeyDialog />);
+  await user.click(screen.getByRole('button', { name: 'Create key' }));
+  const dialog = screen.getByRole('dialog');
+  await user.click(screen.getByRole('textbox', { name: 'Name' }));
+  expect(dialog.closest('.ui-overlay')?.getAttribute('data-state')).not.toBe('closed');
+  fireEvent.pointerDown(dialog.closest('.ui-overlay')!);
+  await gone(() => screen.queryByRole('dialog'));
+});
+
+test('a select inside a dialog renders its list in the dialog layer, and Escape closes only the list', async () => {
+  const user = userEvent.setup();
+  render(<KeyDialog />);
+  await user.click(screen.getByRole('button', { name: 'Create key' }));
+  const combobox = screen.getByRole('combobox', { name: 'Expires' });
+  await user.click(combobox);
+  const listbox = screen.getByRole('listbox');
+  expect(screen.getByRole('dialog').closest('.ui-overlay')!.contains(listbox)).toBe(true);
+  await user.keyboard('{Escape}');
+  expect(combobox.getAttribute('aria-expanded')).toBe('false');
+  expect(screen.getByRole('dialog', { name: 'Create API key' })).toBeTruthy();
+});
+
+function DeleteTask({ onConfirm }: { onConfirm(): void }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <ConfirmDialog
+      open={open}
+      onOpenChange={setOpen}
+      title="Delete this task?"
+      description="This can't be undone."
+      confirmLabel="Delete task"
+      onConfirm={onConfirm}
+    />
+  );
+}
+
+test('ConfirmDialog is an alertdialog focused on Cancel that ignores outside clicks', async () => {
+  const user = userEvent.setup();
+  const onConfirm = mock(() => {});
+  render(<DeleteTask onConfirm={onConfirm} />);
+  const dialog = await screen.findByRole('alertdialog', { name: 'Delete this task?' });
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cancel' }));
+  expect(screen.queryByRole('button', { name: 'Close' })).toBeNull();
+  fireEvent.pointerDown(dialog.closest('.ui-overlay')!);
+  expect(screen.getByRole('alertdialog')).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Delete task' }));
+  expect(onConfirm).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole('button', { name: 'Cancel' }));
+  await gone(() => screen.queryByRole('alertdialog'));
+});
+
+function TaskDetails() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button onClick={() => setOpen(true)}>Details</Button>
+      <Sheet open={open} onOpenChange={setOpen} title="Task details">
+        <p>Completed</p>
+      </Sheet>
+    </>
+  );
+}
+
+test('Sheet is a modal dialog with a close button', async () => {
+  const user = userEvent.setup();
+  render(<TaskDetails />);
+  await user.click(screen.getByRole('button', { name: 'Details' }));
+  expect(screen.getByRole('dialog', { name: 'Task details' }).getAttribute('aria-modal')).toBe('true');
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close' }));
+  await user.click(screen.getByRole('button', { name: 'Close' }));
+  await gone(() => screen.queryByRole('dialog'));
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Details' }));
+});
+
+const groups = (onNew: () => void, onSettings: () => void): CommandGroup[] => [
+  {
+    label: 'Actions',
+    items: [
+      { id: 'new', label: 'New task', icon: SquarePen, shortcut: ['⌘', 'O'], onSelect: onNew },
+      { id: 'settings', label: 'Open settings', icon: Settings, keywords: 'preferences', onSelect: onSettings },
+    ],
+  },
+  { label: 'Recent tasks', items: [{ id: 't1', label: 'Compare agent frameworks', onSelect: () => {} }] },
+];
+
+test('filterCommands matches labels and keywords and drops empty groups', () => {
+  const result = filterCommands(
+    groups(
+      () => {},
+      () => {},
+    ),
+    ' PREFER',
+  );
+  expect(result.map(g => [g.label, g.items.map(i => i.id)])).toEqual([['Actions', ['settings']]]);
+});
+
+function Palette({ onSettings }: { onSettings(): void }) {
+  const [open, setOpen] = useState(false);
+  useHotkey('k', () => setOpen(true), { mod: true });
+  return <CommandPalette open={open} onOpenChange={setOpen} groups={groups(() => {}, onSettings)} />;
+}
+
+test('⌘K opens the palette; typing filters, arrows move the active option, Enter runs it', async () => {
+  const user = userEvent.setup();
+  const onSettings = mock(() => {});
+  render(<Palette onSettings={onSettings} />);
+  await user.keyboard('{Meta>}k{/Meta}');
+  const input = screen.getByRole('combobox', { name: 'Command palette' });
+  expect(document.activeElement).toBe(input);
+  expect(input.getAttribute('aria-activedescendant')).toBe(screen.getByRole('option', { name: 'New task ⌘ O' }).id);
+  await user.keyboard('{ArrowDown}');
+  expect(input.getAttribute('aria-activedescendant')).toBe(screen.getByRole('option', { name: 'Open settings' }).id);
+  await user.keyboard('zzz');
+  expect(screen.getByText('No results')).toBeTruthy();
+  await user.clear(input);
+  await user.keyboard('settings{Enter}');
+  expect(onSettings).toHaveBeenCalledTimes(1);
+  await gone(() => screen.queryByRole('dialog'));
+});
+
+function NestedDialogs() {
+  const [outer, setOuter] = useState(false);
+  const [inner, setInner] = useState(false);
+  return (
+    <>
+      <Button onClick={() => setOuter(true)}>Open outer</Button>
+      <Dialog open={outer} onOpenChange={setOuter} title="Outer">
+        <Button onClick={() => setInner(true)}>Open inner</Button>
+        <Dialog open={inner} onOpenChange={setInner} title="Inner">
+          <Input aria-label="Inner field" />
+        </Dialog>
+      </Dialog>
+    </>
+  );
+}
+
+test('nested dialogs: Tab and Escape belong to the top one, the scroll lock is counted and restored', async () => {
+  const user = userEvent.setup();
+  const body = document.body.style;
+  body.overflow = 'auto';
+  body.paddingRight = '3px';
+  // Полоса прокрутки 15 px: happy-dom не считает раскладку, clientWidth задаём сами.
+  Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, value: 1009 });
+  try {
+    render(<NestedDialogs />);
+    await user.click(screen.getByRole('button', { name: 'Open outer' }));
+    expect(body.overflow).toBe('hidden');
+    expect(body.paddingRight).toBe('18px');
+    await user.click(screen.getByRole('button', { name: 'Open inner' }));
+    const field = screen.getByRole('textbox', { name: 'Inner field' });
+    expect(document.activeElement).toBe(field);
+    await user.tab();
+    await user.tab();
+    expect(document.activeElement).toBe(field);
+    await user.keyboard('{Escape}');
+    await gone(() => screen.queryByRole('dialog', { name: 'Inner' }));
+    expect(screen.getByRole('dialog', { name: 'Outer' })).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Open inner' }));
+    expect(body.overflow).toBe('hidden');
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getAllByRole('button', { name: 'Close' })[0]!);
+    await user.keyboard('{Escape}');
+    await gone(() => screen.queryByRole('dialog'));
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Open outer' }));
+    expect(body.overflow).toBe('auto');
+    expect(body.paddingRight).toBe('3px');
+  } finally {
+    Reflect.deleteProperty(document.documentElement, 'clientWidth');
+    body.overflow = '';
+    body.paddingRight = '';
+  }
+});
+
+function Host({ shown }: { shown: boolean }) {
+  return (
+    <>
+      <Button>Opener</Button>
+      {shown && (
+        <>
+          <Dialog open onOpenChange={() => {}} title="Mounted">
+            <Input aria-label="Name" />
+          </Dialog>
+          <Sheet open onOpenChange={() => {}} title="Side" />
+          <CommandPalette
+            open
+            onOpenChange={() => {}}
+            groups={groups(
+              () => {},
+              () => {},
+            )}
+          />
+        </>
+      )}
+    </>
+  );
+}
+
+test('unmounting open layers releases listeners, the scroll lock, the focus trap and the dismiss stack', async () => {
+  const user = userEvent.setup();
+  const listeners = trackGlobalListeners();
+  try {
+    const view = render(<Host shown={false} />);
+    const opener = screen.getByRole('button', { name: 'Opener' });
+    opener.focus();
+    view.rerender(<Host shown />);
+    await waitFor(() => {
+      if (document.activeElement === opener) throw new Error('focus not trapped yet');
+    });
+    expect(document.body.style.overflow).toBe('hidden');
+    expect(listeners.types()).toContain('keydown');
+    view.rerender(<Host shown={false} />);
+    expect(listeners.types()).toEqual([]);
+    expect(document.body.style.overflow).toBe('');
+    expect(document.activeElement).toBe(opener);
+  } finally {
+    listeners.restore();
+  }
+  // Стеки ловушек и слоёв пусты: новый диалог получает Tab и Esc.
+  render(<KeyDialog />);
+  await user.click(screen.getByRole('button', { name: 'Create key' }));
+  await user.keyboard('{Shift>}{Tab}{/Shift}');
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close' }));
+  await user.keyboard('{Escape}');
+  await gone(() => screen.queryByRole('dialog'));
+});
+
+test('ConfirmDialog closes on Escape', async () => {
+  const user = userEvent.setup();
+  render(<DeleteTask onConfirm={() => {}} />);
+  await screen.findByRole('alertdialog');
+  await user.keyboard('{Escape}');
+  await gone(() => screen.queryByRole('alertdialog'));
+});
+
+test('Sheet closes on Escape and on a click on its backdrop, returning focus', async () => {
+  const user = userEvent.setup();
+  render(<TaskDetails />);
+  const opener = screen.getByRole('button', { name: 'Details' });
+  await user.click(opener);
+  await user.keyboard('{Escape}');
+  await gone(() => screen.queryByRole('dialog'));
+  expect(document.activeElement).toBe(opener);
+  await user.click(opener);
+  fireEvent.pointerDown(document.querySelector('.ui-overlay')!);
+  await gone(() => screen.queryByRole('dialog'));
+  expect(document.activeElement).toBe(opener);
+});
+
+test('Escape on a tooltip inside a dialog hides only the tooltip', async () => {
+  const user = userEvent.setup();
+  const onOpenChange = mock(() => {});
+  render(
+    <Dialog open onOpenChange={onOpenChange} title="Share">
+      <Tooltip content="Copies the task link" delay={0}>
+        <IconButton icon={Copy} label="Copy" />
+      </Tooltip>
+    </Dialog>,
+  );
+  await screen.findByRole('tooltip');
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Copy' }));
+  await user.keyboard('{Escape}');
+  await gone(() => screen.queryByRole('tooltip'));
+  expect(onOpenChange).not.toHaveBeenCalled();
+  await user.keyboard('{Escape}');
+  expect(onOpenChange).toHaveBeenCalledWith(false);
+});
+
+function PaletteWithOpener({ onNew, onSettings }: { onNew(): void; onSettings(): void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button onClick={() => setOpen(true)}>Commands</Button>
+      <CommandPalette open={open} onOpenChange={setOpen} groups={groups(onNew, onSettings)} />
+    </>
+  );
+}
+
+test('CommandPalette: groups are named, modified arrows and IME keys are ignored, clicks run options', async () => {
+  const user = userEvent.setup();
+  const onNew = mock(() => {});
+  const onSettings = mock(() => {});
+  render(<PaletteWithOpener onNew={onNew} onSettings={onSettings} />);
+  const opener = screen.getByRole('button', { name: 'Commands' });
+  await user.click(opener);
+  expect(screen.getByRole('group', { name: 'Recent tasks' })).toBeTruthy();
+  const input = screen.getByRole('combobox', { name: 'Command palette' });
+  const first = screen.getByRole('option', { name: 'New task ⌘ O' }).id;
+  fireEvent.keyDown(input, { key: 'ArrowDown', altKey: true });
+  expect(input.getAttribute('aria-activedescendant')).toBe(first);
+  fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+  fireEvent.keyDown(input, { key: 'Escape', isComposing: true });
+  expect(onNew).not.toHaveBeenCalled();
+  expect(input.closest('.ui-overlay')?.getAttribute('data-state')).not.toBe('closed');
+  await user.keyboard('{Escape}');
+  await gone(() => screen.queryByRole('dialog'));
+  expect(document.activeElement).toBe(opener);
+  await user.click(opener);
+  await user.click(screen.getByRole('option', { name: 'Open settings' }));
+  expect(onSettings).toHaveBeenCalledTimes(1);
+  await gone(() => screen.queryByRole('dialog'));
+  expect(document.activeElement).toBe(opener);
+});
+
+function Hotkeys({ onSlash, onK, enabled }: { onSlash(): void; onK(): void; enabled: boolean }) {
+  useHotkey('/', onSlash, { enabled });
+  useHotkey('k', onK, { mod: true, enabled });
+  return (
+    <>
+      <Input aria-label="Search" />
+      <textarea aria-label="Notes" />
+    </>
+  );
+}
+
+test('useHotkey skips typing in fields unless it is a mod hotkey, ignores IME and can be disabled', async () => {
+  const user = userEvent.setup();
+  const onSlash = mock(() => {});
+  const onK = mock(() => {});
+  const view = render(<Hotkeys onSlash={onSlash} onK={onK} enabled />);
+  await user.keyboard('/');
+  expect(onSlash).toHaveBeenCalledTimes(1);
+  await user.keyboard('{Meta>}/{/Meta}');
+  await user.keyboard('k');
+  expect(onSlash).toHaveBeenCalledTimes(1);
+  expect(onK).not.toHaveBeenCalled();
+  await user.click(screen.getByRole('textbox', { name: 'Search' }));
+  await user.keyboard('/');
+  await user.click(screen.getByRole('textbox', { name: 'Notes' }));
+  await user.keyboard('/');
+  expect(onSlash).toHaveBeenCalledTimes(1);
+  await user.keyboard('{Control>}k{/Control}');
+  expect(onK).toHaveBeenCalledTimes(1);
+  fireEvent.keyDown(document.body, { key: 'k', metaKey: true, isComposing: true });
+  expect(onK).toHaveBeenCalledTimes(1);
+  view.rerender(<Hotkeys onSlash={onSlash} onK={onK} enabled={false} />);
+  fireEvent.keyDown(document.body, { key: 'k', metaKey: true });
+  fireEvent.keyDown(document.body, { key: '/' });
+  expect(onK).toHaveBeenCalledTimes(1);
+  expect(onSlash).toHaveBeenCalledTimes(1);
+});
