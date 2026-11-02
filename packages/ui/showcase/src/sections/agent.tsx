@@ -190,85 +190,89 @@ export function TaskScreenSection() {
           Replay run
         </Button>
       </div>
-      <div class="shell">
-        <aside class="shell-side">
-          <nav class="ui-nav" aria-label="Tasks">
-            <div class="ui-nav-label">Tasks</div>
-            <TaskItem
-              title="Compare agent frameworks"
-              status={done ? 'done' : stopped ? 'idle' : 'running'}
-              href="#task"
-              current
-            />
-            <TaskItem title="Q3 supplier shortlist" status="idle" href="#task" />
-          </nav>
-        </aside>
-        <div class="shell-chat">
-          <div class="shell-body">
-            <UserMessage>
-              Find the 3 most popular open-source agent frameworks on GitHub and save a comparison as CSV.
-            </UserMessage>
-            <AgentMessage
-              working={working}
-              elapsed={elapsed}
-              mark={<span class="mark mark--sm" />}
-              badge={<Badge variant="outline">Beta</Badge>}
-              onShowDetails={() => setStepsOpen(true)}
-            >
-              <AgentText>Here's my plan:</AgentText>
-              <PlanList items={PLAN.map((title, index) => ({ id: String(index), title, status: status(index) }))} />
-              {shown.length > 0 && (
-                <StepGroup
-                  summary={
-                    done ? 'Searched 1 query · Browsed 1 page · Ran 1 command · Wrote 1 file' : `${shown.length} steps`
-                  }
-                  expanded={stepsOpen}
-                  onExpandedChange={setStepsOpen}
-                >
-                  {shown.map((s, index) => (
-                    <Step key={s.text} tool={s.tool} active={working && index === shown.length - 1}>
-                      {s.text}
-                    </Step>
-                  ))}
-                </StepGroup>
-              )}
-              {working && <Thinking />}
-              {done && (
-                <>
-                  <AgentText>LangChain, Browser Use and Pi lead by stars; all three are MIT-licensed.</AgentText>
-                  <FileCard name="agent_frameworks.csv" meta="Spreadsheet · 128 B" href="#task" />
-                  <div class="ui-agent__actions">
-                    <Badge tone="success" icon={Check}>
-                      Task completed
-                    </Badge>
-                    <span class="ui-spacer" />
-                    <IconButton icon={Copy} label="Copy answer" size="xs" />
-                    <IconButton icon={RotateCcw} label="Retry" size="xs" onClick={replay} />
-                  </div>
-                </>
-              )}
-            </AgentMessage>
+      <div class="doc-frame">
+        <div class="ui-shell ui-shell--computer">
+          <aside class="ui-shell__side">
+            <nav class="ui-nav" aria-label="Tasks">
+              <div class="ui-nav-label">Tasks</div>
+              <TaskItem
+                title="Compare agent frameworks"
+                status={done ? 'done' : stopped ? 'idle' : 'running'}
+                href="#task"
+                current
+              />
+              <TaskItem title="Q3 supplier shortlist" status="idle" href="#task" />
+            </nav>
+          </aside>
+          <div class="ui-shell__main">
+            <div class="ui-shell__body">
+              <UserMessage>
+                Find the 3 most popular open-source agent frameworks on GitHub and save a comparison as CSV.
+              </UserMessage>
+              <AgentMessage
+                working={working}
+                elapsed={elapsed}
+                mark={<span class="ui-mark ui-mark--sm" />}
+                badge={<Badge variant="outline">Beta</Badge>}
+                onShowDetails={() => setStepsOpen(true)}
+              >
+                <AgentText>Here's my plan:</AgentText>
+                <PlanList items={PLAN.map((title, index) => ({ id: String(index), title, status: status(index) }))} />
+                {shown.length > 0 && (
+                  <StepGroup
+                    summary={
+                      done
+                        ? 'Searched 1 query · Browsed 1 page · Ran 1 command · Wrote 1 file'
+                        : `${shown.length} steps`
+                    }
+                    expanded={stepsOpen}
+                    onExpandedChange={setStepsOpen}
+                  >
+                    {shown.map((s, index) => (
+                      <Step key={s.text} tool={s.tool} active={working && index === shown.length - 1}>
+                        {s.text}
+                      </Step>
+                    ))}
+                  </StepGroup>
+                )}
+                {working && <Thinking />}
+                {done && (
+                  <>
+                    <AgentText>LangChain, Browser Use and Pi lead by stars; all three are MIT-licensed.</AgentText>
+                    <FileCard name="agent_frameworks.csv" meta="Spreadsheet · 128 B" href="#task" />
+                    <div class="ui-agent__actions">
+                      <Badge tone="success" icon={Check}>
+                        Task completed
+                      </Badge>
+                      <span class="ui-spacer" />
+                      <IconButton icon={Copy} label="Copy answer" size="xs" />
+                      <IconButton icon={RotateCcw} label="Retry" size="xs" onClick={replay} />
+                    </div>
+                  </>
+                )}
+              </AgentMessage>
+            </div>
+            <div class="ui-shell__foot">
+              <Composer
+                value=""
+                onValueChange={() => {}}
+                onSubmit={() => {}}
+                running={working}
+                onStop={() => setStopped(true)}
+                placeholder="Message your agent"
+              />
+              <small>Agents can make mistakes. Check important results.</small>
+            </div>
           </div>
-          <div class="shell-foot">
-            <Composer
-              value=""
-              onValueChange={() => {}}
-              onSubmit={() => {}}
-              running={working}
-              onStop={() => setStopped(true)}
-              placeholder="Message your agent"
-            />
-            <small>Agents can make mistakes. Check important results.</small>
-          </div>
+          <ComputerPanel
+            activity={current && step >= 0 ? current.activity : 'Starting'}
+            detail={current && step >= 0 ? current.detail : 'sandbox'}
+            position={(Math.min(step + 1, SCRIPT.length) / SCRIPT.length) * 100}
+            live
+          >
+            {current && step >= 0 ? current.body : ''}
+          </ComputerPanel>
         </div>
-        <ComputerPanel
-          activity={current && step >= 0 ? current.activity : 'Starting'}
-          detail={current && step >= 0 ? current.detail : 'sandbox'}
-          position={(Math.min(step + 1, SCRIPT.length) / SCRIPT.length) * 100}
-          live
-        >
-          {current && step >= 0 ? current.body : ''}
-        </ComputerPanel>
       </div>
     </section>
   );

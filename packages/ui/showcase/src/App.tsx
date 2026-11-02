@@ -103,8 +103,10 @@ function Showcase() {
     <>
       <AuthSection />
       <header class="doc-top">
-        <span class="mark mark--sm" />
-        <span class="word">agent</span>
+        <span class="ui-brand">
+          <span class="ui-mark ui-mark--sm" />
+          agent
+        </span>
         <Badge variant="outline">Design system</Badge>
         <span class="ui-spacer" />
         <Button variant="ghost" size="sm" icon={Search} onClick={() => setPalette(true)}>

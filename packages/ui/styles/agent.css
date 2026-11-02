@@ -166,6 +166,35 @@
   line-height: var(--leading-md);
   margin: 0;
 }
+/* Markdown ответа агента и снимка страницы (разметку строит приложение): отступы между блоками. */
+.ui-prose {
+  display: grid;
+  gap: var(--space-3);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.ui-prose > *,
+.ui-prose li > p {
+  margin: 0;
+}
+.ui-prose :is(h1, h2, h3, h4, h5, h6) {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-lg);
+  line-height: var(--leading-lg);
+  font-weight: var(--weight-medium);
+}
+.ui-prose :is(ul, ol) {
+  margin: 0;
+  padding-left: var(--space-6);
+  display: grid;
+  gap: var(--space-1);
+}
+.ui-prose blockquote {
+  margin: 0;
+  padding-left: var(--space-4);
+  border-left: 2px solid var(--border-default);
+  color: var(--text-secondary);
+}
 .ui-agent__actions {
   display: flex;
   align-items: center;
