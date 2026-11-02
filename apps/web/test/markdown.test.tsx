@@ -5,6 +5,13 @@ import { Markdown, markdownHref } from '../src/view/markdown.tsx';
 const show = (text: string) => render(<Markdown text={text} />).container;
 
 describe('Markdown', () => {
+  test('headings sit one level below the page heading: h1 becomes h2, h6 stays h6', () => {
+    show('# Top\n\n###### Deep');
+    expect(screen.getByRole('heading', { level: 2, name: 'Top' })).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 6, name: 'Deep' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+  });
+
   test('renders the agent answer with kit classes: headings, lists, code, tables, links', () => {
     const root = show(
       [
@@ -26,7 +33,7 @@ describe('Markdown', () => {
         'Use `pandas` for it.',
       ].join('\n'),
     );
-    expect(screen.getByRole('heading', { level: 2, name: 'Suppliers' })).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 3, name: 'Suppliers' })).toBeTruthy();
     const link = screen.getByRole('link', { name: 'the list' });
     expect(link.getAttribute('href')).toBe('https://example.com/list');
     expect(link.getAttribute('target')).toBe('_blank');

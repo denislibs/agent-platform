@@ -284,6 +284,12 @@ test('Thinking is announced as a status', () => {
   expect(screen.getByRole('status').textContent).toBe('Thinking…');
 });
 
+test('Thinking stays silent when the screen announces the status elsewhere', () => {
+  render(<Thinking label="Working…" announce={false} />);
+  expect(screen.queryByRole('status')).toBeNull();
+  expect(screen.getByText('Working…')).toBeTruthy();
+});
+
 test('ComputerPanel icon buttons are labelled and Live replaces Jump to live at the end of the replay', async () => {
   const user = userEvent.setup();
   const onClose = mock(() => {});

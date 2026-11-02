@@ -222,7 +222,8 @@ function render(node: Nodes, ctx: Context, key: number, depth: number): Componen
     case 'paragraph':
       return <p key={key}>{renderChildren(node, ctx, depth)}</p>;
     case 'heading': {
-      const Tag = `h${node.depth}` as 'h1';
+      // На уровень ниже: h1 страницы — заголовок задачи, Markdown ответа и панели компьютера — внутри неё (h6 — предел).
+      const Tag = `h${Math.min(node.depth + 1, 6)}` as 'h2';
       return <Tag key={key}>{renderChildren(node, ctx, depth)}</Tag>;
     }
     case 'thematicBreak':

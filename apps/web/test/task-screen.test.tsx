@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
-import { act, screen, within } from '@testing-library/preact';
+import { act, fireEvent, screen, within } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
-import type { StepDto } from '@agent/shared';
+import type { StepDto, TaskStatus } from '@agent/shared';
 import { TaskScreen } from '../src/routes/task.tsx';
 import { fileDto, json, status, step, subtask, taskDetail, taskResponse, toolStep } from './fixtures.ts';
 import { setup, signedIn, until } from './render.tsx';
@@ -69,7 +69,8 @@ test('a running task shows the plan, the steps as they stream and the latest too
   expect(screen.getByText('Searching "steel suppliers"')).toBeTruthy();
   const computer = screen.getByRole('region', { name: "Agent's computer" });
   expect(within(computer).getByText('Using Browser')).toBeTruthy();
-  expect(within(computer).getByRole('heading', { name: 'Acme Steel' })).toBeTruthy();
+  // Заголовки Markdown на уровень ниже: h1 страницы — один.
+  expect(within(computer).getByRole('heading', { level: 2, name: 'Acme Steel' })).toBeTruthy();
 
   await userEvent.click(within(computer).getByRole('button', { name: 'Previous step' }));
   expect(within(computer).getByText('1. Acme Steel')).toBeTruthy();
@@ -77,7 +78,9 @@ test('a running task shows the plan, the steps as they stream and the latest too
   expect(within(computer).getByText('Using Browser')).toBeTruthy();
   // Живой регион объявляет смену статуса, а не каждый шаг.
   expect(liveStatus()).toBe('The agent is working.');
-  expect(screen.getByRole('heading', { level: 1, name: 'Find three suppliers' })).toBeTruthy();
+  expect(screen.getAllByRole('heading', { level: 1 }).map(h => h.textContent)).toEqual(['Find three suppliers']);
+  // Статус объявляет только #task-status: индикатор «думает» молчит.
+  expect(screen.getByText('Working…').closest('[role="status"]')).toBeNull();
 });
 
 test('the agent question takes an answer that carries the pause seq', async () => {
@@ -144,7 +147,11 @@ test('an answer to a question the agent replaced keeps the typed text and shows 
 
 test('a finished task shows the answer as Markdown, the files to download and a completed badge', async () => {
   const done = taskResponse({
-    task: taskDetail({ status: 'done', result: 'Found **3** suppliers.', finishedAt: '2026-11-02T10:01:27.000Z' }),
+    task: taskDetail({
+      status: 'done',
+      result: '# Suppliers\n\nFound **3** suppliers.',
+      finishedAt: '2026-11-02T10:01:27.000Z',
+    }),
     files: [fileDto({ id: 'f1', path: 'outputs/suppliers.csv', size: 394 })],
   });
   const { state } = await open([done], {});
@@ -156,6 +163,8 @@ test('a finished task shows the answer as Markdown, the files to download and a 
   act(() => FakeEventSource.last.emit('end', { status: 'done' }));
   await screen.findByText('Task completed');
   expect(screen.getByText('3').tagName).toBe('STRONG');
+  expect(screen.getByRole('heading', { level: 2, name: 'Suppliers' })).toBeTruthy();
+  expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
   const file = screen.getByRole('link', { name: /suppliers\.csv/ });
   expect(file.getAttribute('href')).toBe('/api/files/f1');
   expect(screen.getByText('Spreadsheet · 394 B')).toBeTruthy();
@@ -283,5 +292,173 @@ test('an unknown task says so instead of spinning', async () => {
   );
   env.view(<TaskScreen id="nope" />);
   expect(await screen.findByText('Task not found')).toBeTruthy();
+  expect(FakeEventSource.all).toHaveLength(0);
+});
+
+test('an accepted answer closes the question until the agent picks it up, and a double Enter sends once', async () => {
+  const { calls } = await open(
+    [
+      taskResponse({ task: taskDetail({ status: 'running' }) }),
+      taskResponse({ task: taskDetail({ status: 'waiting_user', lastSeq: 4 }) }),
+    ],
+    { 'POST /api/tasks/task-1/messages': json({ task: taskDetail({ status: 'waiting_user', lastSeq: 5 }) }, 202) },
+  );
+  emit(prompt, ...ask(2, 'Which region?'), status(4, 'running', 'waiting_user'));
+  const card = await screen.findByRole('region', { name: 'Your agent needs an answer' });
+  const field = within(card).getByRole('textbox');
+  await userEvent.type(field, 'EU only');
+  // Два Enter в одном такте: второй не должен уйти, пока первый в полёте.
+  act(() => {
+    fireEvent.keyDown(field, { key: 'Enter' });
+    fireEvent.keyDown(field, { key: 'Enter' });
+  });
+  await until(() => screen.queryByRole('region', { name: 'Your agent needs an answer' }) === null);
+  // 202 без эха в ленте: задача всё ещё waiting_user, но вопрос уже отвечен.
+  await new Promise(resolve => setTimeout(resolve, 30));
+  expect(screen.queryByRole('region', { name: 'Your agent needs an answer' })).toBeNull();
+  expect(calls.filter(c => c.path === '/api/tasks/task-1/messages')).toHaveLength(1);
+});
+
+test('an unsent answer does not prefill a later question once the first one is gone', async () => {
+  await open(
+    [
+      taskResponse({ task: taskDetail({ status: 'running' }) }),
+      taskResponse({ task: taskDetail({ status: 'waiting_user', lastSeq: 4 }) }),
+      taskResponse({ task: taskDetail({ status: 'running', lastSeq: 5 }) }),
+      taskResponse({ task: taskDetail({ status: 'waiting_user', lastSeq: 8 }) }),
+    ],
+    {
+      'POST /api/tasks/task-1/messages': json(
+        { error: { code: 'conflict', message: 'the task is not waiting for an answer' } },
+        409,
+      ),
+    },
+  );
+  emit(prompt, ...ask(2, 'Which region?'), status(4, 'running', 'waiting_user'));
+  const card = await screen.findByRole('region', { name: 'Your agent needs an answer' });
+  await userEvent.type(within(card).getByRole('textbox'), 'EU only{Enter}');
+  // Перечитанная задача уже работает: вопрос ушёл вместе с недоставленным ответом.
+  await until(() => screen.queryByRole('region', { name: 'Your agent needs an answer' }) === null);
+  emit(status(5, 'waiting_user', 'running'), ...ask(6, 'Which country?'), status(8, 'running', 'waiting_user'));
+  const next = await screen.findByRole('region', { name: 'Your agent needs an answer' });
+  expect(within(next).getByText('Which country?')).toBeTruthy();
+  expect((within(next).getByRole('textbox') as HTMLInputElement).value).toBe('');
+});
+
+test('the agent question shows only while the task waits on that pause', async () => {
+  // waiting_user, а шага паузы в ленте ещё нет: вопроса не показать.
+  await open([taskResponse({ task: taskDetail({ status: 'waiting_user' }) })]);
+  emit(prompt, ...ask(2, 'Which region?'));
+  await screen.findByText('Find three suppliers', { selector: '.ui-msg-user' });
+  expect(screen.queryByRole('region', { name: 'Your agent needs an answer' })).toBeNull();
+});
+
+test('the agent question is not offered once the task runs again', async () => {
+  await open([taskResponse({ task: taskDetail({ status: 'running' }) })]);
+  emit(prompt, ...ask(2, 'Which region?'), status(4, 'running', 'waiting_user'));
+  await until(() => liveStatus() === 'The agent is working.');
+  expect(screen.queryByRole('region', { name: 'Your agent needs an answer' })).toBeNull();
+});
+
+const STOPPABLE: Record<TaskStatus, boolean> = {
+  queued: true,
+  planning: true,
+  running: true,
+  waiting_user: true,
+  finalizing: true,
+  done: false,
+  failed: false,
+  cancelled: false,
+};
+
+for (const [taskStatus, stoppable] of Object.entries(STOPPABLE) as Array<[TaskStatus, boolean]>) {
+  test(`Stop is ${stoppable ? 'offered' : 'not offered'} for a ${taskStatus} task`, async () => {
+    await open([taskResponse({ task: taskDetail({ status: taskStatus }) })]);
+    await screen.findByText('Find three suppliers', { selector: '.ui-msg-user' });
+    expect(screen.queryByRole('button', { name: 'Stop' }) !== null).toBe(stoppable);
+  });
+}
+
+test('a task waiting for an answer can be stopped', async () => {
+  const { calls } = await open(
+    [
+      taskResponse({ task: taskDetail({ status: 'waiting_user' }) }),
+      taskResponse({ task: taskDetail({ status: 'cancelled' }) }),
+    ],
+    { 'POST /api/tasks/task-1/cancel': json({ task: taskDetail({ status: 'cancelled' }) }) },
+  );
+  await userEvent.click(await screen.findByRole('button', { name: 'Stop' }));
+  await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Stop task' }));
+  await screen.findByText('Stopped');
+  expect(calls.some(c => c.path === '/api/tasks/task-1/cancel')).toBe(true);
+});
+
+test('the Stop confirmation closes when the task ends on its own', async () => {
+  await open([
+    taskResponse({ task: taskDetail({ status: 'running' }) }),
+    taskResponse({ task: taskDetail({ status: 'done', result: 'All set' }) }),
+  ]);
+  await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
+  await screen.findByRole('alertdialog', { name: 'Stop the task?' });
+  emit(prompt, status(2, 'running', 'done'));
+  await screen.findByText('Task completed');
+  await until(() => screen.queryByRole('alertdialog') === null);
+});
+
+test('the status region exists while the task loads, so the first status is announced', async () => {
+  let release: (() => void) | undefined;
+  const env = setup(
+    {
+      ...signedIn(),
+      'GET /api/tasks/task-1': () =>
+        new Promise<Response>(resolve => {
+          release = () => resolve(json(taskResponse({ task: taskDetail({ status: 'running' }) })));
+        }),
+    },
+    '/tasks/task-1',
+  );
+  env.view(<TaskScreen id="task-1" />);
+  await screen.findByText('Loading the task');
+  const region = document.getElementById('task-status');
+  expect(region?.getAttribute('role')).toBe('status');
+  expect(region?.textContent).toBe('');
+  await until(() => release !== undefined);
+  release!();
+  await until(() => liveStatus() === 'The agent is working.');
+  // Тот же узел: скринридер слышит изменение, а не новый регион.
+  expect(document.getElementById('task-status')).toBe(region);
+});
+
+test('Try again shows that it is retrying', async () => {
+  let reads = 0;
+  let release: (() => void) | undefined;
+  const env = setup(
+    {
+      ...signedIn(),
+      'GET /api/tasks/task-1': () =>
+        reads++ === 0
+          ? json({ error: { code: 'internal', message: 'boom' } }, 500)
+          : new Promise<Response>(resolve => {
+              release = () => resolve(json(taskResponse({ task: taskDetail({ status: 'running' }) })));
+            }),
+    },
+    '/tasks/task-1',
+  );
+  env.view(<TaskScreen id="task-1" />);
+  await userEvent.click(await screen.findByRole('button', { name: 'Try again' }));
+  expect(screen.getByRole('button', { name: 'Try again' }).getAttribute('aria-busy')).toBe('true');
+  await until(() => release !== undefined);
+  release!();
+  await until(() => FakeEventSource.all.length === 1);
+});
+
+test('a task of another account is reported as not found', async () => {
+  const env = setup(
+    { ...signedIn(), 'GET /api/tasks/theirs': json({ error: { code: 'forbidden', message: 'not yours' } }, 403) },
+    '/tasks/theirs',
+  );
+  env.view(<TaskScreen id="theirs" />);
+  expect(await screen.findByText('Task not found')).toBeTruthy();
+  expect(screen.queryByText('not yours')).toBeNull();
   expect(FakeEventSource.all).toHaveLength(0);
 });

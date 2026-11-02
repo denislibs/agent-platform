@@ -63,10 +63,13 @@ export function AgentText({ children }: { children: ComponentChildren }) {
   return <div class="ui-agent__text">{children}</div>;
 }
 
-/** Индикатор «агент думает»: пульсирующая точка и бегущий блик по тексту. */
-export function Thinking({ label = 'Thinking…' }: { label?: string }) {
+/**
+ * Индикатор «агент думает»: пульсирующая точка и бегущий блик по тексту. announce={false} — без role="status",
+ * когда статус объявляет свой живой регион экрана (иначе скринридер услышит его дважды).
+ */
+export function Thinking({ label = 'Thinking…', announce = true }: { label?: string; announce?: boolean }) {
   return (
-    <span class="ui-thinking" role="status">
+    <span class="ui-thinking" role={announce ? 'status' : undefined}>
       <StatusDot tone="info" pulse />
       <span class="ui-shimmer">{label}</span>
     </span>

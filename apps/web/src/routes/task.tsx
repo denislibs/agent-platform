@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { CircleCheck, OctagonX, SearchX } from 'lucide-preact';
 import {
   AgentMessage,
@@ -68,6 +68,11 @@ export function TaskScreen({ id }: { id: string }) {
   // Ответ, который не ушёл, возвращается в поле: key пересоздаёт AskCard с этим текстом.
   const [draft, setDraft] = useState({ key: 0, text: '' });
   const [sending, setSending] = useState(false);
+  // Паузы, ответ на которые в полёте: отметка ставится синхронно, до await (два Enter в одном такте), state — для поля.
+  const inflight = useRef(new Set<number>());
+  // Пауза, на которую ответ уже принят (202): до эха в ленте задача ещё waiting_user, но вопрос закрыт.
+  const [answered, setAnswered] = useState<number | null>(null);
+  const [retrying, setRetrying] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
   const [stopping, setStopping] = useState(false);
   const task = store.task.value;
@@ -86,19 +91,42 @@ export function TaskScreen({ id }: { id: string }) {
     app.tasks.upsert(current);
     if (isTerminalTask(current.status)) {
       setStepsOpen(false);
+      // Задача закончилась сама: спрашивать «остановить?» уже не о чем.
+      setConfirmStop(false);
       void app.session.refresh();
     }
   }, [app, store, status]);
 
   const elapsed = useElapsed(task);
   const entries = useMemo(() => toolEntries(steps), [steps]);
-  const question = task?.status === 'waiting_user' ? pendingQuestion(steps) : null;
+  const pending = task?.status === 'waiting_user' ? pendingQuestion(steps) : null;
+  const question = pending && pending.pauseSeq !== answered ? pending : null;
   const dialogue = useMemo(() => conversation(steps), [steps]);
   const error = store.error.value;
+  // Недоставленный ответ относится к своей паузе: другой вопрос (или вопрос после перерыва) им не заполняется.
+  const pauseSeq = pending?.pauseSeq;
+  useEffect(() => setDraft(d => (d.text ? { ...d, text: '' } : d)), [pauseSeq]);
+
+  const retry = async () => {
+    setRetrying(true);
+    try {
+      await store.start();
+    } finally {
+      setRetrying(false);
+    }
+  };
+  // Живой регион — первым в <main> на всех состояниях экрана: один и тот же узел, пустой при загрузке,
+  // поэтому первый статус объявляется как изменение. Объявляется смена статуса, а не каждый шаг.
+  const statusRegion = (
+    <div id="task-status" class="ui-sr-only" role="status">
+      {task ? statusAnnouncement(task) : ''}
+    </div>
+  );
 
   if (error && !task) {
     return (
       <Shell>
+        {statusRegion}
         <div class="ui-center">
           {isMissing(error) ? (
             <EmptyState icon={SearchX} title="Task not found" description="It may belong to another account." />
@@ -107,7 +135,11 @@ export function TaskScreen({ id }: { id: string }) {
               tone="danger"
               title="Could not load the task"
               live
-              actions={<Button onClick={() => void store.start()}>Try again</Button>}
+              actions={
+                <Button loading={retrying} onClick={() => void retry()}>
+                  Try again
+                </Button>
+              }
             >
               {errorText(error)}
             </Alert>
@@ -119,6 +151,7 @@ export function TaskScreen({ id }: { id: string }) {
   if (!task) {
     return (
       <Shell>
+        {statusRegion}
         <div class="ui-center">
           <Spinner label="Loading the task" />
         </div>
@@ -131,9 +164,13 @@ export function TaskScreen({ id }: { id: string }) {
   const inputs = store.files.value.filter(f => f.kind === 'input');
 
   const answer = async (text: string) => {
+    if (!question || inflight.current.has(question.pauseSeq)) return;
+    const { pauseSeq: seq } = question;
+    inflight.current.add(seq);
     setSending(true);
     try {
-      await store.reply(text, question?.pauseSeq);
+      await store.reply(text, seq);
+      setAnswered(seq);
       setDraft(d => ({ ...d, text: '' }));
     } catch (err) {
       setDraft(d => ({ key: d.key + 1, text }));
@@ -147,6 +184,7 @@ export function TaskScreen({ id }: { id: string }) {
       else toast.show({ tone: 'danger', title: 'The answer was not sent', description: errorText(err) });
       void store.refresh();
     } finally {
+      inflight.current.delete(seq);
       setSending(false);
     }
   };
@@ -168,12 +206,9 @@ export function TaskScreen({ id }: { id: string }) {
 
   return (
     <Shell computer={<TaskComputer entries={computerEntries(entries)} />}>
+      {statusRegion}
       <div class="ui-shell__body">
         <h1 class="ui-sr-only">{taskTitle(task.prompt)}</h1>
-        {/* Объявляется смена статуса, а не каждый шаг: текст зависит только от статуса задачи. */}
-        <div id="task-status" class="ui-sr-only" role="status">
-          {statusAnnouncement(task)}
-        </div>
         {store.stale.value && (
           <Alert
             tone="warning"
@@ -225,7 +260,8 @@ export function TaskScreen({ id }: { id: string }) {
                 <UserMessage key={m.seq}>{m.text}</UserMessage>
               ),
             )}
-          {working && <Thinking label={workingLabel(task.status)} />}
+          {/* Статус уже объявляет #task-status: индикатор молчит, чтобы не звучать дважды. */}
+          {working && <Thinking label={workingLabel(task.status)} announce={false} />}
           {question && (
             <AskCard
               key={draft.key}
