@@ -34,6 +34,7 @@ export function useFocusTrap(container: RefObject<HTMLElement>, active: boolean)
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     traps.push(token);
     (root.querySelector<HTMLElement>('[data-autofocus]') ?? tabbables(root)[0] ?? root).focus();
+    // Фокус на самой панели (tabIndex −1, например после клика по тексту) — Shift+Tab ведёт на последний.
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Tab' || traps.at(-1) !== token) return;
       const items = tabbables(root);
@@ -43,7 +44,7 @@ export function useFocusTrap(container: RefObject<HTMLElement>, active: boolean)
       if (!first || !last) {
         event.preventDefault();
         root.focus();
-      } else if (event.shiftKey && (current === first || !root.contains(current))) {
+      } else if (event.shiftKey && (current === first || current === root || !root.contains(current))) {
         event.preventDefault();
         last.focus();
       } else if (!event.shiftKey && (current === last || !root.contains(current))) {

@@ -2,6 +2,7 @@ import { cloneElement, type ComponentChildren, type Ref, type VNode } from 'prea
 import { useEffect, useId, useRef, useState } from 'preact/hooks';
 import { cx } from '../lib/cx.ts';
 import { useDismiss } from '../lib/dismiss.ts';
+import { isComposing } from '../lib/ime.ts';
 import { FLOATING_STYLE, useFloating, type Placement } from '../lib/floating.ts';
 import { tabbables } from '../lib/focus.ts';
 import { Portal } from '../lib/portal.tsx';
@@ -185,7 +186,7 @@ export function Tooltip({
     // На погружении и с preventDefault: Esc скрывает только тултип, а слой под ним (диалог,
     // поповер) не закрывается — useDismiss пропускает уже обработанное событие.
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.isComposing) return;
+      if (event.key !== 'Escape' || isComposing(event)) return;
       event.preventDefault();
       setOpen(false);
     };

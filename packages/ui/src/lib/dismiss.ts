@@ -1,5 +1,6 @@
 import type { RefObject } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
+import { isComposing } from './ime.ts';
 
 export type DismissReason = 'escape' | 'outside';
 
@@ -32,7 +33,7 @@ export function useDismiss({ open, onDismiss, inside, outsidePress = true }: Dis
     const isTop = () => layers.at(-1) === token;
     const onKeyDown = (event: KeyboardEvent) => {
       // Esc во время набора через IME отменяет композицию, а не закрывает слой.
-      if (event.key !== 'Escape' || event.isComposing || !isTop() || event.defaultPrevented) return;
+      if (event.key !== 'Escape' || isComposing(event) || !isTop() || event.defaultPrevented) return;
       event.preventDefault();
       onDismiss('escape');
     };

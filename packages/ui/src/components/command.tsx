@@ -1,8 +1,9 @@
 import type { ComponentChildren } from 'preact';
-import { useEffect, useId, useMemo, useState } from 'preact/hooks';
+import { useId, useMemo, useState } from 'preact/hooks';
 import { Search, type LucideIcon } from 'lucide-preact';
 import { useDismiss } from '../lib/dismiss.ts';
 import { useFocusTrap, useScrollLock } from '../lib/focus.ts';
+import { isComposing } from '../lib/ime.ts';
 import { Portal } from '../lib/portal.tsx';
 import { usePresence } from '../lib/presence.ts';
 import { hasModifier, nextIndex } from '../lib/roving.ts';
@@ -58,7 +59,8 @@ export function CommandPalette({
 }: CommandPaletteProps) {
   const base = useId();
   const listId = `${base}-list`;
-  const optionId = (id: string) => `${base}-option-${id}`;
+  // id опции — по месту в отфильтрованном списке: id команд могут повторяться и содержать пробелы.
+  const optionId = (index: number) => `${base}-option-${index}`;
   const [panel, setPanel] = useState<HTMLDivElement | null>(null);
   const panelRef = useMemo(() => ({ current: panel }), [panel]);
   const [query, setQuery] = useState('');
@@ -67,34 +69,50 @@ export function CommandPalette({
   useFocusTrap(panelRef, open);
   useScrollLock(open);
   useDismiss({ open, onDismiss: () => onOpenChange(false), inside: [panelRef] });
-  useEffect(() => {
-    if (!open) return;
-    setQuery('');
-    setActive(0);
-  }, [open]);
+  // Сброс при открытии — во время рендера, а не эффектом: уже первый кадр открытой палитры
+  // показывает пустой запрос, а не фильтр прошлого открытия.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      setQuery('');
+      setActive(0);
+    }
+  }
 
   const visible = filterCommands(groups, query);
   const flat = visible.flatMap(group => group.items);
-  const current = flat[Math.min(active, flat.length - 1)];
-  const run = (item: CommandItem | undefined) => {
+  // Номер первой опции каждой группы в общем списке.
+  const starts: number[] = [];
+  let count = 0;
+  for (const group of visible) {
+    starts.push(count);
+    count += group.items.length;
+  }
+  const activeIndex = Math.min(active, flat.length - 1);
+  const run = (index: number) => {
+    const item = flat[index];
     if (!item) return;
     onOpenChange(false);
     item.onSelect();
   };
+  const found = flat.length === 1 ? '1 result' : `${flat.length} results`;
+  // Живой регион: пустой запрос не объявляется, иначе — число результатов или «No results».
+  const status = flat.length === 0 ? emptyText : query.trim() ? found : '';
   const onKeyDown = (event: KeyboardEvent) => {
     // Enter подтверждает набор через IME, а стрелки с модификаторами принадлежат браузеру и ОС.
-    if (event.isComposing) return;
+    if (isComposing(event)) return;
     if (event.key === 'Enter') {
       event.preventDefault();
-      run(current);
+      run(activeIndex);
       return;
     }
     if ((event.key !== 'ArrowDown' && event.key !== 'ArrowUp') || hasModifier(event)) return;
-    const next = nextIndex(event.key, flat.indexOf(current!), flat.length, () => false, 'vertical');
+    const next = nextIndex(event.key, activeIndex, flat.length, () => false, 'vertical');
     if (next === null) return;
     event.preventDefault();
     setActive(next);
-    document.getElementById(optionId(flat[next]!.id))?.scrollIntoView?.({ block: 'nearest' });
+    document.getElementById(optionId(next))?.scrollIntoView?.({ block: 'nearest' });
   };
 
   if (!mounted) return null;
@@ -111,7 +129,7 @@ export function CommandPalette({
               aria-expanded="true"
               aria-controls={listId}
               aria-autocomplete="list"
-              aria-activedescendant={current ? optionId(current.id) : undefined}
+              aria-activedescendant={activeIndex >= 0 ? optionId(activeIndex) : undefined}
               placeholder={placeholder}
               value={query}
               onInput={event => {
@@ -132,26 +150,26 @@ export function CommandPalette({
             onKeyDown={onKeyDown}
             onClick={event => {
               const option = (event.target as Element).closest<HTMLElement>('[role="option"]');
-              if (option) run(flat.find(item => optionId(item.id) === option.id));
+              if (option) run(flat.findIndex((_, index) => optionId(index) === option.id));
             }}
           >
-            {flat.length === 0 && <div class="ui-command__empty">{emptyText}</div>}
             {/* id группы — по номеру: подпись с пробелом сломала бы aria-labelledby (список id). */}
             {visible.map((group, index) => (
               <div key={group.label} role="group" aria-labelledby={`${base}-group-${index}`}>
                 <div id={`${base}-group-${index}`} class="ui-menu__label" role="presentation">
                   {group.label}
                 </div>
-                {group.items.map(item => {
+                {group.items.map((item, offset) => {
                   const Icon = item.icon;
+                  const position = starts[index]! + offset;
                   return (
                     <div
-                      key={item.id}
-                      id={optionId(item.id)}
+                      key={position}
+                      id={optionId(position)}
                       role="option"
-                      aria-selected={item === current}
+                      aria-selected={position === activeIndex}
                       class="ui-menu__item"
-                      data-highlighted={item === current ? '' : undefined}
+                      data-highlighted={position === activeIndex ? '' : undefined}
                     >
                       {Icon && <Icon aria-hidden="true" />}
                       {item.label}
@@ -165,6 +183,10 @@ export function CommandPalette({
                 })}
               </div>
             ))}
+          </div>
+          {/* Вне listbox: там допустимы только опции. Без результатов регион виден как пустое состояние. */}
+          <div role="status" class={flat.length === 0 ? 'ui-command__empty' : 'ui-sr-only'}>
+            {status}
           </div>
           <div class="ui-command__footer">
             <span>

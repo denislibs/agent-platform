@@ -3,6 +3,7 @@ import { useEffect, useId, useRef, useState } from 'preact/hooks';
 import { Check, ChevronDown, type LucideIcon } from 'lucide-preact';
 import { cx } from '../lib/cx.ts';
 import { useDismiss } from '../lib/dismiss.ts';
+import { isComposing } from '../lib/ime.ts';
 import { FLOATING_STYLE, useFloating } from '../lib/floating.ts';
 import { Portal } from '../lib/portal.tsx';
 import { usePresence } from '../lib/presence.ts';
@@ -95,7 +96,7 @@ export function Select<V extends string>({
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
-    if (hasModifier(event) || (event.key === 'Enter' && event.isComposing)) return;
+    if (hasModifier(event) || (event.key === 'Enter' && isComposing(event))) return;
     if (!open) {
       if (['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) {
         event.preventDefault();

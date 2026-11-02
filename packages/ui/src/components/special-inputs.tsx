@@ -2,6 +2,7 @@ import { Fragment, type ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Minus, Plus, Upload, X } from 'lucide-preact';
 import { cx } from '../lib/cx.ts';
+import { isComposing } from '../lib/ime.ts';
 import { IconButton } from './button.tsx';
 import { Tag } from './chip.tsx';
 import { useFieldControl } from './field.tsx';
@@ -174,7 +175,7 @@ export function TagInput({ values, onChange, label, placeholder, validate }: Tag
         onInput={event => setDraft(event.currentTarget.value)}
         onKeyDown={event => {
           // Enter, завершающий IME-композицию, не должен добавлять тег.
-          if (event.isComposing) return;
+          if (isComposing(event)) return;
           if (event.key === 'Enter' || event.key === ',') {
             event.preventDefault();
             add();

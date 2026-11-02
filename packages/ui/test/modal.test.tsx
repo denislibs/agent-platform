@@ -1,6 +1,7 @@
 import { expect, mock, test } from 'bun:test';
 import { fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
+import { options } from 'preact';
 import { useState } from 'preact/hooks';
 import { Copy, Settings, SquarePen } from 'lucide-preact';
 import {
@@ -408,4 +409,143 @@ test('useHotkey skips typing in fields unless it is a mod hotkey, ignores IME an
   fireEvent.keyDown(document.body, { key: '/' });
   expect(onK).toHaveBeenCalledTimes(1);
   expect(onSlash).toHaveBeenCalledTimes(1);
+});
+
+test('Shift+Tab from the dialog panel itself wraps to the last tabbable', async () => {
+  const user = userEvent.setup();
+  render(<KeyDialog />);
+  await user.click(screen.getByRole('button', { name: 'Create key' }));
+  const dialog = screen.getByRole('dialog', { name: 'Create API key' });
+  dialog.focus();
+  await user.keyboard('{Shift>}{Tab}{/Shift}');
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close' }));
+});
+
+test('a dialog without tabbables keeps focus on its panel for Tab and Shift+Tab', async () => {
+  const user = userEvent.setup();
+  render(
+    <>
+      <Button>Outside</Button>
+      <Dialog open onOpenChange={() => {}} role="alertdialog" title="Working…" />
+    </>,
+  );
+  const dialog = await screen.findByRole('alertdialog');
+  await waitFor(() => {
+    if (document.activeElement !== dialog) throw new Error('not focused yet');
+  });
+  await user.tab();
+  expect(document.activeElement).toBe(dialog);
+  await user.keyboard('{Shift>}{Tab}{/Shift}');
+  expect(document.activeElement).toBe(dialog);
+});
+
+test('CommandPalette announces the result count and the empty state in a status region', async () => {
+  const user = userEvent.setup();
+  render(<PaletteWithOpener onNew={() => {}} onSettings={() => {}} />);
+  await user.click(screen.getByRole('button', { name: 'Commands' }));
+  const status = screen.getByRole('status');
+  expect(screen.getByRole('listbox').contains(status)).toBe(false);
+  await user.keyboard('set');
+  expect(status.textContent).toBe('1 result');
+  await user.keyboard('zzz');
+  expect(status.textContent).toBe('No results');
+});
+
+test('palette option ids come from their position, so odd and duplicate item ids still work', async () => {
+  const user = userEvent.setup();
+  const onFirst = mock(() => {});
+  const onSecond = mock(() => {});
+  const odd: CommandGroup[] = [
+    { label: 'One', items: [{ id: 'same id', label: 'First', onSelect: onFirst }] },
+    { label: 'Two', items: [{ id: 'same id', label: 'Second', onSelect: onSecond }] },
+  ];
+  render(<CommandPalette open onOpenChange={() => {}} groups={odd} />);
+  const input = await screen.findByRole('combobox');
+  const first = screen.getByRole('option', { name: 'First' });
+  const second = screen.getByRole('option', { name: 'Second' });
+  expect(first.id).not.toBe(second.id);
+  expect(first.id).not.toContain(' ');
+  await user.keyboard('{ArrowDown}');
+  expect(input.getAttribute('aria-activedescendant')).toBe(second.id);
+  expect(second.getAttribute('aria-selected')).toBe('true');
+  expect(first.getAttribute('aria-selected')).toBe('false');
+  await user.click(second);
+  expect(onSecond).toHaveBeenCalledTimes(1);
+  expect(onFirst).not.toHaveBeenCalled();
+});
+
+test('a reopened palette renders with an empty query from its first frame', async () => {
+  const user = userEvent.setup();
+  render(<PaletteWithOpener onNew={() => {}} onSettings={() => {}} />);
+  const opener = screen.getByRole('button', { name: 'Commands' });
+  await user.click(opener);
+  await user.keyboard('zzz{Escape}');
+  await gone(() => screen.queryByRole('dialog'));
+  // Каждый коммит рендера: запоминаем, что было в поле, когда палитра впервые появилась в DOM.
+  // Сброс эффектом успел бы показать старый фильтр на один коммит.
+  let firstValue: string | undefined;
+  const previous = options.diffed;
+  options.diffed = vnode => {
+    previous?.(vnode);
+    firstValue ??= document.querySelector<HTMLInputElement>('[role="combobox"]')?.value;
+  };
+  try {
+    await user.click(opener);
+  } finally {
+    options.diffed = previous;
+  }
+  expect(firstValue).toBe('');
+  expect(screen.getAllByRole('option')).toHaveLength(3);
+  await user.keyboard('{Escape}');
+  await gone(() => screen.queryByRole('dialog'));
+});
+
+test('palette Enter with keyCode 229 (IME in Safari) does not run the active option', async () => {
+  const onNew = mock(() => {});
+  render(<CommandPalette open onOpenChange={() => {}} groups={groups(onNew, () => {})} />);
+  const input = await screen.findByRole('combobox');
+  fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 });
+  expect(onNew).not.toHaveBeenCalled();
+  fireEvent.keyDown(input, { key: 'Enter' });
+  expect(onNew).toHaveBeenCalledTimes(1);
+});
+
+test('mod hotkeys match the physical key on other layouts, need exact modifiers and ignore repeats', () => {
+  const onK = mock(() => {});
+  const onShiftK = mock(() => {});
+  function Keys() {
+    useHotkey('k', onK, { mod: true });
+    useHotkey('k', onShiftK, { mod: true, shift: true });
+    return null;
+  }
+  render(<Keys />);
+  fireEvent.keyDown(document.body, { key: 'л', code: 'KeyK', metaKey: true });
+  expect(onK).toHaveBeenCalledTimes(1);
+  fireEvent.keyDown(document.body, { key: 'K', code: 'KeyK', metaKey: true, shiftKey: true });
+  expect(onK).toHaveBeenCalledTimes(1);
+  expect(onShiftK).toHaveBeenCalledTimes(1);
+  fireEvent.keyDown(document.body, { key: 'k', code: 'KeyK', ctrlKey: true, altKey: true });
+  fireEvent.keyDown(document.body, { key: 'k', code: 'KeyK', metaKey: true, repeat: true });
+  // Латинская раскладка с другой буквой на месте K (Dvorak) — по букве, а не по месту клавиши.
+  fireEvent.keyDown(document.body, { key: 't', code: 'KeyK', metaKey: true });
+  expect(onK).toHaveBeenCalledTimes(1);
+});
+
+test('ConfirmDialog busy: the confirm button shows aria-busy and ignores clicks', async () => {
+  const user = userEvent.setup();
+  const onConfirm = mock(() => {});
+  render(
+    <ConfirmDialog
+      open
+      onOpenChange={() => {}}
+      title="Delete this task?"
+      confirmLabel="Delete task"
+      onConfirm={onConfirm}
+      busy
+    />,
+  );
+  const confirm = await screen.findByRole('button', { name: 'Delete task' });
+  expect(confirm.getAttribute('aria-busy')).toBe('true');
+  await user.click(confirm);
+  expect(onConfirm).not.toHaveBeenCalled();
 });
