@@ -7,6 +7,7 @@ import { MAIN_ID, usePage } from '../layout/page.ts';
 import { useApp } from '../state/app.ts';
 import { RETURN_PARAM, safeReturnPath } from '../state/return-to.ts';
 import { errorText } from '../view/errors.ts';
+import { PROVIDER_MARKS } from '../view/provider-marks.tsx';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -119,6 +120,7 @@ export function SignIn() {
             <Button
               key={provider}
               block
+              icon={busy === provider ? undefined : PROVIDER_MARKS[provider]}
               loading={busy === provider}
               disabled={busy !== null && busy !== provider}
               onClick={() => void continueWith(provider)}
