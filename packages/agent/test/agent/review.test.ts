@@ -119,10 +119,28 @@ describe('PlannerStage.review', () => {
   test('finish ends the task with the answer', async () => {
     const c = setupAgent();
     const { task, sub } = await inReview(c);
+    await (await c.sandboxes.create(task.id)).writeFile('outputs/t.md', '| a |');
     c.llm.push(calls(['finish', { answer: 'Here is the comparison', files: ['outputs/t.md'] }]));
     expect(await c.plannerStage.review(task.id)).toEqual({ next: 'finalize' });
     expect(await c.tasks.get(task.id)).toMatchObject({ status: 'finalizing', result: 'Here is the comparison' });
     expect((await c.subtasks.get(sub.id))?.status).toBe('accepted');
+  });
+
+  test('a finish naming missing files is a call error with the real files, and the planner can correct it', async () => {
+    const c = setupAgent();
+    const { task } = await inReview(c);
+    await (await c.sandboxes.create(task.id)).writeFile('src/App.jsx', 'app');
+    c.llm.push(
+      calls(['finish', { answer: 'Built', files: ['outputs/src/App.jsx'] }]),
+      calls(['finish', { answer: 'Built', files: ['src/App.jsx'] }]),
+    );
+    expect(await c.plannerStage.review(task.id)).toEqual({ next: 'finalize' });
+    const results = (await c.steps.list(task.id)).flatMap(s =>
+      s.payload.type === 'tool_result' && s.payload.name === 'finish' ? [s.payload] : [],
+    );
+    expect(results.map(r => r.ok)).toEqual([false, true]);
+    expect(results[0]!.output).toContain('Files in the workspace: src/App.jsx');
+    expect(await c.composer.compose(task.id)).toMatchObject({ files: ['src/App.jsx'] });
   });
 
   test('a failed subtask offers only finish, replan and reading', async () => {

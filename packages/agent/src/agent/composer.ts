@@ -1,13 +1,16 @@
 import {
   LlmError,
   NotFoundError,
+  type Sandbox,
   type SandboxProvider,
   type Step,
   type StepLog,
   type SubtaskRepository,
+  type Task,
   type TaskRepository,
 } from '@agent/core';
 import { finishTool } from '../tools';
+import { finishFilesProblem, walkFiles, WORKSPACE_HINT_FILES } from './deliverables';
 import type { ModelGateway } from './gateway';
 import { PROMPTS } from './prompts';
 import type { ToolExecutor } from './tool-executor';
@@ -72,38 +75,23 @@ export class ResultComposer {
         );
 
     if (!result && !attempted) {
+      const real = await walkFiles(sandbox, '.', WORKSPACE_HINT_FILES);
       const context = [
         `Task: ${task.prompt}`,
         task.partial ? `The task stopped early (${task.stopReason ?? 'limit'}); answer with what was done.` : '',
         '',
         'Subtask reports:',
         ...(accepted.length ? accepted.map(s => `- ${s.goal}: ${s.report!.summary}`) : ['none']),
+        '',
+        'Files in the workspace:',
+        ...(real.length ? real.map(path => `- ${path}`) : ['none']),
       ].join('\n');
-      try {
-        const { result: llm, step } = await this.deps.gateway.call({
-          task,
-          subtaskId: null,
-          role: 'planner',
-          messages: [
-            { role: 'system', content: PROMPTS.composerSystem },
-            { role: 'user', content: context },
-          ],
-          tools: [finishTool],
-        });
-        if (llm.toolCalls.length > 0) {
-          const exec = await this.deps.toolExecutor.execute({
-            task,
-            subtaskId: null,
-            role: 'planner',
-            llmStep: step,
-            calls: llm.toolCalls,
-            tools: [finishTool],
-            sandbox,
-          });
-          if (exec.control?.kind === 'finish') result = { answer: exec.control.answer, files: exec.control.files };
-        }
-      } catch (err) {
-        if (!(err instanceof LlmError)) throw err;
+      const first = await this.attempt(task, sandbox, context);
+      result = first.result;
+      // Вторая попытка — только после отклонённого вызова: ответ без finish остаётся единственной попыткой.
+      if (first.rejection) {
+        const retry = `${context}\n\nYour previous finish was rejected: ${first.rejection}`;
+        result = (await this.attempt(task, sandbox, retry)).result;
       }
     }
 
@@ -114,12 +102,53 @@ export class ResultComposer {
 
     let outputs: string[] = [];
     try {
-      outputs = (await sandbox.list('outputs', 10)).filter(e => e.type === 'file').map(e => e.path);
+      outputs = await walkFiles(sandbox, 'outputs');
     } catch (err) {
       if (!(err instanceof NotFoundError && err.entity === 'file')) throw err;
     }
-    const files = [...new Set([...result.files, ...outputs].map(normalise))];
+    const named = [...new Set([...result.files, ...outputs].map(normalise))];
+    // Никто не назвал файлов и outputs/ пуста: проект мог быть собран вне неё, отчёты подзадач знают настоящие пути.
+    const files = named.length > 0 ? named : [...new Set(accepted.flatMap(s => s.report!.files).map(normalise))];
     await this.deps.tasks.update(task.id, { result: result.answer });
     return { answer: result.answer, files, partial: task.partial };
+  }
+
+  /** Один вызов модели с finish. rejection — текст отказа, если вызов был, но не прошёл проверку. */
+  private async attempt(
+    task: Task,
+    sandbox: Sandbox,
+    context: string,
+  ): Promise<{ result?: { answer: string; files: string[] }; rejection?: string }> {
+    try {
+      const { result: llm, step } = await this.deps.gateway.call({
+        task,
+        subtaskId: null,
+        role: 'planner',
+        messages: [
+          { role: 'system', content: PROMPTS.composerSystem },
+          { role: 'user', content: context },
+        ],
+        tools: [finishTool],
+      });
+      if (llm.toolCalls.length === 0) return {};
+      const exec = await this.deps.toolExecutor.execute({
+        task,
+        subtaskId: null,
+        role: 'planner',
+        llmStep: step,
+        calls: llm.toolCalls,
+        tools: [finishTool],
+        sandbox,
+        validateControl: control => (control.kind === 'finish' ? finishFilesProblem(sandbox, control.files) : null),
+      });
+      if (exec.control?.kind === 'finish') {
+        return { result: { answer: exec.control.answer, files: exec.control.files } };
+      }
+      const rejected = exec.executed.findLast(e => !e.outcome.ok);
+      return rejected ? { rejection: rejected.outcome.output } : {};
+    } catch (err) {
+      if (!(err instanceof LlmError)) throw err;
+      return {};
+    }
   }
 }

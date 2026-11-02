@@ -30,6 +30,7 @@ import {
   type Tool,
   type ToolControl,
 } from '../tools';
+import { finishFilesProblem } from './deliverables';
 import { questionsAnswered, trailingSilent, unappliedControl } from './turns';
 import type { ModelGateway } from './gateway';
 import type { TaskGuard } from './guard';
@@ -442,10 +443,12 @@ export class PlannerStage {
       calls: result.toolCalls,
       tools,
       sandbox,
-      validateControl: async control =>
-        control.kind === 'replan'
+      validateControl: async control => {
+        if (control.kind === 'finish') return finishFilesProblem(sandbox, control.files);
+        return control.kind === 'replan'
           ? validateReplan(control.changes, await this.deps.subtasks.list(task.id), this.deps.config.limits.maxSubtasks)
-          : null,
+          : null;
+      },
     });
     const control = exec.control;
     if (!control || control.kind === 'report' || control.kind === 'create_plan') return { sandbox: exec.sandbox };
