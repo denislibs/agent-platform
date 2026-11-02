@@ -118,8 +118,8 @@ export class Finalizer {
           mime,
         });
       } catch (err) {
-        // Отменённую задачу удалили, пока файл грузился: записи не будет, и объект не должен остаться без неё.
-        if (!(err instanceof NotFoundError && err.entity === 'task')) throw err;
+        // Задачу (или владельца) удалили, пока файл грузился: записи не будет, и объект не должен остаться без неё.
+        if (!(err instanceof NotFoundError && (err.entity === 'task' || err.entity === 'user'))) throw err;
         await this.deps.fileStore.delete(storageKey);
         return { next: 'stop' };
       }

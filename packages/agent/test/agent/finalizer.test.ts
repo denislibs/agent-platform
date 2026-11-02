@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { SandboxError } from '@agent/core';
+import { NotFoundError, SandboxError } from '@agent/core';
 import { FILE_CATEGORIES, FILE_CATEGORY_NAMES } from '@agent/shared';
 import { MAX_DELIVERED_FILES, mimeOf, safeOutputPath } from '../../src';
 import { calls, planned, say, setupAgent } from './fixtures';
@@ -77,6 +77,27 @@ describe('Finalizer', () => {
     expect(c.fileStore.objects.size).toBe(0);
     // Повтор и follow job'а: задачи нет — стадия останавливается, не падая.
     expect(await c.finalizer.finalize(task.id)).toEqual({ next: 'stop' });
+  });
+
+  test('an owner deleted while the file uploads leaves no object behind and the job stops', async () => {
+    const c = setupAgent();
+    const task = await ready(c, ['outputs/a.md'], { 'outputs/a.md': 'a' });
+    c.files.insert = async input => {
+      throw new NotFoundError('user', input.userId);
+    };
+    expect(await c.finalizer.finalize(task.id)).toEqual({ next: 'stop' });
+    expect(c.fileStore.objects.size).toBe(0);
+  });
+
+  test('an insert error that is not a missing task or user propagates', async () => {
+    const c = setupAgent();
+    const task = await ready(c, ['outputs/a.md'], { 'outputs/a.md': 'a' });
+    for (const failure of [new Error('connection lost'), new NotFoundError('subtask', 'x')]) {
+      c.files.insert = async () => {
+        throw failure;
+      };
+      await expect(c.finalizer.finalize(task.id)).rejects.toBe(failure);
+    }
   });
 
   test('uploads the files, records them, marks the task done and destroys the sandbox', async () => {
