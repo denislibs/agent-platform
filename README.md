@@ -207,7 +207,7 @@ image puts its origin into the CSP `connect-src` and refuses to start when it is
 bun run sandbox:build       # the sandbox image (SANDBOX_IMAGE, default agent-sandbox:dev)
 bun run prod:up             # build and start, wait until nginx and the worker are up
 bun run prod:logs
-docker compose --env-file .env.prod -f docker/compose.prod.yml exec api bun packages/api/src/admin-grant.ts you@example.com 10
+docker compose --env-file .env.prod -f docker/compose.prod.yml exec api bun run admin:grant you@example.com 10
 docker compose --env-file .env.prod -f docker/compose.prod.yml exec worker bun run admin:delete-user user@example.com
 bun run prod:smoke --browser   # a throwaway copy on :58080 with one-off secrets: API, static app, CSP, logs, proxy, Chromium
 ```

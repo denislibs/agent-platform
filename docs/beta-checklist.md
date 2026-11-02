@@ -9,7 +9,8 @@ dc() { docker compose --env-file .env.prod -f docker/compose.prod.yml "$@"; }
 ```
 
 Проект compose называется `agent-prod`: тома — `agent-prod_pgdata`, `agent-prod_valkeydata`, `agent-prod_garagemeta`,
-`agent-prod_garagedata`; песочницы беты несут метку `agent.sandbox.ns=prod`.
+`agent-prod_garagedata`; песочницы беты несут метку `agent.sandbox.ns=prod`. Бэкапы лежат вне репозитория, в
+`BACKUP_DIR` (по умолчанию `/var/backups/agent`, права `700`; раздел «Бэкапы»).
 
 ## Перед приглашением пользователей
 
@@ -69,7 +70,8 @@ dc() { docker compose --env-file .env.prod -f docker/compose.prod.yml "$@"; }
       Better Auth) считаются по одному IP на всех. Раскомментировать `set_real_ip_from` / `real_ip_header` /
       `real_ip_recursive` в `docker/nginx/prod/nginx.conf`, вписав адрес или подсеть прокси (для прокси на том же
       хосте — шлюз сети Docker, `docker network inspect agent-prod_default`), и пересобрать (`bun run prod:up`).
-      Проверка: два запроса с разных машин оставляют в логе API разные `X-Real-IP`. Reverse proxy должен
+      Проверка: два запроса с разных машин оставляют в access-логе nginx (`dc logs nginx`, первое поле —
+      `$remote_addr`) адреса клиентов, а не адрес прокси (API `X-Real-IP` не пишет). Reverse proxy должен
       дописывать `X-Forwarded-For` клиентским адресом.
 
 ### Вход и почта
@@ -121,8 +123,8 @@ dc() { docker compose --env-file .env.prod -f docker/compose.prod.yml "$@"; }
       `request: "GET /api/auth/magic-link/verify?token=… "` при недоступном API): поэтому логи не пересылать в
       сторонние сервисы без фильтра и ротировать. Ссылка одноразовая, хранится хэшем и живёт 15 минут, так что
       просроченный лог безопасен.
-- [ ] Бэкап Postgres и Garage по расписанию (раздел «Бэкапы», cron на хосте), копия — вне VM; восстановление проверено
-      хотя бы раз на чистом проекте.
+- [ ] Бэкап Postgres и Garage по расписанию (раздел «Бэкапы», cron на хосте) в `BACKUP_DIR` вне репозитория, копия —
+      вне VM; восстановление проверено хотя бы раз на отдельном проекте (`P=agent-restore`).
 - [ ] Расход виден (токены и милликредиты по дням):
       ```bash
       dc exec -T postgres sh -c 'psql -U "$POSTGRES_USER" "$POSTGRES_DB"' <<'SQL'
@@ -180,57 +182,75 @@ dc ps && curl -fsS https://<APP_HOST>/api/health
 Postgres хранит пользователей, задачи, шаги, список файлов и кредиты; Garage — сами файлы. Valkey не бэкапится:
 очередь восстанавливается из Postgres (сборщик ставит job задачам без активного job).
 
+Бэкапы — в `BACKUP_DIR` вне репозитория (по умолчанию `/var/backups/agent`): не в рабочем дереве, где их может
+захватить `git add` или контекст сборки образа (`backups/` на всякий случай есть в `.gitignore` и `.dockerignore`).
+
 ```bash
-mkdir -p backups && stamp=$(date -u +%Y%m%dT%H%M%SZ)
+BACKUP_DIR=${BACKUP_DIR:-/var/backups/agent}
+install -d -m 700 "$BACKUP_DIR" && stamp=$(date -u +%Y%m%dT%H%M%SZ)
 
 # Postgres: логический дамп
-dc exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"' > "backups/pg-$stamp.dump"
+dc exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"' > "$BACKUP_DIR/pg-$stamp.dump"
 
 # Garage: снимок метаданных (живую sqlite-базу копировать нельзя), затем метаданные без базы + база из снимка + данные
 dc exec garage /garage meta snapshot --all
-docker run --rm -v agent-prod_garagemeta:/v:ro -v "$PWD/backups:/b" -e STAMP="$stamp" alpine sh -c '
+docker run --rm -v agent-prod_garagemeta:/v:ro -v "$BACKUP_DIR:/b" -e STAMP="$stamp" alpine sh -c '
   set -e
   snap=$(ls -d /v/snapshots/* | sort | tail -1)
   cp "$snap/db.sqlite" "/b/garagedb-$STAMP.sqlite"
   tar czf "/b/garagemeta-$STAMP.tgz" -C /v --exclude=./snapshots --exclude=./db.sqlite --exclude=./db.sqlite-shm --exclude=./db.sqlite-wal .'
-docker run --rm -v agent-prod_garagedata:/v:ro -v "$PWD/backups:/b" alpine tar czf "/b/garagedata-$stamp.tgz" -C /v .
+docker run --rm -v agent-prod_garagedata:/v:ro -v "$BACKUP_DIR:/b" alpine tar czf "/b/garagedata-$stamp.tgz" -C /v .
 ```
 
 - Делать Postgres и Garage в одной минуте: рассинхрон описан в «Восстановлении».
-- Копировать `backups/` за пределы VM (шифровать: в дампе пользователи и тексты задач); хранить не меньше 7 дней.
+- Копировать `$BACKUP_DIR` за пределы VM (шифровать: в дампе пользователи и тексты задач); хранить не меньше 7 дней.
 - Старые снимки Garage копятся в томе `garagemeta` (`snapshots/`): раз в неделю оставлять три последних
   (`docker run --rm -v agent-prod_garagemeta:/v alpine sh -c 'ls -d /v/snapshots/* | sort | head -n -3 | xargs -r rm -r'`).
-- Расписание: cron на хосте раз в сутки. Блок выше сохранить в скрипт (с `set -e`, `cd` в корень репозитория и
-  определением `dc` из начала документа); любой ненулевой код завершения — повод для оповещения.
+- Расписание: cron на хосте раз в сутки. Блок выше сохранить в скрипт (с `set -e`, `cd` в корень репозитория,
+  определением `dc` из начала документа и `BACKUP_DIR`); любой ненулевой код завершения — повод для оповещения.
 
 ### Восстановление
 
-Проверять на чистой машине или другом проекте (`-p agent-restore`) до того, как это понадобится.
+Проверять на чистой машине или в отдельном проекте compose (`P=agent-restore`) до того, как это понадобится.
+Все команды ниже работают с проектом `$P` и его томами `${P}_…`: для репетиции `P=agent-restore` — тома беты
+(`agent-prod_…`) не затрагиваются; `P=agent-prod` — только при настоящем восстановлении. Репетиция на хосте беты
+получает свои порты, теги образов и пространство имён песочниц: иначе она заняла бы порты беты, пересобрала бы её
+образы `:prod`, а её сборщик удалял бы песочницы беты.
 
 ```bash
-bun run prod:down
+P=agent-restore                              # репетиция; agent-prod — только для настоящего восстановления
+BACKUP_DIR=${BACKUP_DIR:-/var/backups/agent}
+stamp=<stamp>
+dcp() { docker compose -p "$P" --env-file .env.prod -f docker/compose.prod.yml "$@"; }
+[ "$P" = agent-prod ] || export APP_PORT=58081 GARAGE_PORT=53901 IMAGE_TAG=restore SANDBOX_NAMESPACE=restore
 
-# Postgres: поднять только базу и залить дамп поверх (--clean пересоздаёт объекты)
-dc up -d --wait postgres
-dc exec -T postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' < backups/pg-<stamp>.dump
-dc stop postgres
+dcp down                                     # останавливает проект $P; тома остаются
 
-# Garage: тома создаются заново и заполняются из архивов
-docker volume rm agent-prod_garagemeta agent-prod_garagedata
-dc up --no-start garage                      # создаёт пустые тома проекта
-docker run --rm -v agent-prod_garagemeta:/v -v "$PWD/backups:/b" alpine sh -c \
-  'tar xzf /b/garagemeta-<stamp>.tgz -C /v && cp /b/garagedb-<stamp>.sqlite /v/db.sqlite'
-docker run --rm -v agent-prod_garagedata:/v -v "$PWD/backups:/b" alpine tar xzf /b/garagedata-<stamp>.tgz -C /v
+# Postgres: поднять только базу проекта $P и залить дамп поверх (--clean пересоздаёт объекты)
+dcp up -d --wait postgres
+dcp exec -T postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' < "$BACKUP_DIR/pg-$stamp.dump"
+dcp stop postgres
 
-bun run prod:up
+# Garage: тома проекта $P удаляются (УДАЛЯЕТ ФАЙЛЫ ПРОЕКТА $P) и заполняются из архивов
+echo "removing ${P}_garagemeta ${P}_garagedata"
+docker volume rm -f "${P}_garagemeta" "${P}_garagedata"   # -f: на первой репетиции томов ещё нет
+dcp up --no-start garage                     # создаёт пустые тома проекта $P
+docker run --rm -v "${P}_garagemeta:/v" -v "$BACKUP_DIR:/b:ro" -e STAMP="$stamp" alpine sh -c \
+  'tar xzf "/b/garagemeta-$STAMP.tgz" -C /v && cp "/b/garagedb-$STAMP.sqlite" /v/db.sqlite'
+docker run --rm -v "${P}_garagedata:/v" -v "$BACKUP_DIR:/b:ro" alpine tar xzf "/b/garagedata-$stamp.tgz" -C /v
+
+dcp up -d --build --wait nginx worker        # для P=agent-prod то же, что bun run prod:up
 ```
 
-Проверка: вход, список задач, скачивание файла из старой задачи; `dc exec garage /garage bucket list` показывает
-`agent-files`. Если `.env.prod` менялся, `S3_ACCESS_KEY_ID` и `S3_SECRET_ACCESS_KEY` должны быть прежними
+После репетиции: `dcp down -v` **при `P=agent-restore`** (удаляет тома репетиции; с `P=agent-prod` это удалит данные
+беты).
+
+Проверка (на `APP_PORT` проекта `$P`): вход, список задач, скачивание файла из старой задачи;
+`dcp exec garage /garage bucket list` показывает `agent-files`. Если `.env.prod` менялся, `S3_ACCESS_KEY_ID` и `S3_SECRET_ACCESS_KEY` должны быть прежними
 (Garage хранит ключ в метаданных). Рассинхрон Postgres и Garage: объекты новее бэкапа Postgres остаются без записей
 (лишнее место, видно только ручной чисткой); записи новее бэкапа Garage указывают на отсутствующие объекты —
 скачивание такого файла отвечает ошибкой хранилища. После восстановления задачи, шедшие на момент бэкапа, сборщик
-доведёт сам: проверить `dc logs worker`.
+доведёт сам: проверить `dcp logs worker`.
 
 ### Кредиты
 
@@ -286,10 +306,13 @@ bun run evals --compare evals/results/<до>/report.json evals/results/<посл
   завершается частичным результатом. Отменить можно в приложении от имени пользователя. Крайняя мера — прямая запись в базу:
   ```bash
   dc exec -T postgres sh -c 'psql -U "$POSTGRES_USER" "$POSTGRES_DB"' <<'SQL'
-  update tasks set status = 'cancelled', finished_at = now() where id = '<id>';
+  update tasks set status = 'cancelled', finished_at = now(), updated_at = now()
+  where id = '<id>' and status not in ('done', 'failed', 'cancelled');
   SQL
   ```
-  В ленте задачи не будет шага отмены; песочницу уберёт сборщик, после чего смотреть `dc logs worker`.
+  `UPDATE 0` — задача уже завершена, менять нечего. В ленте задачи не будет шага отмены: открытые страницы увидят
+  отмену только после перезагрузки. Песочницу уберёт сборщик, после чего смотреть `dc logs worker`. Окно
+  `admin:delete-user` (10 минут с конца задачи) считается от этого `updated_at`.
 - **Песочницы копятся.** `docker ps -a --filter label=agent.sandbox.ns=prod` — живые должны быть только у задач в
   работе; остальные сборщик удаляет за проход. `docker system df` — место; тома `agent-ws-*` без задачи — сироты.
 - **Модель недоступна.** Шаги падают с `LlmError`, job повторяется (3 попытки), потом задача `failed` с причиной:
