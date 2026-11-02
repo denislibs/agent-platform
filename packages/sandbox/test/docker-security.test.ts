@@ -327,6 +327,7 @@ const INFRA_SERVICES: Record<string, { port: number; payload: string }> = {
   garage: { port: 3900, payload: HTTP_PAYLOAD },
   api: { port: 3000, payload: HTTP_PAYLOAD },
   nginx: { port: 8080, payload: HTTP_PAYLOAD },
+  'docker-proxy': { port: 2375, payload: HTTP_PAYLOAD },
 };
 
 /** IP и внутренние порты контейнеров инфраструктуры (compose-проект agent-dev). */

@@ -157,9 +157,14 @@ name and the `api` / `nginx` containers by IP; run it after `bun run stack:up` f
 The worker needs the sandbox image (`bun run sandbox:build`) and `LITELLM_BASE_URL`, `LITELLM_API_KEY`,
 `PLANNER_MODEL`, `EXECUTOR_MODEL` in `.env`: they are optional in the config schema (the API does without them),
 but the worker creates the LiteLLM client at startup and refuses to start when any is missing.
-In Docker the one-shot `migrate` service applies migrations before the worker and the API start; the worker manages
-sandboxes through the host `/var/run/docker.sock` (root-equivalent on the host: development and closed beta only,
-production uses E2B). `bun run backend:build` builds only the `agent-backend:dev` image, shared by `migrate`, `worker` and `api`.
+In Docker the one-shot `migrate` service applies migrations before the worker and the API start. The worker runs as
+the non-root `bun` user with a read-only root and reaches Docker only through `docker-proxy`
+(`docker/docker-proxy.yml`, `wollomatic/socket-proxy`): it allows exactly the Docker API calls of the sandbox provider
+and refuses host bind mounts, images, builds and system calls. The proxy does not inspect container settings
+(privileged mode, host namespaces) — it narrows access but is not a boundary against a compromised worker: closed beta
+only, production uses E2B (see `docs/beta-checklist.md`). On Linux set `DOCKER_GID` to the docker group of the host
+(`getent group docker | cut -d: -f3`). `bun run backend:build` builds the `agent-backend:dev` image (target `worker`),
+shared by `migrate`, `worker`, `api` and `s3-cors`; it carries no ui-kit dependencies.
 
 Docker sandbox tests (`packages/sandbox`) need the image from `bun run sandbox:build`.
 The sandbox isolation (non-root, no capabilities, own network, limits) is for development and the closed beta;

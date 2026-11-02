@@ -58,27 +58,37 @@ services:
     security_opt: ['no-new-privileges:true']
     restart: 'no'
 
+  # Прокси Docker API (docker/docker-proxy.yml): docker.sock видит только он, воркер — разрешённые запросы.
+  docker-proxy:
+    extends: { file: docker-proxy.yml, service: docker-proxy }
+    profiles: ['app']
+
   worker:
     profiles: ['app']
     build:
       context: ..
       dockerfile: docker/backend/Dockerfile
+      target: worker
     image: agent-backend:dev
     env_file: ../.env
     environment:
       DATABASE_URL: postgres://agent:agent@postgres:5432/agent
       VALKEY_URL: redis://valkey:6379
       S3_ENDPOINT: http://garage:3900
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      # docker CLI воркера ходит в Docker через прокси, а не в docker.sock хоста.
+      DOCKER_HOST: tcp://docker-proxy:2375
+    networks: [default, docker-api]
     depends_on:
       migrate: { condition: service_completed_successfully }
       postgres: { condition: service_healthy }
       valkey: { condition: service_healthy }
       garage: { condition: service_started }
+      docker-proxy: { condition: service_healthy }
     # bun — PID 1: init подбирает осиротевшие дочерние процессы docker CLI.
     init: true
-    # docker.sock всё равно даёт root на хосте (backlog: прокси Docker API), но сам процесс лишних прав не получает.
+    # Пользователь bun образа, корень только для чтения: песочницами воркер управляет через прокси.
+    read_only: true
+    tmpfs: ['/tmp']
     cap_drop: ['ALL']
     security_opt: ['no-new-privileges:true']
     restart: unless-stopped
@@ -206,6 +216,12 @@ services:
     cap_drop: ['ALL']
     security_opt: ['no-new-privileges:true']
     restart: unless-stopped
+
+networks:
+  default:
+  # Только воркер и прокси Docker API: ни песочницы, ни остальные сервисы до прокси не дотягиваются.
+  docker-api:
+    internal: true
 
 volumes:
   pgdata:
