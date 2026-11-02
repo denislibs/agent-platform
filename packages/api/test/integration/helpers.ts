@@ -35,7 +35,7 @@ export function setupRealApi(overrides: Overrides = {}) {
       .values({ id: crypto.randomUUID(), name: 'API', email: `${crypto.randomUUID()}@test.dev`, millicredits })
       .returning();
     userIds.push(row!.id);
-    const session: SessionUser = { id: row!.id, email: row!.email, name: row!.name, image: null };
+    const session: SessionUser = { id: row!.id, email: row!.email, name: row!.name, image: null, theme: 'dark' };
     // Origin приложения: изменяющие запросы без него отклоняет csrf.
     const origin = new URL(config.auth.baseUrl).origin;
     return { user: session, headers: { cookie: `session=${auth.signIn(session)}`, origin } };

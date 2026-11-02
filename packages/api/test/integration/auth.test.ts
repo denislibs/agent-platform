@@ -210,3 +210,29 @@ test('signing out ends the session', async () => {
   expect(out.status).toBe(200);
   expect((await app.request(`${origin}/api/me`, { headers: { cookie } })).status).toBe(401);
 });
+
+test('the theme lives in the profile: PATCH /api/me writes it, the session reads it, update-user cannot', async () => {
+  const cookie = await signIn(newEmail());
+  const json = { cookie, origin, 'content-type': 'application/json' };
+  const fresh = MeResponseSchema.parse(await (await app.request(`${origin}/api/me`, { headers: { cookie } })).json());
+  expect(fresh.user.theme).toBe('dark');
+
+  const patched = await app.request(`${origin}/api/me`, {
+    method: 'PATCH',
+    headers: json,
+    body: JSON.stringify({ theme: 'auto' }),
+  });
+  expect(patched.status).toBe(200);
+  const me = MeResponseSchema.parse(await (await app.request(`${origin}/api/me`, { headers: { cookie } })).json());
+  expect(me.user.theme).toBe('auto');
+
+  // Клиентский эндпоинт Better Auth поле не меняет: проверка значения — только в PATCH /api/me.
+  const bypass = await app.request(`${origin}/api/auth/update-user`, {
+    method: 'POST',
+    headers: json,
+    body: JSON.stringify({ theme: 'neon' }),
+  });
+  expect(bypass.status).toBe(400);
+  const after = MeResponseSchema.parse(await (await app.request(`${origin}/api/me`, { headers: { cookie } })).json());
+  expect(after.user.theme).toBe('auto');
+});

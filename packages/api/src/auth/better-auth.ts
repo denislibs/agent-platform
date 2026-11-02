@@ -5,12 +5,16 @@ import { isAPIError } from 'better-auth/api';
 import { magicLink } from 'better-auth/plugins';
 import type { Logger, MailMessage, Mailer } from '@agent/core';
 import { account, session, user, verification, type Db } from '@agent/db';
-import type { Config } from '@agent/shared';
+import { PROFILE_THEMES, type Config, type ProfileTheme } from '@agent/shared';
 import { scrub } from '../errors';
 import { isLocalRuntime } from '../runtime-env';
 import type { AuthGateway, SessionUser } from './gateway';
 
 export const MAGIC_LINK_TTL_SEC = 15 * 60;
+
+/** Значение из колонки theme; чужое (записанное в обход API) — тёмная тема по умолчанию. */
+const profileTheme = (value: unknown): ProfileTheme =>
+  (PROFILE_THEMES as readonly unknown[]).includes(value) ? (value as ProfileTheme) : 'dark';
 
 /** Провайдер включается, только если его приложение настроено (оба значения в env). */
 export function socialProviders(auth: Config['auth']): {
@@ -89,6 +93,11 @@ export function createBetterAuth(deps: {
     secret: auth.secret,
     database: drizzleAdapter(deps.db, { provider: 'pg', schema: { user, session, account, verification } }),
     socialProviders: socialProviders(auth),
+    user: {
+      // Тема из профиля приходит в getSession. input: false — /api/auth/update-user её не меняет (400
+      // FIELD_NOT_ALLOWED); пишет только PATCH /api/me через setTheme, со своей проверкой значения.
+      additionalFields: { theme: { type: 'string', required: false, defaultValue: 'dark', input: false } },
+    },
     plugins: [
       magicLink({
         expiresIn: MAGIC_LINK_TTL_SEC,
@@ -131,8 +140,14 @@ export class BetterAuthGateway implements AuthGateway {
       throw err;
     }
     if (!found) return undefined;
-    const { id, email, name, image } = found.user;
-    return { id, email, name, image: image ?? null };
+    const { id, email, name, image, theme } = found.user;
+    return { id, email, name, image: image ?? null, theme: profileTheme(theme) };
+  }
+
+  /** Внутренний адаптер Better Auth: поле theme закрыто для клиентского update-user (input: false). */
+  async setTheme(userId: string, theme: ProfileTheme): Promise<void> {
+    const ctx = await this.auth.$context;
+    await ctx.internalAdapter.updateUser(userId, { theme });
   }
 }
 

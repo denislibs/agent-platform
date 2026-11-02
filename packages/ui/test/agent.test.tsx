@@ -255,6 +255,16 @@ test('AskCard disabled blocks options and typed answers', async () => {
   expect(onAnswer).not.toHaveBeenCalled();
 });
 
+test('AskCard starts from a default answer, so an unsent answer is not lost', async () => {
+  const user = userEvent.setup();
+  const onAnswer = mock((_answer: string) => {});
+  render(<AskCard question="Which?" defaultValue="EU only" onAnswer={onAnswer} />);
+  const field = screen.getByRole('textbox', { name: /^Your answer/ }) as HTMLInputElement;
+  expect(field.value).toBe('EU only');
+  await user.type(field, '{Enter}');
+  expect(onAnswer).toHaveBeenLastCalledWith('EU only');
+});
+
 test('StepGroup can be controlled', async () => {
   const user = userEvent.setup();
   const onExpandedChange = mock((_expanded: boolean) => {});
@@ -272,6 +282,12 @@ test('StepGroup can be controlled', async () => {
 test('Thinking is announced as a status', () => {
   render(<Thinking />);
   expect(screen.getByRole('status').textContent).toBe('Thinking…');
+});
+
+test('Thinking stays silent when the screen announces the status elsewhere', () => {
+  render(<Thinking label="Working…" announce={false} />);
+  expect(screen.queryByRole('status')).toBeNull();
+  expect(screen.getByText('Working…')).toBeTruthy();
 });
 
 test('ComputerPanel icon buttons are labelled and Live replaces Jump to live at the end of the replay', async () => {

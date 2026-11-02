@@ -22,6 +22,13 @@
       "when": 1793465873908,
       "tag": "0002_large_beast",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793585548523,
+      "tag": "0003_user_theme",
+      "breakpoints": true
     }
   ]
 }

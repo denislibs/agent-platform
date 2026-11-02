@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'bun:test';
 import { fireEvent, render, screen } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
-import { Copy } from 'lucide-preact';
+import { Copy, SearchX } from 'lucide-preact';
 import {
   Alert,
   Avatar,
@@ -9,6 +9,7 @@ import {
   Badge,
   Button,
   Chip,
+  EmptyState,
   IconButton,
   initials,
   Progress,
@@ -222,4 +223,17 @@ test('Progress supports the info tone and treats NaN as zero', () => {
   const broken = screen.getByRole('progressbar', { name: 'Broken' });
   expect(broken.getAttribute('aria-valuenow')).toBe('0');
   expect(broken.style.getPropertyValue('--val')).toBe('0%');
+});
+
+test('EmptyState title is plain text by default and a heading of the given level on request', () => {
+  render(
+    <>
+      <EmptyState icon={SearchX} title="No keys yet" />
+      <EmptyState icon={SearchX} title="Page not found" heading={1} description="Moved." />
+    </>,
+  );
+  expect(screen.getAllByRole('heading').map(h => [h.tagName, h.textContent])).toEqual([['H1', 'Page not found']]);
+  // Тот же вид: класс заголовка пустого состояния.
+  expect(screen.getByRole('heading', { level: 1 }).className).toBe('ui-empty__title');
+  expect(screen.getByText('No keys yet').className).toBe('ui-empty__title');
 });

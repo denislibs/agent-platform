@@ -184,7 +184,10 @@
   color: var(--icon-secondary);
   margin-bottom: var(--space-2);
 }
+/* Заголовок (EmptyState heading) выглядит как текст: без отступов и размеров браузера. */
 .ui-empty__title {
+  margin: 0;
+  font: inherit;
   font-weight: var(--weight-medium);
 }
 .ui-empty__desc {

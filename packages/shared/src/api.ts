@@ -50,6 +50,12 @@ export const ReplyBodySchema = z.object({
     .max(MAX_PROMPT_CHARS)
     .refine(noNul, NO_NUL_MESSAGE)
     .refine(wellFormed, WELL_FORMED_MESSAGE),
+  /**
+   * seq шага паузы (status → waiting_user), на которую отвечает клиент. Задан и не равен последней паузе — 409:
+   * агент успел задать новый вопрос, а клиент отвечал на старый. Без него ответ уходит на текущую паузу.
+   */
+  // Предел int4: steps.seq в Postgres — integer, большее значение дало бы 500 вместо 400.
+  questionSeq: z.number().int().positive().max(2_147_483_647).optional(),
 });
 /** contentType — без параметров (`text/csv`, не `text/csv; charset=utf-8`); неизвестный тип — application/octet-stream. */
 export const UploadBodySchema = z.object({
@@ -60,12 +66,27 @@ export const UploadBodySchema = z.object({
     .regex(/^[\w.+-]+\/[\w.+-]+$/),
   size: z.number().int().positive(),
 });
+/** Темы интерфейса в профиле (спецификация 12); совпадают с THEMES ui-kit (проверяет тест веб-приложения). */
+export const PROFILE_THEMES = ['dark', 'light', 'auto'] as const;
+export type ProfileTheme = (typeof PROFILE_THEMES)[number];
+export const ProfileThemeSchema = z.enum(PROFILE_THEMES);
+export const UpdateMeBodySchema = z.object({ theme: ProfileThemeSchema });
+
 export const ListTasksQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(MAX_TASKS_PAGE).default(20),
   before: z.string().min(1).max(512).optional(),
 });
 
 // ── Ответы ──
+export const AUTH_PROVIDERS = ['google', 'github'] as const;
+export type AuthProvider = (typeof AUTH_PROVIDERS)[number];
+
+/** Публичные настройки для веб-приложения (GET /api/config, без сессии): кнопки входа и предел файла. */
+export const ClientConfigSchema = z.object({
+  providers: z.array(z.enum(AUTH_PROVIDERS)),
+  uploadMaxBytes: z.number().int().positive(),
+});
+
 const IsoDate = z.iso.datetime();
 const TaskStatusSchema = z.enum(TASK_STATUSES);
 
@@ -126,7 +147,13 @@ export const TaskListResponseSchema = z.object({
   nextCursor: z.string().nullable(),
 });
 export const MeResponseSchema = z.object({
-  user: z.object({ id: z.string(), email: z.string(), name: z.string(), image: z.string().nullable() }),
+  user: z.object({
+    id: z.string(),
+    email: z.string(),
+    name: z.string(),
+    image: z.string().nullable(),
+    theme: ProfileThemeSchema,
+  }),
   balance: z.object({ millicredits: z.number().int(), credits: z.string() }),
 });
 export const UploadResponseSchema = z.object({
@@ -141,6 +168,8 @@ export const StreamEndSchema = z.object({ status: TaskStatusSchema });
  */
 export const StreamErrorSchema = z.object({ code: z.literal('internal'), message: z.string() });
 
+export type ClientConfig = z.infer<typeof ClientConfigSchema>;
+export type UpdateMeBody = z.infer<typeof UpdateMeBodySchema>;
 export type TaskSummary = z.infer<typeof TaskSummarySchema>;
 export type TaskDetail = z.infer<typeof TaskDetailSchema>;
 export type SubtaskDto = z.infer<typeof SubtaskDtoSchema>;

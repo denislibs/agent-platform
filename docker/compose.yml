@@ -130,6 +130,64 @@ services:
     restart: unless-stopped
     stop_grace_period: 15s
 
+  # Разрешает браузеру PUT в бакет по presigned URL (CORS Garage) для http://localhost:8080 и локального Vite.
+  s3-cors:
+    profiles: ['app']
+    image: agent-backend:dev
+    pull_policy: never # образ собирает сервис worker
+    command: ['bun', 'packages/storage/src/cors-cli.ts']
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgres://agent:agent@postgres:5432/agent
+      VALKEY_URL: redis://valkey:6379
+      S3_ENDPOINT: http://garage:3900
+      BETTER_AUTH_URL: http://localhost:8080
+    depends_on:
+      garage: { condition: service_started }
+    cap_drop: ['ALL']
+    security_opt: ['no-new-privileges:true']
+    restart: 'no'
+
+  web:
+    profiles: ['app']
+    build:
+      context: ..
+      dockerfile: docker/web/Dockerfile
+    image: agent-web:dev
+    environment:
+      WEB_HOST: 0.0.0.0
+      # Браузер открывает приложение через nginx: оттуда же идёт HMR, этот же origin в CSP.
+      WEB_PUBLIC_ORIGIN: http://localhost:8080
+      S3_PUBLIC_ENDPOINT: http://localhost:53900
+      VITE_CACHE_DIR: /tmp/vite
+      # WEB_WATCH_POLL: '1' # если правки не доходят до HMR через bind-mount (Docker Desktop)
+    # Исходники для HMR — только для чтения; зависимости остаются из образа.
+    volumes:
+      - ../apps/web/src:/app/apps/web/src:ro
+      - ../apps/web/index.html:/app/apps/web/index.html:ro
+      - ../packages/ui/src:/app/packages/ui/src:ro
+      - ../packages/ui/styles:/app/packages/ui/styles:ro
+      - ../packages/shared/src:/app/packages/shared/src:ro
+    # Наружу не публикуется: только через nginx.
+    expose: ['5173']
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'bun',
+          '-e',
+          "fetch('http://127.0.0.1:5173/').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    init: true
+    read_only: true
+    tmpfs: ['/tmp']
+    cap_drop: ['ALL']
+    security_opt: ['no-new-privileges:true']
+    restart: unless-stopped
+
   nginx:
     profiles: ['app']
     image: nginxinc/nginx-unprivileged:1.28-alpine
@@ -137,11 +195,12 @@ services:
     ports: ['127.0.0.1:8080:8080']
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-    # upstream в OSS nginx резолвит имя api один раз при старте: ждём, пока API здоров. restart: true —
-    # `compose restart api` перезапускает и nginx. Пересоздание api через up nginx не трогает: если после него
-    # /api/ отвечает 503 (сменился IP), — `docker compose -f docker/compose.yml --profile app restart nginx`.
+    # upstream в OSS nginx резолвит имена api и web один раз при старте: ждём, пока оба здоровы. restart: true —
+    # `compose restart api|web` перезапускает и nginx. Пересоздание через up nginx не трогает: если после него
+    # /api/ или / отвечает 502/503 (сменился IP), — `docker compose -f docker/compose.yml --profile app restart nginx`.
     depends_on:
       api: { condition: service_healthy, restart: true }
+      web: { condition: service_healthy, restart: true }
     read_only: true
     tmpfs: ['/tmp']
     cap_drop: ['ALL']

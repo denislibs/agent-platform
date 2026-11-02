@@ -15,5 +15,15 @@
     "jsx": "react-jsx",
     "jsxImportSource": "preact"
   },
-  "include": ["packages/*/src", "packages/*/test", "packages/*/*.ts", "packages/ui/showcase", "scripts"]
+  "include": [
+    "packages/*/src",
+    "packages/*/test",
+    "packages/*/*.ts",
+    "packages/ui/showcase",
+    "apps/*/src",
+    "apps/*/test",
+    "apps/*/e2e",
+    "apps/*/*.ts",
+    "scripts"
+  ]
 }

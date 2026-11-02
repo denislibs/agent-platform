@@ -11,13 +11,13 @@ export function AuthSection() {
   const [email, setEmail] = useState('');
   const [sending, setSending] = useState(false);
   return (
-    <section class="auth" aria-label="Sign in">
+    <section class="ui-auth" aria-label="Sign in">
       <DotField />
-      <div class="auth__brand">
-        <span class="mark" />
+      <div class="ui-brand ui-auth__brand">
+        <span class="ui-mark" />
         agent
       </div>
-      <div class="auth__theme">
+      <div class="ui-auth__theme">
         <SegmentedControl
           label="Theme"
           value={theme}
@@ -29,11 +29,11 @@ export function AuthSection() {
           ]}
         />
       </div>
-      <div class="auth__card">
+      <div class="ui-auth__card">
         <h1 class="ui-display">
           Hand it <em>off.</em>
         </h1>
-        <p class="auth__lead">Sign in to give your agent its first task.</p>
+        <p class="ui-auth__lead">Sign in to give your agent its first task.</p>
         <Button block>
           Continue with Google <Badge tone="accent">Last used</Badge>
         </Button>
@@ -65,7 +65,7 @@ export function AuthSection() {
         >
           Email me a sign-in link
         </Button>
-        <p class="auth__legal">
+        <p class="ui-auth__legal">
           By continuing you agree to the{' '}
           <a class="ui-link--muted" href="#terms">
             Terms

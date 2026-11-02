@@ -18,7 +18,13 @@ export function setupApi(env: Record<string, string> = {}) {
 
   async function signIn(opts: { millicredits?: number } = {}) {
     const id = c.memory.seedUser({ millicredits: opts.millicredits ?? 1_000_000 });
-    const user: SessionUser = { id, email: c.memory.users.get(id)!.email, name: 'Test User', image: null };
+    const user: SessionUser = {
+      id,
+      email: c.memory.users.get(id)!.email,
+      name: 'Test User',
+      image: null,
+      theme: 'dark',
+    };
     return { user, headers: { cookie: `session=${auth.signIn(user)}`, origin } };
   }
 

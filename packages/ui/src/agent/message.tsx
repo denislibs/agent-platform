@@ -63,10 +63,13 @@ export function AgentText({ children }: { children: ComponentChildren }) {
   return <div class="ui-agent__text">{children}</div>;
 }
 
-/** Индикатор «агент думает»: пульсирующая точка и бегущий блик по тексту. */
-export function Thinking({ label = 'Thinking…' }: { label?: string }) {
+/**
+ * Индикатор «агент думает»: пульсирующая точка и бегущий блик по тексту. announce={false} — без role="status",
+ * когда статус объявляет свой живой регион экрана (иначе скринридер услышит его дважды).
+ */
+export function Thinking({ label = 'Thinking…', announce = true }: { label?: string; announce?: boolean }) {
   return (
-    <span class="ui-thinking" role="status">
+    <span class="ui-thinking" role={announce ? 'status' : undefined}>
       <StatusDot tone="info" pulse />
       <span class="ui-shimmer">{label}</span>
     </span>
@@ -81,6 +84,8 @@ export interface AskCardProps {
   heading?: string;
   placeholder?: string;
   disabled?: boolean;
+  /** Начальный текст поля: например, ответ, который не ушёл и вернулся пользователю. */
+  defaultValue?: string;
 }
 
 /** Вопрос агента пользователю (ask_user): варианты ответа и поле для своего. */
@@ -91,11 +96,12 @@ export function AskCard({
   heading = 'Your agent needs an answer',
   placeholder = 'Or type your answer…',
   disabled = false,
+  defaultValue = '',
 }: AskCardProps) {
   const id = useId();
   const headingId = `${id}-ask`;
   const questionId = `${id}-question`;
-  const [draft, setDraft] = useState('');
+  const [draft, setDraft] = useState(defaultValue);
   const send = () => {
     const answer = draft.trim();
     if (!answer || disabled) return;
