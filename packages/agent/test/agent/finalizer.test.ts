@@ -140,4 +140,46 @@ describe('Finalizer', () => {
     expect(await c.finalizer.finalize(task.id)).toEqual({ next: 'stop' });
     expect((await c.tasks.get(task.id))?.status).toBe('done');
   });
+
+  test('all files delivered: the task is not partial', async () => {
+    const c = setupAgent();
+    const task = await ready(c, ['notes.md'], { 'notes.md': 'n' });
+    await c.finalizer.finalize(task.id);
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'done', partial: false, stopReason: null });
+  });
+
+  test('a named file that cannot be delivered marks the task partial', async () => {
+    const c = setupAgent();
+    const task = await ready(c, ['missing.md', 'notes.md'], { 'notes.md': 'n' });
+    await c.finalizer.finalize(task.id);
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'done', partial: true, stopReason: 'missing_files' });
+    expect((await c.files.listForTask(task.id, 'output')).map(f => f.path)).toEqual(['notes.md']);
+  });
+
+  test('expected outputs with nothing delivered mark the task partial', async () => {
+    const c = setupAgent();
+    const task = await ready(c, []);
+    const [sub] = await c.subtasks.list(task.id);
+    await c.subtasks.updatePending(sub!.id, { expectedOutputs: ['outputs/app.zip'] });
+    await c.subtasks.transition(sub!.id, 'running');
+    await c.subtasks.transition(sub!.id, 'reviewing', { report: { summary: 'built', files: [], issues: [] } });
+    await c.subtasks.transition(sub!.id, 'accepted');
+    await c.finalizer.finalize(task.id);
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'done', partial: true, stopReason: 'missing_files' });
+  });
+
+  test('a task with no files and no expected outputs stays a plain success', async () => {
+    const c = setupAgent();
+    const task = await ready(c, []);
+    await c.finalizer.finalize(task.id);
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'done', partial: false });
+  });
+
+  test('an earlier stop reason is kept', async () => {
+    const c = setupAgent();
+    const task = await ready(c, ['missing.md']);
+    await c.tasks.update(task.id, { partial: true, stopReason: 'credits' });
+    await c.finalizer.finalize(task.id);
+    expect(await c.tasks.get(task.id)).toMatchObject({ partial: true, stopReason: 'credits' });
+  });
 });

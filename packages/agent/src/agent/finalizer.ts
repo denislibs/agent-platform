@@ -5,6 +5,7 @@ import {
   type FileRepository,
   type FileStore,
   type SandboxProvider,
+  type SubtaskRepository,
   type TaskRepository,
   type UnitOfWork,
 } from '@agent/core';
@@ -45,6 +46,7 @@ export class Finalizer {
   constructor(
     private readonly deps: {
       tasks: TaskRepository;
+      subtasks: SubtaskRepository;
       files: FileRepository;
       fileStore: FileStore;
       sandboxes: SandboxProvider;
@@ -62,10 +64,15 @@ export class Finalizer {
     const { answer, files } = await this.deps.composer.compose(taskId);
     const sandbox = await this.deps.sandboxes.create(taskId);
     const already = new Set((await this.deps.files.listForTask(taskId, 'output')).map(f => f.path));
+    let lost = false;
 
     for (const raw of files) {
       const path = safeOutputPath(raw);
-      if (!path || already.has(path)) continue;
+      if (path && already.has(path)) continue;
+      if (!path) {
+        lost = true;
+        continue;
+      }
       let bytes: Uint8Array;
       try {
         bytes = await sandbox.readFile(path);
@@ -73,7 +80,10 @@ export class Finalizer {
         const skip =
           (err instanceof NotFoundError && err.entity === 'file') ||
           (err instanceof SandboxError && SKIPPED_CODES.has(err.code));
-        if (skip) continue;
+        if (skip) {
+          lost = true;
+          continue;
+        }
         throw err;
       }
       const storageKey = `tasks/${taskId}/${path}`;
@@ -91,13 +101,24 @@ export class Finalizer {
       already.add(path);
     }
 
+    // План обещал файлы, а выдавать нечего: модель могла не назвать ни одного.
+    const promised = (await this.deps.subtasks.list(taskId)).some(
+      s => s.status === 'accepted' && s.expectedOutputs.length > 0,
+    );
+    const incomplete = lost || (already.size === 0 && promised);
+
     // Отмена во время выгрузки: задача уже не наша, песочницу уберёт сборщик.
     const done = await this.deps.guard.unlessStopped(taskId, () =>
       this.deps.uow.run(async tx => {
         await tx.tasks.transition(
           taskId,
           'done',
-          { result: answer, finishedAt: this.deps.clock.now() },
+          {
+            result: answer,
+            finishedAt: this.deps.clock.now(),
+            // Частичная задача сохраняет свою причину: лимит важнее для пользователя.
+            ...(incomplete && !task.partial ? { partial: true, stopReason: 'missing_files' } : {}),
+          },
           { expectedFrom: 'finalizing' },
         );
         await tx.steps.append({ taskId, agent: 'system', payload: { type: 'status', from: 'finalizing', to: 'done' } });
