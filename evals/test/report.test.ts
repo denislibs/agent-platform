@@ -89,6 +89,27 @@ describe('toMarkdown', () => {
     expect(md.endsWith('\n')).toBe(true);
   });
 
+  test('a passed task that stopped early shows its stop reason and keeps the verdict', () => {
+    const md = toMarkdown(
+      report([
+        result('csv-a', 'passed', { partial: true, stopReason: 'missing_files' }),
+        result('csv-b', 'passed', { partial: false, stopReason: null }),
+      ]),
+    );
+    expect(md).toContain('**2/2 passed (100%)**');
+    expect(md).toContain('## Stopped early');
+    expect(md).toContain('- csv-a: missing_files');
+    expect(md).not.toContain('csv-b: ');
+    expect(md).not.toContain('## Not passed');
+    expect(toMarkdown(report([result('t', 'passed')]))).not.toContain('Stopped early');
+  });
+
+  test('a failed task that also stopped early is listed in both places', () => {
+    const md = toMarkdown(report([result('t', 'failed', { partial: true, stopReason: 'token_budget' })]));
+    expect(md).toContain('## Not passed');
+    expect(md).toContain('- t: token_budget');
+  });
+
   test('an interrupted run says so in the header', () => {
     expect(toMarkdown(report([result('t', 'passed')], { interrupted: true }))).toContain(
       '**Interrupted: partial report.**',
@@ -154,5 +175,16 @@ describe('writeReport', () => {
     expect(await readdir(join(dir, 'csv-a-1', 'outputs'))).toEqual(['a.csv']);
     expect(await Bun.file(join(dir, 'csv-a-1', 'answer.md')).text()).toBe('Done');
     expect(((await Bun.file(join(dir, 'report.json')).json()) as EvalReport).results[0]!.id).toBe('csv-a');
+  });
+
+  test('report.json carries the stop reason of a task that stopped early', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'evals-'));
+    await writeReport(
+      dir,
+      report([result('csv-a', 'passed', { partial: true, stopReason: 'missing_files' })]),
+      new Map(),
+    );
+    const saved = (await Bun.file(join(dir, 'report.json')).json()) as EvalReport;
+    expect(saved.results[0]).toMatchObject({ status: 'passed', partial: true, stopReason: 'missing_files' });
   });
 });

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { CircleCheck, OctagonX, SearchX } from 'lucide-preact';
+import { CircleCheck, OctagonX, SearchX, TriangleAlert } from 'lucide-preact';
 import {
   AgentMessage,
   AgentText,
@@ -28,7 +28,7 @@ import { createTaskStore } from '../state/task.ts';
 import { errorText } from '../view/errors.ts';
 import { baseName, fileMeta } from '../view/format.ts';
 import { Markdown } from '../view/markdown.tsx';
-import { isWorking, planItems, statusAnnouncement, stopReasonText, workingLabel } from '../view/status.ts';
+import { filesLost, isWorking, planItems, statusAnnouncement, stopReasonText, workingLabel } from '../view/status.ts';
 import {
   computerEntries,
   conversation,
@@ -297,11 +297,16 @@ export function TaskScreen({ id }: { id: string }) {
           {task.status === 'done' && (
             <>
               <h2 class="ui-sr-only">Result</h2>
-              {task.partial && (
-                <Alert tone="warning" title="Partial result">
-                  The agent stopped early because {stopReasonText(task.stopReason)}.
-                </Alert>
-              )}
+              {task.partial &&
+                (filesLost(task) ? (
+                  <Alert tone="warning" title="Some files were not saved">
+                    The agent listed files that could not be delivered, so references in its answer may not work.
+                  </Alert>
+                ) : (
+                  <Alert tone="warning" title="Partial result">
+                    The agent stopped early because {stopReasonText(task.stopReason)}.
+                  </Alert>
+                ))}
               {task.result && (
                 <AgentText>
                   <Markdown text={task.result} />
@@ -311,9 +316,15 @@ export function TaskScreen({ id }: { id: string }) {
                 <FileCard key={f.id} name={baseName(f.path)} meta={fileMeta(f.path, f.size)} href={f.url} />
               ))}
               <div class="ui-agent__actions">
-                <Badge tone="success" icon={CircleCheck}>
-                  Task completed
-                </Badge>
+                {filesLost(task) ? (
+                  <Badge tone="warning" icon={TriangleAlert}>
+                    Finished without all files
+                  </Badge>
+                ) : (
+                  <Badge tone="success" icon={CircleCheck}>
+                    Task completed
+                  </Badge>
+                )}
               </div>
             </>
           )}

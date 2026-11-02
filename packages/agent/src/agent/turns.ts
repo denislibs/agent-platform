@@ -24,6 +24,24 @@ export function trailingSilent(steps: readonly Step[]): number {
   return n;
 }
 
+/** Столько неверных вызовов подряд — и стадия сдаётся: исполнитель — отчётом failed, проверка — без решения. */
+export const CALL_ERROR_LIMIT = 3;
+
+/** Неверные вызовы (error = call) подряд в конце ленты; вызовы модели, заметки и конспекты между ними не считаются. */
+export function trailingCallErrors(steps: readonly Step[]): number {
+  let n = 0;
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const s = steps[i]!;
+    if (s.payload.type === 'llm_call' || isNote(s) || isCompaction(s)) continue;
+    if (s.payload.type === 'tool_result' && s.payload.error === 'call') {
+      n++;
+      continue;
+    }
+    break;
+  }
+  return n;
+}
+
 /**
  * Сигнал роли (по schema), записанный в последнем ходе, но не применённый: job упал между записью
  * tool_result и переходом. Смотрим только хвост из результатов инструментов этой роли (шаги сжатия пропускаем):

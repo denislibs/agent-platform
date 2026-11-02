@@ -104,6 +104,12 @@ export function toMarkdown(report: EvalReport): string {
       if (r.checks.some(c => !c.ok)) lines.push('');
     }
   }
+  // Задача остановилась раньше времени (лимит, потерянные файлы), но проверки прошла: вердикт не меняется, причина видна.
+  const early = results.filter(r => r.partial && r.stopReason);
+  if (early.length > 0) {
+    lines.push('', '## Stopped early', '');
+    for (const r of early) lines.push(`- ${resultName(r, run.repeat)}: ${cell(r.stopReason!)}`);
+  }
   return `${lines.join('\n').trimEnd()}\n`;
 }
 

@@ -89,7 +89,8 @@ export const replanTool = defineTool({
 
 export const finishTool = defineTool({
   name: 'finish',
-  description: 'Finish the whole task now with the final answer for the user and the files to deliver.',
+  description:
+    'Finish the whole task now with the final answer for the user and the files to deliver. Name only files that exist in the workspace; a missing file rejects the call.',
   schema: z.object({ answer: z.string().trim().min(1), files: z.array(z.string().min(1)).default([]) }),
   run: async ({ answer, files }) => ({
     ok: true,
