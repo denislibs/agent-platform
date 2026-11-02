@@ -7,6 +7,18 @@ import { ApiError } from './errors';
 const CANCEL_ATTEMPTS = 3;
 
 const notWaiting = () => new ApiError(409, 'conflict', 'the task is not waiting for an answer');
+const staleQuestion = () =>
+  new ApiError(409, 'conflict', 'the agent has asked another question since; reload the task and answer it');
+
+/**
+ * Отвечает ли клиент на последнюю паузу: шаг questionSeq — status → waiting_user, и после него пауз не было.
+ * Читаются только шаги начиная с questionSeq, а не вся лента.
+ */
+async function isLastPause(tx: TxRepositories, taskId: string, questionSeq: number): Promise<boolean> {
+  const steps = await tx.steps.list(taskId, { afterSeq: questionSeq - 1 });
+  const pauses = steps.filter(s => s.payload.type === 'status' && s.payload.to === 'waiting_user');
+  return pauses.length === 1 && pauses[0]!.seq === questionSeq;
+}
 
 async function reread(tx: TxRepositories, taskId: string): Promise<Task> {
   const task = await tx.tasks.get(taskId);
@@ -28,11 +40,13 @@ export async function replyToTask(
   deps: Pick<ApiDeps, 'uow' | 'queue' | 'logger'>,
   taskId: string,
   text: string,
+  questionSeq?: number,
 ): Promise<Task> {
   const { task, kind } = await deps.uow.run(async tx => {
     // Ранний отказ без записи; решающая проверка — после append.
     const before = await tx.tasks.get(taskId);
     if (before?.status !== 'waiting_user' || !before.currentKind) throw notWaiting();
+    if (questionSeq !== undefined && !(await isLastPause(tx, taskId, questionSeq))) throw staleQuestion();
     await tx.steps.append({ taskId, agent: 'user', payload: { type: 'message', role: 'user', text } });
     const after = await reread(tx, taskId);
     if (after.status !== 'waiting_user' || !after.currentKind) throw notWaiting();

@@ -4,7 +4,7 @@ import { InvalidTransitionError, type TxRepositories } from '@agent/core';
 import { ApiErrorSchema, TaskEnvelopeSchema } from '@agent/shared';
 import { toolCall } from '@agent/testing';
 import { cancelTask } from '../../src';
-import { pausedTask, setupApi } from './helpers';
+import { pausedTask, setupApi, type ApiTest } from './helpers';
 
 const errorCode = async (res: Response) => ApiErrorSchema.parse(await res.json()).error.code;
 
@@ -150,6 +150,78 @@ describe('POST /api/tasks/:id/messages', () => {
       expect((await t.c.tasks.get(task.id))?.lastSeq).toBe(2);
     },
   );
+});
+
+/** Задача, которую агент поставил на паузу второй раз: ответ на первую паузу, снятие паузы и новая пауза. */
+async function askedTwice(t: ApiTest, userId: string, headers: Record<string, string>) {
+  const task = await pausedTask(t, userId);
+  await t.call('POST', `/api/tasks/${task.id}/messages`, { headers, body: { text: 'EU only' } });
+  t.c.queue.jobs.length = 0;
+  const resumed = await t.c.guard.resume((await t.c.tasks.get(task.id))!);
+  await t.c.guard.pause(resumed, 'execute');
+  const paused = (await t.c.tasks.get(task.id))!;
+  return { task: paused, firstPause: task.lastSeq, secondPause: paused.lastSeq };
+}
+
+describe('POST /api/tasks/:id/messages with questionSeq', () => {
+  test('an answer to the current pause is accepted', async () => {
+    const t = setupApi();
+    const { user, headers } = await t.signIn();
+    const task = await pausedTask(t, user.id);
+    const res = await t.call('POST', `/api/tasks/${task.id}/messages`, {
+      headers,
+      body: { text: 'EU only', questionSeq: task.lastSeq },
+    });
+    expect(res.status).toBe(202);
+    expect(t.c.queue.jobs).toHaveLength(1);
+  });
+
+  test('an answer to an earlier pause is 409, and nothing is written or queued; the current one passes', async () => {
+    const t = setupApi();
+    const { user, headers } = await t.signIn();
+    const { task, firstPause, secondPause } = await askedTwice(t, user.id, headers);
+    const stale = await t.call('POST', `/api/tasks/${task.id}/messages`, {
+      headers,
+      body: { text: 'late answer', questionSeq: firstPause },
+    });
+    expect(stale.status).toBe(409);
+    expect(await errorCode(stale)).toBe('conflict');
+    expect((await t.c.tasks.get(task.id))!.lastSeq).toBe(secondPause);
+    expect(t.c.queue.jobs).toEqual([]);
+
+    const fresh = await t.call('POST', `/api/tasks/${task.id}/messages`, {
+      headers,
+      body: { text: 'fresh answer', questionSeq: secondPause },
+    });
+    expect(fresh.status).toBe(202);
+  });
+
+  test('a seq that is not a pause, or is beyond the feed, is 409', async () => {
+    const t = setupApi();
+    const { user, headers } = await t.signIn();
+    const task = await pausedTask(t, user.id);
+    for (const questionSeq of [1, task.lastSeq + 1]) {
+      const res = await t.call('POST', `/api/tasks/${task.id}/messages`, {
+        headers,
+        body: { text: 'EU only', questionSeq },
+      });
+      expect(res.status).toBe(409);
+    }
+    expect(t.c.queue.jobs).toEqual([]);
+  });
+
+  test('questionSeq must be a positive integer', async () => {
+    const t = setupApi();
+    const { user, headers } = await t.signIn();
+    const task = await pausedTask(t, user.id);
+    for (const questionSeq of [0, 1.5, '2']) {
+      const res = await t.call('POST', `/api/tasks/${task.id}/messages`, {
+        headers,
+        body: { text: 'EU only', questionSeq },
+      });
+      expect(res.status).toBe(400);
+    }
+  });
 });
 
 describe('POST /api/tasks/:id/cancel', () => {

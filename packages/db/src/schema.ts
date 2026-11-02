@@ -41,6 +41,8 @@ export const user = pgTable('user', {
   image: text('image'),
   /** Баланс в милликредитах (1 кредит = 1000). */
   millicredits: bigint('millicredits', { mode: 'number' }).notNull().default(0),
+  /** Тема интерфейса (спецификация 12): dark | light | auto; пишет только PATCH /api/me. */
+  theme: text('theme').notNull().default('dark'),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });

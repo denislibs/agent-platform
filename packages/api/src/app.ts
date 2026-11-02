@@ -5,6 +5,7 @@ import { requireUser } from './auth/middleware';
 import type { ApiDeps, ApiEnv } from './deps';
 import { errorLogFields, mapError } from './errors';
 import { OpenStreams } from './open-streams';
+import { configRoutes } from './routes/config';
 import { eventRoutes } from './routes/events';
 import { fileRoutes } from './routes/files';
 import { meRoutes } from './routes/me';
@@ -16,9 +17,9 @@ export const AUTH_BODY_LIMIT_BYTES = 64 * 1024;
 /** Тела остальных /api/*: самый большой запрос — промпт до 20 000 символов (даже с экранированием это меньше 128 КиБ). */
 export const API_BODY_LIMIT_BYTES = 256 * 1024;
 
-/** Единственное исключение из охраны: проверка живости и обработчик авторизации. */
+/** Исключения из охраны: проверка живости, публичные настройки клиента и обработчик авторизации. */
 const isPublic = (method: string, path: string): boolean =>
-  (method === 'GET' && path === '/api/health') || path.startsWith('/api/auth/');
+  (method === 'GET' && (path === '/api/health' || path === '/api/config')) || path.startsWith('/api/auth/');
 
 /**
  * HTTP API (спецификация 10). Зависимости — одним объектом, обычно cradle контейнера.
@@ -63,6 +64,7 @@ export function createApp(deps: ApiDeps, opts: { streams?: OpenStreams } = {}): 
     deps.auth.handler(c.req.raw),
   );
 
+  configRoutes(app, deps);
   meRoutes(app, deps);
   taskRoutes(app, deps);
   taskActionRoutes(app, deps);
