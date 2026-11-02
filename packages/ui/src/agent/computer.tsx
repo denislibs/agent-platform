@@ -36,7 +36,8 @@ export function ComputerPanel({
   onExpand,
   onClose,
 }: ComputerPanelProps) {
-  const value = Math.min(Math.max(position, 0), 100);
+  // NaN — это «нет данных»: показываем конец ленты, а не ломаем aria-valuenow.
+  const value = Number.isNaN(position) ? 100 : Math.min(Math.max(position, 0), 100);
   return (
     <section class="ui-computer" aria-label={title}>
       <div class="ui-computer__tabs">
@@ -75,9 +76,11 @@ export function ComputerPanel({
         {live ? (
           <span class="ui-live">Live</span>
         ) : (
-          <Button variant="ghost" size="xs" icon={Play} onClick={onJumpToLive}>
-            Jump to live
-          </Button>
+          onJumpToLive && (
+            <Button variant="ghost" size="xs" icon={Play} onClick={onJumpToLive}>
+              Jump to live
+            </Button>
+          )
         )}
       </div>
     </section>
@@ -103,7 +106,8 @@ export function CreditBalance({
   hint,
   format = formatCreditValue,
 }: CreditBalanceProps) {
-  const low = total !== undefined && total > 0 && value / total <= 0.1;
+  // Без деления: сравнение «десять частей против всего» не копит ошибку округления.
+  const low = total !== undefined && total > 0 && value * 10 <= total;
   return (
     <div class="ui-meter">
       <div class="ui-meter__head">

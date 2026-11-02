@@ -6,6 +6,7 @@ import { Search, Wrench } from 'lucide-preact';
 import { trackGlobalListeners } from './helpers.ts';
 import {
   AgentMessage,
+  AgentText,
   AskCard,
   Attachment,
   Composer,
@@ -147,9 +148,9 @@ test('AskCard answers with an option or with typed text', async () => {
   await user.click(screen.getByRole('button', { name: 'Include both' }));
   expect(onAnswer).toHaveBeenLastCalledWith('Include both');
   expect((screen.getByRole('button', { name: 'Send answer' }) as HTMLButtonElement).disabled).toBe(true);
-  await user.type(screen.getByRole('textbox', { name: 'Your answer' }), '  Only MIT  {Enter}');
+  await user.type(screen.getByRole('textbox', { name: /^Your answer/ }), '  Only MIT  {Enter}');
   expect(onAnswer).toHaveBeenLastCalledWith('Only MIT');
-  expect((screen.getByRole('textbox', { name: 'Your answer' }) as HTMLInputElement).value).toBe('');
+  expect((screen.getByRole('textbox', { name: /^Your answer/ }) as HTMLInputElement).value).toBe('');
 });
 
 test('FileCard is a download link coloured by the file kind', () => {
@@ -219,7 +220,7 @@ test('Composer grows with its content', () => {
 test('Composer and AskCard ignore Enter during IME composition and a disabled Composer sends nothing', async () => {
   const onAnswer = mock((_answer: string) => {});
   render(<AskCard question="Which?" onAnswer={onAnswer} />);
-  const answer = screen.getByRole('textbox', { name: 'Your answer' });
+  const answer = screen.getByRole('textbox', { name: /^Your answer/ });
   fireEvent.input(answer, { target: { value: 'да' } });
   fireEvent.keyDown(answer, { key: 'Enter', keyCode: 229 });
   fireEvent.keyDown(answer, { key: 'Enter', isComposing: true });
@@ -249,7 +250,7 @@ test('AskCard disabled blocks options and typed answers', async () => {
   const onAnswer = mock((_answer: string) => {});
   render(<AskCard question="Which?" options={['A']} onAnswer={onAnswer} disabled />);
   expect((screen.getByRole('button', { name: 'A' }) as HTMLButtonElement).disabled).toBe(true);
-  expect((screen.getByRole('textbox', { name: 'Your answer' }) as HTMLInputElement).disabled).toBe(true);
+  expect((screen.getByRole('textbox', { name: /^Your answer/ }) as HTMLInputElement).disabled).toBe(true);
   await user.click(screen.getByRole('button', { name: 'A' }));
   expect(onAnswer).not.toHaveBeenCalled();
 });
@@ -311,4 +312,129 @@ test('CreditBalance without a total shows no bar and honours a custom format', (
   render(<CreditBalance value={5} format={v => `${v} cr`} />);
   expect(screen.getByText('5 cr')).toBeTruthy();
   expect(screen.queryByRole('progressbar')).toBeNull();
+});
+
+test('Step tells running and failed apart from the rest in text, not only by colour', () => {
+  render(
+    <StepGroup summary="Work">
+      <Step tool="shell">Plain</Step>
+      <Step tool="shell" active>
+        Running one
+      </Step>
+      <Step tool="shell" error>
+        Broken one
+      </Step>
+    </StepGroup>,
+  );
+  const [plain, running, broken] = screen.getAllByRole('listitem');
+  expect(plain!.textContent).toBe('Plain');
+  expect(plain!.getAttribute('aria-current')).toBeNull();
+  expect(running!.textContent).toBe('Running: Running one');
+  expect(running!.getAttribute('aria-current')).toBe('step');
+  expect(broken!.textContent).toBe('Failed: Broken one');
+  expect(broken!.getAttribute('aria-current')).toBeNull();
+});
+
+test('AskCard ties the question to the region, the options and a string question to the answer field', () => {
+  const { unmount } = render(
+    <AskCard question="Include closed-source frameworks?" options={['Yes', 'No']} onAnswer={() => {}} />,
+  );
+  const region = screen.getByRole('region', { name: 'Your agent needs an answer' });
+  const question = document.getElementById(region.getAttribute('aria-describedby')!)!;
+  expect(question.textContent).toBe('Include closed-source frameworks?');
+  const group = screen.getByRole('group', { name: 'Include closed-source frameworks?' });
+  expect(group.querySelectorAll('button').length).toBe(2);
+  expect(screen.getByRole('textbox', { name: 'Your answer: Include closed-source frameworks?' })).toBeTruthy();
+  unmount();
+
+  render(<AskCard question={<em>Which one?</em>} options={['A']} onAnswer={() => {}} />);
+  const input = screen.getByRole('textbox', { name: 'Your answer' });
+  expect(document.getElementById(input.getAttribute('aria-describedby')!)?.textContent).toBe('Which one?');
+  expect(screen.getByRole('group', { name: 'Which one?' })).toBeTruthy();
+});
+
+test('ComputerPanel treats a NaN position as the live end', () => {
+  render(<ComputerPanel position={Number.NaN} live={false} onJumpToLive={() => {}} />);
+  const bar = screen.getByRole('progressbar', { name: 'Replay position' });
+  expect(bar.getAttribute('aria-valuenow')).toBe('100');
+  expect((bar.firstElementChild as HTMLElement).style.getPropertyValue('--val')).toBe('100%');
+});
+
+test('controls without a handler are not rendered as dead buttons', () => {
+  const { rerender } = render(<ComputerPanel live={false} />);
+  expect(screen.queryByRole('button', { name: 'Jump to live' })).toBeNull();
+  rerender(<Composer value="x" onValueChange={() => {}} onSubmit={() => {}} running />);
+  expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+  rerender(<FileCard name="a.csv" meta="Spreadsheet" />);
+  expect(screen.queryByRole('button')).toBeNull();
+  expect(screen.queryByRole('link')).toBeNull();
+  expect(screen.getByText('a.csv')).toBeTruthy();
+});
+
+test('FileCard with onOpen is a button', async () => {
+  const user = userEvent.setup();
+  const onOpen = mock(() => {});
+  render(<FileCard name="a.csv" onOpen={onOpen} />);
+  await user.click(screen.getByRole('button', { name: 'a.csv' }));
+  expect(onOpen).toHaveBeenCalledTimes(1);
+});
+
+test('Composer submits the trimmed text', () => {
+  const onSubmit = mock((_value: string) => {});
+  render(<Composer value={'  find suppliers \n'} onValueChange={() => {}} onSubmit={onSubmit} />);
+  fireEvent.keyDown(screen.getByRole('textbox', { name: 'Task' }), { key: 'Enter' });
+  expect(onSubmit).toHaveBeenCalledWith('find suppliers');
+});
+
+test('CreditBalance warns at exactly 10 % and not above', () => {
+  const { rerender } = render(<CreditBalance value={130} total={1300} />);
+  expect(screen.getByRole('progressbar', { name: 'Credits' }).className).toBe('ui-progress ui-progress--warning');
+  rerender(<CreditBalance value={131} total={1300} />);
+  expect(screen.getByRole('progressbar', { name: 'Credits' }).className).toBe('ui-progress');
+});
+
+test('AgentText is a block container', () => {
+  render(
+    <AgentText>
+      <ul>
+        <li>one</li>
+      </ul>
+    </AgentText>,
+  );
+  expect(screen.getByRole('list').parentElement?.tagName).toBe('DIV');
+});
+
+test('Composer attachments form a labelled list', () => {
+  render(
+    <Composer
+      value=""
+      onValueChange={() => {}}
+      onSubmit={() => {}}
+      attachments={
+        <>
+          <Attachment name="a.csv" />
+          <Attachment name="b.md" />
+        </>
+      }
+    />,
+  );
+  const list = screen.getByRole('list', { name: 'Attachments' });
+  expect(list.querySelectorAll('[role="listitem"]').length).toBe(2);
+});
+
+test('FileCard and TaskItem drop unsafe hrefs instead of rendering them as links', () => {
+  const { unmount } = render(<FileCard name="a.csv" href="javascript:alert(1)" />);
+  expect(screen.queryByRole('link')).toBeNull();
+  expect(screen.getByText('a.csv')).toBeTruthy();
+  unmount();
+
+  const onOpen = mock(() => {});
+  render(<FileCard name="b.csv" href=" JaVaScRiPt:alert(1)" onOpen={onOpen} />);
+  expect(screen.queryByRole('link')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'b.csv' }));
+  expect(onOpen).toHaveBeenCalledTimes(1);
+
+  render(<TaskItem title="Bad task" status="idle" href="data:text/html,x" />);
+  expect(screen.queryByRole('link', { name: /Bad task/ })).toBeNull();
+  expect(screen.getByText('Bad task')).toBeTruthy();
 });

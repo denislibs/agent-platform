@@ -5,6 +5,7 @@ import { Button, IconButton } from '../components/button.tsx';
 import { StatusDot } from '../components/display.tsx';
 import { Input } from '../components/input.tsx';
 import { isComposing } from '../lib/ime.ts';
+import { safeHref } from '../lib/url.ts';
 import { FILE_KIND_ICONS, fileKind, formatDuration, type FileKind } from './format.ts';
 
 export function UserMessage({ children }: { children: ComponentChildren }) {
@@ -59,7 +60,7 @@ export function AgentMessage({
 }
 
 export function AgentText({ children }: { children: ComponentChildren }) {
-  return <p class="ui-agent__text">{children}</p>;
+  return <div class="ui-agent__text">{children}</div>;
 }
 
 /** Индикатор «агент думает»: пульсирующая точка и бегущий блик по тексту. */
@@ -91,7 +92,9 @@ export function AskCard({
   placeholder = 'Or type your answer…',
   disabled = false,
 }: AskCardProps) {
-  const headingId = `${useId()}-ask`;
+  const id = useId();
+  const headingId = `${id}-ask`;
+  const questionId = `${id}-question`;
   const [draft, setDraft] = useState('');
   const send = () => {
     const answer = draft.trim();
@@ -100,14 +103,16 @@ export function AskCard({
     setDraft('');
   };
   return (
-    <section class="ui-ask" aria-labelledby={headingId}>
+    <section class="ui-ask" aria-labelledby={headingId} aria-describedby={questionId}>
       <div class="ui-ask__head" id={headingId}>
         <MessageCircleQuestion aria-hidden="true" class="ui-icon-sm" />
         {heading}
       </div>
-      <div class="ui-ask__q">{question}</div>
+      <div class="ui-ask__q" id={questionId}>
+        {question}
+      </div>
       {options.length > 0 && (
-        <div class="ui-ask__options">
+        <div class="ui-ask__options" role="group" aria-labelledby={questionId}>
           {options.map(option => (
             <Button key={option} size="sm" disabled={disabled} onClick={() => onAnswer(option)}>
               {option}
@@ -116,7 +121,9 @@ export function AskCard({
         </div>
       )}
       <Input
-        aria-label="Your answer"
+        // Строковый вопрос входит в имя поля; иначе поле связано с вопросом через описание.
+        aria-label={typeof question === 'string' ? `Your answer: ${question}` : 'Your answer'}
+        aria-describedby={typeof question === 'string' ? undefined : questionId}
         placeholder={placeholder}
         value={draft}
         disabled={disabled}
@@ -147,12 +154,16 @@ export interface FileCardProps {
   meta?: string;
   /** По умолчанию — по расширению имени. */
   kind?: FileKind;
-  /** Ссылка на скачивание; без неё карточка — кнопка с onOpen. */
+  /**
+   * Ссылка на скачивание. Небезопасные схемы (`javascript:`, `data:`…) пакет отбрасывает (`safeHref`).
+   * Без ссылки карточка — кнопка с `onOpen`; без обоих — неинтерактивный блок.
+   */
   href?: string;
   onOpen?(): void;
 }
 
-export function FileCard({ name, meta, kind, href, onOpen }: FileCardProps) {
+export function FileCard({ name, meta, kind, href: hrefProp, onOpen }: FileCardProps) {
+  const href = safeHref(hrefProp);
   const resolved = kind ?? fileKind(name);
   const Icon = FILE_KIND_ICONS[resolved];
   const content = (
@@ -172,10 +183,12 @@ export function FileCard({ name, meta, kind, href, onOpen }: FileCardProps) {
     <a class="ui-file" href={href}>
       {content}
     </a>
-  ) : (
+  ) : onOpen ? (
     <button type="button" class="ui-file" onClick={onOpen}>
       {content}
     </button>
+  ) : (
+    <div class="ui-file ui-file--static">{content}</div>
   );
 }
 

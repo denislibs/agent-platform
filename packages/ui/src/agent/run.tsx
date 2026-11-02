@@ -11,6 +11,7 @@ import {
 } from 'lucide-preact';
 import { Spinner } from '../components/display.tsx';
 import { cx } from '../lib/cx.ts';
+import { safeHref } from '../lib/url.ts';
 import { TOOL_ICONS } from './format.ts';
 
 /** Статус строки плана. Перевод статусов подзадач ядра — в веб-приложении (план 6). */
@@ -112,8 +113,10 @@ export function Step({ tool, icon, children, time, active = false, error = false
   // Поиск по таблице, а не вызов toolIcon(): компонент не должен «создаваться» во время рендера.
   const Icon = icon ?? (tool ? TOOL_ICONS[tool] : undefined) ?? Wrench;
   return (
-    <div class={cx('ui-step', error && 'ui-step--error')} role="listitem">
+    <div class={cx('ui-step', error && 'ui-step--error')} role="listitem" aria-current={active ? 'step' : undefined}>
       <Icon aria-hidden="true" />
+      {/* Статус дублируется текстом: цвет и блик не слышны. */}
+      {error ? <span class="ui-sr-only">Failed: </span> : active ? <span class="ui-sr-only">Running: </span> : null}
       <span class={cx(active && 'ui-shimmer')} title={children}>
         {children}
       </span>
@@ -134,6 +137,7 @@ const TASK_STATUS: Record<Exclude<TaskItemStatus, 'running'>, [LucideIcon, strin
 export interface TaskItemProps {
   title: string;
   status: TaskItemStatus;
+  /** Адрес задачи. Небезопасные схемы (`javascript:`, `data:`…) пакет отбрасывает (`safeHref`): заголовок станет текстом. */
   href: string;
   /** Открытая сейчас задача. */
   current?: boolean;
@@ -142,17 +146,25 @@ export interface TaskItemProps {
 }
 
 /** Задача в сайдбаре: статус слева, название-ссылка, меню при наведении. */
-export function TaskItem({ title, status, href, current = false, menu }: TaskItemProps) {
+export function TaskItem({ title, status, href: hrefProp, current = false, menu }: TaskItemProps) {
+  const href = safeHref(hrefProp);
   const [Icon, text] = status === 'running' ? [null, 'running'] : TASK_STATUS[status];
   return (
     <div class="ui-task-item">
       <span class="ui-task-item__status" data-status={status} aria-hidden="true">
         {Icon ? <Icon class="ui-icon-lg" /> : <Spinner size="sm" tone="info" />}
       </span>
-      <a class="ui-task-item__title" href={href} aria-current={current ? 'page' : undefined}>
-        {title}
-        <span class="ui-sr-only">, {text}</span>
-      </a>
+      {href ? (
+        <a class="ui-task-item__title" href={href} aria-current={current ? 'page' : undefined}>
+          {title}
+          <span class="ui-sr-only">, {text}</span>
+        </a>
+      ) : (
+        <span class="ui-task-item__title">
+          {title}
+          <span class="ui-sr-only">, {text}</span>
+        </span>
+      )}
       {menu}
     </div>
   );

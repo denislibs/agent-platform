@@ -552,3 +552,11 @@ button.ui-agent__meta {
   height: 100%;
   display: block;
 }
+
+/* Карточка файла без ссылки и обработчика — просто блок, не кнопка */
+.ui-file--static {
+  cursor: default;
+}
+.ui-file--static:hover {
+  border-color: var(--border-subtle);
+}

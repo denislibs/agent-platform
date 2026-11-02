@@ -44,12 +44,16 @@ export function Composer({
   useAutosize(input, value);
   const canSend = !disabled && !running && value.trim().length > 0;
   const submit = () => {
-    if (canSend) onSubmit(value);
+    if (canSend) onSubmit(value.trim());
   };
   return (
     <div class="ui-composer">
       {context && <div class="ui-composer__ctx">{context}</div>}
-      {attachments && <div class="ui-composer__attachments">{attachments}</div>}
+      {attachments && (
+        <div class="ui-composer__attachments" role="list" aria-label="Attachments">
+          {attachments}
+        </div>
+      )}
       <textarea
         ref={input}
         class="ui-composer__input"
@@ -70,9 +74,12 @@ export function Composer({
         <span class="ui-spacer" />
         {actions}
         {running ? (
-          <button type="button" class="ui-send" data-state="stop" aria-label="Stop" onClick={onStop}>
-            <Square aria-hidden="true" />
-          </button>
+          // Без обработчика кнопка «стоп» была бы мёртвой — её нет.
+          onStop && (
+            <button type="button" class="ui-send" data-state="stop" aria-label="Stop" onClick={onStop}>
+              <Square aria-hidden="true" />
+            </button>
+          )
         ) : (
           <button
             type="button"
@@ -101,7 +108,7 @@ export interface AttachmentProps {
 export function Attachment({ name, meta, icon, onRemove }: AttachmentProps) {
   const Icon = icon ?? FILE_KIND_ICONS[fileKind(name)];
   return (
-    <div class="ui-attachment">
+    <div class="ui-attachment" role="listitem">
       <span class="ui-attachment__thumb">
         <Icon aria-hidden="true" />
       </span>
