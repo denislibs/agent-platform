@@ -5,6 +5,7 @@ import { Alert, Button, DotField, Field, Input, SegmentedControl, useTheme } fro
 import type { AuthProvider } from '@agent/shared';
 import { MAIN_ID, usePage } from '../layout/page.ts';
 import { useApp } from '../state/app.ts';
+import { RETURN_PARAM, safeReturnPath } from '../state/return-to.ts';
 import { errorText } from '../view/errors.ts';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -31,6 +32,8 @@ export function SignIn() {
     query.error ? (LINK_ERRORS[query.error] ?? 'Sign-in did not work. Try again.') : null,
   );
   const [emailError, setEmailError] = useState<string | null>(null);
+  // Куда вернуть после входа: страница, с которой охрана увела сюда (только путь этого приложения).
+  const returnTo = safeReturnPath(query[RETURN_PARAM]) ?? '/';
   const providers = session.config.value?.providers ?? [];
   const address = email.trim();
 
@@ -41,7 +44,7 @@ export function SignIn() {
     setNotice(null);
     setEmailError(null);
     try {
-      await api.sendMagicLink(address);
+      await api.sendMagicLink(address, returnTo);
       // Экран один и тот же, есть такой адрес или нет: наличие аккаунта не раскрываем.
       setSentTo(address);
     } catch (err) {
@@ -57,8 +60,8 @@ export function SignIn() {
     setEmailError(null);
     try {
       // Better Auth отдаёт адрес провайдера (клиент пропускает только http(s)); браузер уходит туда
-      // и вернётся на / с cookie сессии.
-      assign(await api.socialSignIn(provider));
+      // и вернётся на страницу возврата с cookie сессии.
+      assign(await api.socialSignIn(provider, returnTo));
     } catch (err) {
       setNotice(errorText(err));
       setBusy(null);

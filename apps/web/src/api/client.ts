@@ -63,8 +63,8 @@ export interface ApiOptions {
 
 const task = (id: string) => `/api/tasks/${encodeURIComponent(id)}`;
 
-/** Куда вернуть пользователя после входа по ссылке или через OAuth и куда — при ошибке ссылки. */
-const AUTH_REDIRECTS = { callbackURL: '/', errorCallbackURL: '/sign-in' } as const;
+/** Куда вернуть пользователя после входа по ссылке или через OAuth (по умолчанию на главную) и куда — при ошибке ссылки. */
+const authRedirects = (callbackURL: string) => ({ callbackURL, errorCallbackURL: '/sign-in' });
 
 /**
  * Клиент API на схемах @agent/shared: каждый ответ проверяется во время выполнения. Запросы относительные
@@ -124,11 +124,12 @@ export function createApi(opts: ApiOptions = {}) {
     cancel: (id: string) => send('POST', `${task(id)}/cancel`, TaskEnvelopeSchema),
     declareUpload: (body: { name: string; contentType: string; size: number }) =>
       send('POST', '/api/uploads', UploadResponseSchema, body),
-    sendMagicLink: (email: string) =>
-      send('POST', '/api/auth/sign-in/magic-link', BetterAuthOkSchema, { email, ...AUTH_REDIRECTS }),
+    sendMagicLink: (email: string, returnTo = '/') =>
+      send('POST', '/api/auth/sign-in/magic-link', BetterAuthOkSchema, { email, ...authRedirects(returnTo) }),
     /** Адрес провайдера OAuth: браузер уходит туда сам (window.location.assign). */
-    socialSignIn: async (provider: AuthProvider) =>
-      (await send('POST', '/api/auth/sign-in/social', SocialRedirectSchema, { provider, ...AUTH_REDIRECTS })).url,
+    socialSignIn: async (provider: AuthProvider, returnTo = '/') =>
+      (await send('POST', '/api/auth/sign-in/social', SocialRedirectSchema, { provider, ...authRedirects(returnTo) }))
+        .url,
     signOut: () => send('POST', '/api/auth/sign-out', SignOutSchema),
     /** Продлевает cookie сессии (Better Auth обновляет его в ответе get-session); false — сессии нет. */
     touchSession: async () => (await send('GET', '/api/auth/get-session', SessionSchema)) !== null,
