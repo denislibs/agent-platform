@@ -16,10 +16,12 @@ dc() { docker compose --env-file .env.prod -f docker/compose.prod.yml "$@"; }
 ### Хост и изоляция
 
 - [ ] Отдельная VM только под этот стек: на хосте нет других сервисов, данных и ключей. Прокси Docker API
-      (`docker/docker-proxy.yml`) разрешает воркеру только вызовы песочниц и запрещает монтирование путей хоста, но тело
-      `POST /containers/create` не разбирает: `--privileged`, `--network host`, `--pid host`, `cap-add` и `exec` в любой
-      контейнер хоста он пропустит. Он сужает доступ воркера к Docker, но не защищает от взломанного воркера:
-      это root на VM. Поэтому VM одноразовая (пересоздаётся из чистого образа), а настоящая граница — E2B или gVisor;
+      (`docker/docker-proxy.yml`) разрешает воркеру только пути API, нужные песочницам. Bind mount он отклоняет лишь в
+      тех телах `POST /containers/create`, которые умеет разобрать; том с драйвером `local` и опциями bind
+      (`--mount type=volume,volume-opt=type=none,volume-opt=o=bind,…`), `--privileged`, `--network host`,
+      `--pid host`, `cap-add` и `exec` в любой контейнер хоста он не запрещает. Это защита от ошибок, а не граница
+      безопасности: взломанный воркер — root на VM. Поэтому VM одноразовая (пересоздаётся из чистого образа),
+      а настоящая граница — E2B или gVisor;
       для публичного запуска они обязательны (backlog «Надёжная изоляция песочниц»).
 - [ ] `DOCKER_GID` в `.env.prod` — группа сокета Docker на хосте: `getent group docker | cut -d: -f3`. Без неё
       `docker-proxy` не откроет сокет и не станет здоровым (на Docker Desktop и OrbStack — оставить пустым).

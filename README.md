@@ -162,10 +162,11 @@ The worker needs the sandbox image (`bun run sandbox:build`) and `LITELLM_BASE_U
 but the worker creates the LiteLLM client at startup and refuses to start when any is missing.
 In Docker the one-shot `migrate` service applies migrations before the worker and the API start. The worker runs as
 the non-root `bun` user with a read-only root and reaches Docker only through `docker-proxy`
-(`docker/docker-proxy.yml`, `wollomatic/socket-proxy`): it allows exactly the Docker API calls of the sandbox provider
-and refuses host bind mounts, images, builds and system calls. The proxy does not inspect container settings
-(privileged mode, host namespaces) — it narrows access but is not a boundary against a compromised worker: closed beta
-only, production uses E2B (see `docs/beta-checklist.md`). On Linux set `DOCKER_GID` to the docker group of the host
+(`docker/docker-proxy.yml`, `wollomatic/socket-proxy`): it allows only the Docker API paths of the sandbox provider
+(no images, builds or system calls) and blocks bind mounts in the container-create bodies it can parse. Volumes with
+bind driver options, `--privileged`, host namespaces and `exec` into any container are not prevented: the proxy narrows
+access against mistakes but is not a security boundary against a compromised worker — closed beta only, production
+uses E2B (see `docs/beta-checklist.md`). On Linux set `DOCKER_GID` to the docker group of the host
 (`getent group docker | cut -d: -f3`). `bun run backend:build` builds the `agent-backend:dev` image (target `worker`),
 shared by `migrate`, `worker`, `api` and `s3-cors`; it carries no ui-kit dependencies.
 

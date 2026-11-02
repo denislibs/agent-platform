@@ -10,10 +10,11 @@
 #   DELETE /containers/{id}                                — docker rm -f
 #   GET|DELETE /volumes/agent-ws-*, POST /volumes/create   — том /workspace
 #   GET|DELETE /networks/{name}, POST /networks/create     — сеть agent-sandbox
-# Запрещено всё остальное: образы, build, системные вызовы, swarm, plugins, архивы, network connect. Монтирование
-# путей хоста запрещено (-allowbindmountfrom на несуществующую папку). Чего прокси НЕ умеет: смотреть в тело
-# POST /containers/create — privileged, network/pid host и cap-add он пропустит, и exec возможен в любой контейнер
-# хоста. Это защита от ошибок и случайного доступа, а не граница для взломанного воркера (docs/beta-checklist.md).
+# Запрещено всё остальное: образы, build, системные вызовы, swarm, plugins, архивы, network connect.
+# -allowbindmountfrom на несуществующую папку отклоняет bind mount в тех телах POST /containers/create, которые прокси
+# умеет разобрать. Не запрещены: том с драйвером local и опциями bind (volume-opt type=none,o=bind), privileged,
+# network/pid host, cap-add и exec в любой контейнер хоста. Это защита от ошибок и случайного доступа, а не граница
+# безопасности: взломанный воркер — root на хосте (docs/beta-checklist.md).
 services:
   docker-proxy:
     image: wollomatic/socket-proxy:1.13.2@sha256:ff95d6ff6c27853005ef85eb8f4ab5923dc3d2f1e055f98fb6aeeaceec3fe848

@@ -207,7 +207,11 @@ try {
       allowFail: true,
     },
   );
-  check('the proxy denies host bind mounts', bind.code !== 0 && /forbidden/i.test(bind.out), bind.out);
+  check(
+    'the proxy denies a plain host bind mount (-v /:/host)',
+    bind.code !== 0 && /forbidden/i.test(bind.out),
+    bind.out,
+  );
   const sock = await run([...compose, 'exec', '-T', 'worker', 'test', '-e', '/var/run/docker.sock'], {
     allowFail: true,
   });
