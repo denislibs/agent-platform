@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { asValue } from 'awilix';
 import { Queue } from 'bullmq';
+import { eq } from 'drizzle-orm';
 import { buildContainer, type AppContainer } from '@agent/composition';
-import { runMigrations, user } from '@agent/db';
+import { files, runMigrations, user } from '@agent/db';
 import { AGENT_QUEUE } from '@agent/queue';
 import { loadConfig } from '@agent/shared';
 import { ScriptedLlm, toolCall, type ScriptedTurn } from '@agent/testing';
@@ -25,6 +26,7 @@ const llm = new ScriptedLlm([
 let container: AppContainer;
 let worker: RunningWorker;
 let taskId: string | undefined;
+let userId: string | undefined;
 
 beforeAll(async () => {
   await runMigrations(config.databaseUrl);
@@ -38,6 +40,14 @@ afterAll(async () => {
     const c = container.cradle;
     // Песочница упавшего теста и ключи BullMQ под его префиксом не должны пережить прогон.
     if (taskId) await (await c.sandboxes.get(`agent-sbx-${taskId}`))?.destroy();
+    // Пользователь теста и его данные: сначала объекты S3 по строкам files, затем сам пользователь —
+    // задачи, шаги, файлы и проводки уходят каскадом. Чужие данные не трогаются.
+    if (userId) {
+      const { db } = c.database;
+      const objects = await db.select({ key: files.storageKey }).from(files).where(eq(files.userId, userId));
+      for (const { key } of objects) await c.fileStore.delete(key);
+      await db.delete(user).where(eq(user.id, userId));
+    }
     const raw = new Queue(AGENT_QUEUE, { connection: c.redis, prefix: config.worker.queuePrefix });
     await raw.obliterate({ force: true });
     await raw.close();
@@ -61,7 +71,8 @@ test('a task goes from intake to done through BullMQ, Postgres, Docker and S3', 
     .insert(user)
     .values({ id: crypto.randomUUID(), name: 'E2E', email: `${crypto.randomUUID()}@test.dev`, millicredits: 1_000_000 })
     .returning();
-  const task = await c.intake.create({ userId: u!.id, prompt: 'Write hello.md' });
+  userId = u!.id;
+  const task = await c.intake.create({ userId, prompt: 'Write hello.md' });
   taskId = task.id;
 
   const done = await waitFor(
@@ -71,9 +82,9 @@ test('a task goes from intake to done through BullMQ, Postgres, Docker and S3', 
   expect(done).toMatchObject({ status: 'done', result: 'Here is your file' });
   expect(llm.remaining).toBe(0);
 
-  const files = await c.files.listForTask(task.id, 'output');
-  expect(files.map(f => f.path)).toEqual(['outputs/hello.md']);
-  expect(await c.fileStore.getText(files[0]!.storageKey)).toBe('# Hello');
+  const outputs = await c.files.listForTask(task.id, 'output');
+  expect(outputs.map(f => f.path)).toEqual(['outputs/hello.md']);
+  expect(await c.fileStore.getText(outputs[0]!.storageKey)).toBe('# Hello');
   await waitFor(
     () => c.sandboxes.get(`agent-sbx-${task.id}`),
     s => s === undefined,

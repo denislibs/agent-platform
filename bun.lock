@@ -219,6 +219,7 @@
         "@agent/db": "workspace:*",
         "@agent/testing": "workspace:*",
         "awilix": "^13",
+        "drizzle-orm": "^0.45.1",
       },
     },
   },
