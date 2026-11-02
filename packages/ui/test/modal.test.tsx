@@ -12,6 +12,7 @@ import {
   filterCommands,
   IconButton,
   Input,
+  Popover,
   Select,
   Sheet,
   Tooltip,
@@ -548,4 +549,101 @@ test('ConfirmDialog busy: the confirm button shows aria-busy and ignores clicks'
   expect(confirm.getAttribute('aria-busy')).toBe('true');
   await user.click(confirm);
   expect(onConfirm).not.toHaveBeenCalled();
+});
+
+function FiltersDialog({ popoverFirst = false }: { popoverFirst?: boolean }) {
+  const range = (
+    <Popover label="Range" trigger={props => <Button {...props}>Range</Button>}>
+      <Input aria-label="From" />
+      <Input aria-label="To" />
+    </Popover>
+  );
+  return (
+    <Dialog open onOpenChange={() => {}} title="Filters">
+      {popoverFirst && range}
+      <Input aria-label="Query" />
+      {!popoverFirst && range}
+    </Dialog>
+  );
+}
+
+test('Tab in a popover inside a dialog moves between its fields, and Tab in the dialog still wraps', async () => {
+  const user = userEvent.setup();
+  render(<FiltersDialog />);
+  const query = await screen.findByRole('textbox', { name: 'Query' });
+  await waitFor(() => {
+    if (document.activeElement !== query) throw new Error('focus not trapped yet');
+  });
+  const range = screen.getByRole('button', { name: 'Range' });
+  await user.click(range);
+  const from = screen.getByRole('textbox', { name: 'From' });
+  await user.click(from);
+  await user.tab();
+  expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'To' }));
+  await user.keyboard('{Shift>}{Tab}{/Shift}');
+  expect(document.activeElement).toBe(from);
+  // Tab с последнего поля закрывает поповер и возвращает фокус на кнопку — ловушка его не перехватывает.
+  await user.tab();
+  await user.tab();
+  expect(document.activeElement).toBe(range);
+  expect(range.getAttribute('aria-expanded')).toBe('false');
+  await user.tab();
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close' }));
+  await user.tab();
+  expect(document.activeElement).toBe(query);
+});
+
+test('Shift+Tab out of a popover returns focus to its trigger even when the trigger is first in the dialog', async () => {
+  const user = userEvent.setup();
+  render(<FiltersDialog popoverFirst />);
+  const range = await screen.findByRole('button', { name: 'Range' });
+  await waitFor(() => {
+    if (document.activeElement !== range) throw new Error('focus not trapped yet');
+  });
+  await user.click(range);
+  await user.click(screen.getByRole('textbox', { name: 'From' }));
+  // Поповер уже обработал Shift+Tab (preventDefault) — ловушка не переносит фокус на последний элемент.
+  await user.keyboard('{Shift>}{Tab}{/Shift}');
+  expect(document.activeElement).toBe(range);
+  expect(range.getAttribute('aria-expanded')).toBe('false');
+});
+
+function PaletteOverDialog({ dialog, palette }: { dialog: boolean; palette: boolean }) {
+  return (
+    <>
+      <Button>Opener</Button>
+      <Dialog open={dialog} onOpenChange={() => {}} title="Settings">
+        <Button>Inside</Button>
+      </Dialog>
+      <CommandPalette
+        open={palette}
+        onOpenChange={() => {}}
+        groups={groups(
+          () => {},
+          () => {},
+        )}
+      />
+    </>
+  );
+}
+
+test('closing a dialog under an open palette leaves focus in the palette, and the palette returns it to the opener', async () => {
+  const view = render(<PaletteOverDialog dialog={false} palette={false} />);
+  const opener = screen.getByRole('button', { name: 'Opener' });
+  opener.focus();
+  view.rerender(<PaletteOverDialog dialog palette={false} />);
+  const inside = await screen.findByRole('button', { name: 'Inside' });
+  await waitFor(() => {
+    if (document.activeElement !== inside) throw new Error('focus not trapped yet');
+  });
+  view.rerender(<PaletteOverDialog dialog palette />);
+  const search = await screen.findByRole('combobox', { name: 'Command palette' });
+  await waitFor(() => {
+    if (document.activeElement !== search) throw new Error('palette not focused yet');
+  });
+  view.rerender(<PaletteOverDialog dialog={false} palette />);
+  expect(document.activeElement).toBe(search);
+  await gone(() => screen.queryByRole('dialog', { name: 'Settings' }));
+  view.rerender(<PaletteOverDialog dialog={false} palette={false} />);
+  expect(document.activeElement).toBe(opener);
 });

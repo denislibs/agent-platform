@@ -1,5 +1,5 @@
 import type { RefObject } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect } from 'preact/hooks';
 
 const TABBABLE = [
   'a[href]',
@@ -18,25 +18,44 @@ export function tabbables(root: HTMLElement): HTMLElement[] {
   );
 }
 
+interface Trap {
+  root: HTMLElement;
+  /** Слой, куда порталом рендерятся вложенные поповеры и меню; фокус в нём — не выход из ловушки. */
+  layer: HTMLElement | null;
+  /** Куда вернуть фокус при выключении. */
+  previous: HTMLElement | null;
+}
+
 // Активные ловушки по порядку включения: Tab обрабатывает только верхняя (диалог поверх диалога).
-const traps: object[] = [];
+const traps: Trap[] = [];
+
+const holds = (trap: Trap, node: unknown): boolean =>
+  node instanceof Node && (trap.root.contains(node) || Boolean(trap.layer?.contains(node)));
 
 /**
  * Пока `active`: фокус внутри контейнера — на `[data-autofocus]`, иначе на первом фокусируемом,
  * иначе на самом контейнере; Tab и Shift+Tab ходят по кругу. При выключении фокус возвращается
- * на элемент, который был в фокусе до включения.
+ * на элемент, который был в фокусе до включения, — если ловушка верхняя или фокус ещё в ней:
+ * закрытие нижнего слоя не отнимает фокус у верхнего.
+ *
+ * `layer` — контейнер вложенных слоёв (PortalContext диалога): поповер с полями внутри диалога
+ * рендерится рядом с панелью, и Tab по его полям не должен перескакивать на первое поле диалога.
  */
-export function useFocusTrap(container: RefObject<HTMLElement>, active: boolean): void {
-  const [token] = useState(() => ({}));
+export function useFocusTrap(container: RefObject<HTMLElement>, active: boolean, layer?: RefObject<HTMLElement>): void {
   useEffect(() => {
     const root = container.current;
     if (!active || !root) return;
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    traps.push(token);
+    const trap: Trap = {
+      root,
+      layer: layer?.current ?? null,
+      previous: document.activeElement instanceof HTMLElement ? document.activeElement : null,
+    };
+    traps.push(trap);
     (root.querySelector<HTMLElement>('[data-autofocus]') ?? tabbables(root)[0] ?? root).focus();
     // Фокус на самой панели (tabIndex −1, например после клика по тексту) — Shift+Tab ведёт на последний.
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Tab' || traps.at(-1) !== token) return;
+      // defaultPrevented — Tab уже обработал вложенный слой (поповер закрылся и вернул фокус на кнопку).
+      if (event.key !== 'Tab' || event.defaultPrevented || traps.at(-1) !== trap) return;
       const items = tabbables(root);
       const current = document.activeElement;
       const first = items[0];
@@ -44,21 +63,29 @@ export function useFocusTrap(container: RefObject<HTMLElement>, active: boolean)
       if (!first || !last) {
         event.preventDefault();
         root.focus();
-      } else if (event.shiftKey && (current === first || current === root || !root.contains(current))) {
+      } else if (event.shiftKey && (current === first || current === root || !holds(trap, current))) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && (current === last || !root.contains(current))) {
+      } else if (!event.shiftKey && (current === last || !holds(trap, current))) {
         event.preventDefault();
         first.focus();
       }
     };
     document.addEventListener('keydown', onKeyDown);
     return () => {
-      traps.splice(traps.indexOf(token), 1);
+      const index = traps.indexOf(trap);
+      const top = index === traps.length - 1;
+      traps.splice(index, 1);
       document.removeEventListener('keydown', onKeyDown);
-      previous?.focus();
+      if (top || holds(trap, document.activeElement)) {
+        trap.previous?.focus();
+        return;
+      }
+      // Ловушки выше, запомнившие фокус внутри этой, вернут его туда же, куда вернула бы она:
+      // элемент закрытого слоя скоро исчезнет из документа.
+      for (const upper of traps.slice(index)) if (holds(trap, upper.previous)) upper.previous = trap.previous;
     };
-  }, [active, container, token]);
+  }, [active, container, layer]);
 }
 
 let locks = 0;

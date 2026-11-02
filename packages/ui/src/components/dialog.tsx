@@ -54,7 +54,8 @@ export function Dialog({
   const [panel, setPanel] = useLayer();
   const [overlay, setOverlay] = useLayer();
   const { mounted, state } = usePresence(open, DURATION_MS.base);
-  useFocusTrap(panel, open);
+  // Поповеры и меню внутри диалога рендерятся в overlay рядом с панелью — фокус в них остаётся «внутри».
+  useFocusTrap(panel, open, overlay);
   useScrollLock(open);
   useDismiss({ open, onDismiss: () => onOpenChange(false), inside: [panel], outsidePress: role === 'dialog' });
   if (!mounted) return null;
