@@ -126,3 +126,4 @@ export class S3FileStore implements FileStore {
 function isNoSuchKey(err: unknown): boolean {
   return typeof err === 'object' && err !== null && 'code' in err && err.code === 'NoSuchKey';
 }
+export { allowBrowserUploads, BROWSER_UPLOADS_RULE_ID } from './cors';

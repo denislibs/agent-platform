@@ -32,16 +32,47 @@ bun run test:ui             # ui-kit tests (happy-dom in its own process; part o
 `packages/ui` (`@agent/ui`) is the design system: tokens, `ui-*` styles, Preact components and agent patterns.
 Usage, themes and the component list: `packages/ui/README.md`.
 
+## Web app
+
+`apps/web` (`@agent/web`) — Preact + Vite on the ui-kit: sign-in, the task composer, the task screen and settings.
+
+```bash
+bun run web:dev             # Vite on http://localhost:5173, /api proxied to the API on :3000
+bun run web:build           # production build in apps/web/dist (nginx serves it in plan 7)
+bun run test:web            # component tests (happy-dom in its own process; part of test:unit)
+bun run test:e2e:web        # Playwright: the real API and worker on ScriptedLlm (needs infra:up and Chromium)
+```
+
+Without Docker, start the API with the app's origin: Better Auth compares `Origin` with `BETTER_AUTH_URL`.
+
+```bash
+bun run s3:cors             # once per Garage volume: lets the browser PUT uploads into the bucket
+NODE_ENV=development BETTER_AUTH_URL=http://localhost:5173 bun run api
+bun run worker
+bun run web:dev
+```
+
+- The app talks to the backend over HTTP only: it imports `@agent/shared` (schemas) and `@agent/ui` and nothing else
+  from the monorepo (oxlint). It has no CSS of its own: layout and looks come from the ui-kit.
+- The page CSP comes from the Vite dev server (`apps/web/csp.ts`): the inline theme script is allowed by its hash,
+  connections go to the app, `S3_PUBLIC_ENDPOINT` and the HMR socket. Dev-server variables: `WEB_PORT`, `WEB_HOST`,
+  `WEB_PUBLIC_ORIGIN` (the origin the browser sees), `S3_PUBLIC_ENDPOINT`, `API_PROXY_TARGET`, `VITE_CACHE_DIR`,
+  `WEB_WATCH_POLL=1`.
+- Uploads go from the browser straight to S3. The bucket accepts PUT from the origins added by
+  `bun run s3:cors [origin…]` (default: the `BETTER_AUTH_URL` origin and `http://localhost:5173`).
+- The theme is stored in the profile (`PATCH /api/me`); `localStorage` only caches it for the first paint.
+
 ## Docker stack
 
 ```bash
 bun run worker              # worker locally, on the infra from infra:up
-bun run stack:up            # infra + migrate + worker + api + nginx (profile app); stack:down stops them
-bun run stack:logs          # follow api, worker and nginx logs
+bun run stack:up            # infra + migrate + s3-cors + worker + api + web + nginx (profile app); stack:down stops them
+bun run stack:logs          # follow api, worker, web and nginx logs
 ```
 
-The app is served on `http://localhost:8080` only (nginx): `/api/` goes to the API, `/` is a placeholder until the web app.
-The API container is not published and has no Docker access. It needs `BETTER_AUTH_SECRET` in `.env`.
+The app is served on `http://localhost:8080` only (nginx): `/` goes to the web app (Vite dev server, HMR over
+WebSocket through nginx, sources bind-mounted read-only), `/api/` to the API. The API and web containers are not
+published; the API has no Docker access. It needs `BETTER_AUTH_SECRET` in `.env`.
 Magic links show up in `bun run stack:logs` until a mail provider is configured (backlog).
 Grant credits inside the stack: `docker compose -f docker/compose.yml --profile app exec api bun packages/api/src/admin-grant.ts <email> <credits>`.
 
@@ -52,8 +83,9 @@ Grant credits inside the stack: `docker compose -f docker/compose.yml --profile 
 
 nginx overwrites `X-Real-IP` and `X-Forwarded-*` with its own values (clients cannot spoof the IP that rate limiting
 counts), streams SSE unbuffered with a 1 h read timeout, rejects bodies over 1 MB with the API's JSON error
-(files go straight to S3) and adds `nosniff`, `Referrer-Policy`, `X-Frame-Options` and a deny-all CSP for the placeholder.
-`api` and `nginx` run as non-root users with a read-only root filesystem, no capabilities and `no-new-privileges`.
+(files go straight to S3) and adds `nosniff`, `Referrer-Policy` and `X-Frame-Options` everywhere and a deny-all CSP
+on `/api/` (the app's CSP comes from Vite).
+`api`, `web` and `nginx` run as non-root users with a read-only root filesystem, no capabilities and `no-new-privileges`.
 The sandbox isolation test (`packages/sandbox/test/docker-security.test.ts`) also probes port 8080 through every host
 name and the `api` / `nginx` containers by IP; run it after `bun run stack:up` for the full check.
 
@@ -94,8 +126,8 @@ NODE_ENV=development BETTER_AUTH_URL=http://localhost:3000 bun run api   # Hono 
 
 In the Docker stack the browser reaches the API through nginx on `http://localhost:8080` (see Docker stack). Run outside
 Docker, the browser talks to the API directly, so local runs set `BETTER_AUTH_URL=http://localhost:3000`
-(the app's origin: sign-in callbacks, cookies and the CSRF check of mutating requests compare against it) and
-`NODE_ENV=development`. The API reads from `.env`:
+(the app's origin: sign-in callbacks, cookies and the CSRF check of mutating requests compare against it; with the
+web app it is the Vite origin `http://localhost:5173`, see Web app) and `NODE_ENV=development`. The API reads from `.env`:
 
 - `DATABASE_URL`, `VALKEY_URL`, `S3_*` (`S3_PUBLIC_ENDPOINT` — the S3 address the browser can reach);
 - `BETTER_AUTH_SECRET` — required, at least 32 characters: `openssl rand -base64 32`;
@@ -113,17 +145,18 @@ Sign-in methods:
 
 Endpoints (spec section 10; request and response schemas: `packages/shared/src/api.ts`):
 
-| Method     | Path                      |                                                                                                                                      |
-| ---------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `*`        | `/api/auth/*`             | Better Auth                                                                                                                          |
-| GET        | `/api/me`                 | profile and balance (`millicredits`, `credits` as a string)                                                                          |
-| POST       | `/api/uploads`            | declare an input file → presigned PUT for exactly `size` bytes (≤ `UPLOAD_MAX_BYTES`)                                                |
-| POST / GET | `/api/tasks`              | create (`{ prompt, fileIds }`) / list (`?limit=`, `?before=<nextCursor>`)                                                            |
-| GET        | `/api/tasks/:id`          | task, subtasks, files                                                                                                                |
-| GET        | `/api/tasks/:id/events`   | SSE: `step` events (`id` = seq, resume with `Last-Event-ID` or `?after=`), `: ping`, final `end`; `stream_error` on a server failure |
-| POST       | `/api/tasks/:id/messages` | answer the agent's question (task in `waiting_user`)                                                                                 |
-| POST       | `/api/tasks/:id/cancel`   | cancel                                                                                                                               |
-| GET        | `/api/files/:id`          | redirect to a presigned download (always as an attachment)                                                                           |
+| Method      | Path                      |                                                                                                                                      |
+| ----------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `*`         | `/api/auth/*`             | Better Auth                                                                                                                          |
+| GET         | `/api/config`             | public: the configured OAuth providers and the upload limit                                                                          |
+| GET / PATCH | `/api/me`                 | profile with the theme and balance (`millicredits`, `credits` as a string) / save the theme (`dark`, `light`, `auto`)                |
+| POST        | `/api/uploads`            | declare an input file → presigned PUT for exactly `size` bytes (≤ `UPLOAD_MAX_BYTES`)                                                |
+| POST / GET  | `/api/tasks`              | create (`{ prompt, fileIds }`) / list (`?limit=`, `?before=<nextCursor>`)                                                            |
+| GET         | `/api/tasks/:id`          | task, subtasks, files                                                                                                                |
+| GET         | `/api/tasks/:id/events`   | SSE: `step` events (`id` = seq, resume with `Last-Event-ID` or `?after=`), `: ping`, final `end`; `stream_error` on a server failure |
+| POST        | `/api/tasks/:id/messages` | answer the agent's question (task in `waiting_user`); optional `questionSeq` — the pause answered, 409 if the agent asked again      |
+| POST        | `/api/tasks/:id/cancel`   | cancel                                                                                                                               |
+| GET         | `/api/files/:id`          | redirect to a presigned download (always as an attachment)                                                                           |
 
 A stream lives at most `SSE_MAX_STREAM_MS` (15 min): it then closes without `end`, and EventSource reconnects with
 `Last-Event-ID`, passing the session check again.
