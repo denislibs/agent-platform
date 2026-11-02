@@ -7,3 +7,6 @@ export * from './components/display.tsx';
 export * from './components/alert.tsx';
 export * from './components/chip.tsx';
 export * from './components/toast.tsx';
+export * from './components/field.tsx';
+export * from './components/input.tsx';
+export * from './components/choice.tsx';
