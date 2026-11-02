@@ -148,3 +148,97 @@ test('a failed search shows a hint, and Try again repeats the same search', asyn
   expect(screen.queryByText('Could not search your tasks.')).toBeNull();
   expect(calls.filter(c => c.path === '/api/tasks?limit=20&q=sup')).toHaveLength(2);
 });
+
+const deleteTask = async (title: string) => {
+  await userEvent.click(await screen.findByRole('button', { name: `Delete task ${title}` }));
+  await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Delete' }));
+  await until(() => screen.queryByRole('alertdialog') === null);
+};
+
+test('after a delete the focus moves to the next row, else the previous one, else the search; a toast says so', async () => {
+  const { view } = setup(
+    {
+      ...signedIn(),
+      'GET /api/tasks': listed(
+        { id: 't1', prompt: 'First' },
+        { id: 't2', prompt: 'Second' },
+        { id: 't3', prompt: 'Third' },
+      ),
+      'DELETE /api/tasks/t1': noContent,
+      'DELETE /api/tasks/t3': noContent,
+      'DELETE /api/tasks/t2': noContent,
+    },
+    '/',
+  );
+  view(app);
+  await deleteTask('First');
+  await until(() => document.activeElement === screen.getByRole('button', { name: 'Delete task Second' }));
+  expect(screen.getByText('Task deleted')).toBeTruthy();
+
+  // Последняя строка: фокус на предыдущей.
+  await deleteTask('Third');
+  await until(() => document.activeElement === screen.getByRole('button', { name: 'Delete task Second' }));
+
+  await deleteTask('Second');
+  await until(() => document.activeElement === screen.getByRole('searchbox', { name: 'Search tasks' }));
+});
+
+test('a refused delete keeps the focus on the button that opened the dialog and shows no success toast', async () => {
+  const { view } = setup(
+    {
+      ...signedIn(),
+      'GET /api/tasks': listed({ id: 't1', prompt: 'First' }, { id: 't2', prompt: 'Second' }),
+      'DELETE /api/tasks/t1': json({ error: { code: 'conflict', message: 'still running' } }, 409),
+    },
+    '/',
+  );
+  view(app);
+  await deleteTask('First');
+  await screen.findByText('Could not delete the task');
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Delete task First' }));
+  expect(screen.queryByText('Task deleted')).toBeNull();
+});
+
+test('a task already deleted in another tab (404) leaves the sidebar without an error', async () => {
+  const { view } = setup(
+    {
+      ...signedIn(),
+      'GET /api/tasks': listed({ id: 't1', prompt: 'First' }, { id: 't2', prompt: 'Second' }),
+      'DELETE /api/tasks/t1': json({ error: { code: 'not_found', message: 'task not found' } }, 404),
+    },
+    '/',
+  );
+  view(app);
+  await deleteTask('First');
+  await until(() => screen.queryByRole('link', { name: /First/ }) === null);
+  expect(screen.queryByText('Could not delete the task')).toBeNull();
+  expect(screen.getByRole('link', { name: /Second/ })).toBeTruthy();
+});
+
+test('every loaded task deleted while more pages exist: no empty hint, Load more stays', async () => {
+  const { view } = setup(
+    {
+      ...signedIn(),
+      'GET /api/tasks': json({ tasks: [taskSummary({ id: 't1', prompt: 'First' })], nextCursor: 'c1' }),
+      'DELETE /api/tasks/t1': noContent,
+    },
+    '/',
+  );
+  view(app);
+  await deleteTask('First');
+  await until(() => screen.queryByRole('link', { name: /First/ }) === null);
+  expect(screen.queryByText('No tasks yet.')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Load more' })).toBeTruthy();
+});
+
+test('the empty hints are announced as status', async () => {
+  const { view } = setup({
+    ...signedIn(),
+    'GET /api/tasks?limit=20': json({ tasks: [], nextCursor: null }),
+    'GET /api/tasks?limit=20&q=zzz': json({ tasks: [], nextCursor: null }),
+  });
+  view(app);
+  expect((await screen.findByText('No tasks yet.')).getAttribute('role')).toBe('status');
+  await userEvent.type(screen.getByRole('searchbox', { name: 'Search tasks' }), 'zzz');
+  expect((await screen.findByText('No tasks match your search.')).getAttribute('role')).toBe('status');
+});

@@ -3,6 +3,7 @@ import { FolderOpen, Search, Trash2 } from 'lucide-preact';
 import { Alert, Button, ConfirmDialog, EmptyState, IconButton, Input, Spinner, Tabs, useToast } from '@agent/ui';
 import { MAX_SEARCH_CHARS, type FileDto } from '@agent/shared';
 import { usePage } from '../layout/page.ts';
+import { neighbourOf, removalButton, removalField, useRemovalFocus } from '../layout/removal-focus.ts';
 import { Shell } from '../layout/shell.tsx';
 import { useApp } from '../state/app.ts';
 import { createLibrary, type LibraryFilter } from '../state/library.ts';
@@ -26,6 +27,7 @@ export function LibraryPage() {
   const [text, setText] = useState('');
   const [removing, setRemoving] = useState<FileDto | null>(null);
   const [busy, setBusy] = useState(false);
+  const focusAfterRemoval = useRemovalFocus('file', removing === null);
   // Задачу удалили в сайдбаре: её файлов больше нет.
   const removals = tasks.removals.value;
   useEffect(() => {
@@ -43,8 +45,11 @@ export function LibraryPage() {
   const confirmRemove = async () => {
     if (!removing) return;
     setBusy(true);
+    const neighbour = neighbourOf(library.files.peek(), removing.id);
     try {
       await library.remove(removing.id);
+      toast.show({ tone: 'success', title: 'File deleted' });
+      focusAfterRemoval(neighbour);
     } catch (err) {
       toast.show({ tone: 'danger', title: 'Could not delete the file', description: errorText(err) });
     } finally {
@@ -67,6 +72,7 @@ export function LibraryPage() {
         <Input
           type="search"
           icon={Search}
+          {...removalField('file')}
           aria-label="Search files"
           placeholder="Search files"
           maxLength={MAX_SEARCH_CHARS}
@@ -83,12 +89,15 @@ export function LibraryPage() {
           </Alert>
         )}
         {!library.loaded.value && failure === null && <Spinner label="Loading files" />}
-        {library.loaded.value && failure === null && files.length === 0 && (
-          <EmptyState
-            icon={FolderOpen}
-            title={unfiltered ? 'No files yet' : 'No files match'}
-            description={unfiltered ? 'Files your agent creates will appear here.' : 'Try another filter or search.'}
-          />
+        {library.loaded.value && failure === null && files.length === 0 && library.nextCursor.value === null && (
+          // role="status": появление пустого состояния озвучивается, как и тосты.
+          <div role="status">
+            <EmptyState
+              icon={FolderOpen}
+              title={unfiltered ? 'No files yet' : 'No files match'}
+              description={unfiltered ? 'Files your agent creates will appear here.' : 'Try another filter or search.'}
+            />
+          </div>
         )}
         {files.length > 0 && (
           <div class="ui-list ui-list--boxed">
@@ -113,7 +122,12 @@ export function LibraryPage() {
                   <a class="ui-link" href={file.url} aria-label={`Download ${baseName(file.path)}`}>
                     Download
                   </a>
-                  <IconButton icon={Trash2} label={`Delete ${baseName(file.path)}`} onClick={() => setRemoving(file)} />
+                  <IconButton
+                    icon={Trash2}
+                    label={`Delete ${baseName(file.path)}`}
+                    {...removalButton('file', file.id)}
+                    onClick={() => setRemoving(file)}
+                  />
                 </div>
               </div>
             ))}

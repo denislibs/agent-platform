@@ -54,3 +54,9 @@ test('the composer shows focus on its frame, not as a ring around the inner fiel
   expect(styles).toMatch(/\.ui-composer:focus-within\s*\{[^}]*border-color/);
   expect(styles).toMatch(/\.ui-composer__input:focus-visible\s*\{[^}]*box-shadow:\s*none/);
 });
+
+test('a long unbroken row title wraps inside its row instead of running under the controls', () => {
+  const block = styles.match(/\.ui-row__title\s*\{([^}]*)\}/)?.[1] ?? '';
+  expect(block).toMatch(/min-width:\s*0/);
+  expect(block).toMatch(/overflow-wrap:\s*anywhere/);
+});

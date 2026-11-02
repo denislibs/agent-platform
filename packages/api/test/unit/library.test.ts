@@ -115,6 +115,21 @@ describe('DELETE /api/files/:id', () => {
     expect(await t.c.files.get(input.id)).toBeDefined();
   });
 
+  test('needs a session and the Origin of the app', async () => {
+    const t = setupApi();
+    const { user, headers } = await t.signIn();
+    const task = await t.c.intake.create({ userId: user.id, prompt: 'x' });
+    const file = await output(t, user.id, task.id, 'outputs/a.md', 'text/markdown');
+    expect((await t.call('DELETE', `/api/files/${file.id}`)).status).toBe(401);
+    const noOrigin = await t.app.request(`/api/files/${file.id}`, {
+      method: 'DELETE',
+      headers: { cookie: headers.cookie },
+    });
+    expect(noOrigin.status).toBe(403);
+    expect(await t.c.files.get(file.id)).toBeDefined();
+    expect(await t.c.fileStore.exists(file.storageKey)).toBe(true);
+  });
+
   test('a storage failure is 500 and keeps the row; a retry finishes', async () => {
     const t = setupApi();
     const { user, headers } = await t.signIn();

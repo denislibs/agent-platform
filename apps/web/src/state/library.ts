@@ -1,6 +1,6 @@
 import { batch, signal } from '@preact/signals';
 import type { FileCategory, FileDto } from '@agent/shared';
-import type { Api } from '../api/client.ts';
+import { ApiRequestError, type Api } from '../api/client.ts';
 
 export type LibraryFilter = FileCategory | 'all';
 
@@ -72,11 +72,15 @@ export function createLibrary(api: Api) {
       return fetchPage(undefined, dropRows);
     },
     /**
-     * Удаляет файл на сервере и из списка; ошибка запроса пробрасывается, список не меняется. Список, который шёл
-     * до удаления, отбрасывается: его ответ мог вернуть файл. Если такой запрос был, первая страница грузится заново.
+     * Удаляет файл на сервере и из списка; ошибка запроса пробрасывается, список не меняется. 404 — файл уже удалён
+     * (в другой вкладке или вместе с задачей): для списка это тот же успех. Список, который шёл до удаления, отбрасывается: его ответ мог вернуть файл. Если такой запрос был, первая страница грузится заново.
      */
     async remove(id: string): Promise<void> {
-      await api.deleteFile(id);
+      try {
+        await api.deleteFile(id);
+      } catch (err) {
+        if (!(err instanceof ApiRequestError && err.status === 404)) throw err;
+      }
       const inFlight = loading.value;
       latest++;
       batch(() => {

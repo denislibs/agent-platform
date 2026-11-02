@@ -101,6 +101,9 @@
   gap: 2px;
 }
 .ui-row__title {
+  /* Длинное имя без пробелов переносится внутри строки, а не заезжает под кнопки справа. */
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-weight: var(--weight-medium);
   display: flex;
   align-items: center;

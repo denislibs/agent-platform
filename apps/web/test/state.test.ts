@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { effect } from '@preact/signals';
 import { createAppState } from '../src/state/app.ts';
-import { fakeFetch, json, me, taskSummary } from './fixtures.ts';
+import { fakeFetch, json, me, noContent, taskSummary } from './fixtures.ts';
 
 const t = (id: string) => taskSummary({ id, prompt: id });
 /** Задача, созданная в 10:<minute>. */
@@ -249,4 +249,69 @@ test('a more() still in flight is dropped when a search starts', async () => {
   expect(state.tasks.items.value.map(x => x.id)).toEqual(['beta']);
   expect(state.tasks.nextCursor.value).toBeNull();
   expect(state.tasks.loading.value).toBe(false);
+});
+
+test('a task deleted while a list request is in flight stays deleted; the list is read again and loading is not stuck', async () => {
+  let reads = 0;
+  const slow = Promise.withResolvers<Response>();
+  const state = createAppState({
+    fetch: fakeFetch({
+      'GET /api/tasks?limit=20': () => {
+        reads++;
+        if (reads === 1) return json({ tasks: [t('a'), t('b')], nextCursor: null });
+        if (reads === 2) return slow.promise;
+        return json({ tasks: [t('b')], nextCursor: null });
+      },
+      'DELETE /api/tasks/a': noContent,
+    }).fetch,
+  });
+  await state.tasks.reload();
+  const pending = state.tasks.reload();
+  expect(state.tasks.loading.value).toBe(true);
+  await state.tasks.remove('a');
+  // Старый ответ приходит уже после удаления и снова содержит задачу: его не должно быть в списке.
+  slow.resolve(json({ tasks: [t('a'), t('b')], nextCursor: null }));
+  await pending;
+  expect(state.tasks.items.value.map(x => x.id)).toEqual(['b']);
+  expect(state.tasks.loading.value).toBe(false);
+  expect(reads).toBe(3);
+});
+
+test('a task that is already gone (404) is removed from the list without an error', async () => {
+  const state = createAppState({
+    fetch: fakeFetch({
+      'GET /api/tasks?limit=20': json({ tasks: [t('a'), t('b')], nextCursor: null }),
+      'DELETE /api/tasks/a': json({ error: { code: 'not_found', message: 'task not found' } }, 404),
+    }).fetch,
+  });
+  await state.tasks.reload();
+  const before = state.tasks.removals.value;
+  await state.tasks.remove('a');
+  expect(state.tasks.items.value.map(x => x.id)).toEqual(['b']);
+  expect(state.tasks.removals.value).toBe(before + 1);
+});
+
+test('a refused deletion throws and leaves the list and the removal counter alone', async () => {
+  const state = createAppState({
+    fetch: fakeFetch({
+      'GET /api/tasks?limit=20': json({ tasks: [t('a')], nextCursor: null }),
+      'DELETE /api/tasks/a': json({ error: { code: 'conflict', message: 'still running' } }, 409),
+    }).fetch,
+  });
+  await state.tasks.reload();
+  await expect(state.tasks.remove('a')).rejects.toThrow('still running');
+  expect(state.tasks.items.value.map(x => x.id)).toEqual(['a']);
+  expect(state.tasks.removals.value).toBe(0);
+});
+
+test('clear forgets the error of the session that ended', async () => {
+  const state = createAppState({
+    fetch: fakeFetch({
+      'GET /api/tasks?limit=20&q=zzz': json({ error: { code: 'internal', message: 'boom' } }, 500),
+    }).fetch,
+  });
+  await state.tasks.search('zzz');
+  expect(state.tasks.error.value).not.toBeNull();
+  state.tasks.clear();
+  expect(state.tasks.error.value).toBeNull();
 });

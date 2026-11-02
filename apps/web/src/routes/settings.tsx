@@ -55,15 +55,17 @@ function ProfileSection({ user }: { user: MeResponse['user'] }) {
 }
 
 function UsageSection() {
-  const { api } = useApp();
+  const { api, tasks } = useApp();
   const [rows, setRows] = useState<UsageRow[] | null>(null);
   const [failed, setFailed] = useState(false);
+  // Задачу удалили в сайдбаре: её строка переходит в «Deleted tasks», ссылка на неё больше не ведёт никуда.
+  const removals = tasks.removals.value;
   useEffect(() => {
     api.usage().then(
       res => setRows(res.usage),
       () => setFailed(true),
     );
-  }, [api]);
+  }, [api, removals]);
 
   return (
     <section aria-labelledby="settings-usage">

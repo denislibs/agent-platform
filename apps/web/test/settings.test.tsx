@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { screen, within } from '@testing-library/preact';
+import { act, screen, within } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 import { SettingsPage } from '../src/routes/settings.tsx';
 import { json, me, noContent, taskSummary } from './fixtures.ts';
@@ -141,6 +141,35 @@ test('usage lists tasks with links and credits; events of deleted tasks are one 
   expect(screen.getByText('Deleted tasks')).toBeTruthy();
   expect(screen.getByText('0.25 credits')).toBeTruthy();
   expect(screen.queryByRole('link', { name: 'Deleted tasks' })).toBeNull();
+});
+
+const usageRow = (taskId: string | null, prompt: string | null) => ({
+  taskId,
+  prompt,
+  millicredits: 1000,
+  credits: '1',
+  tokens: 10,
+  lastActivityAt: '2026-11-02T10:00:00.000Z',
+});
+
+test('a task deleted from the sidebar leaves the usage list: the row is read again', async () => {
+  let reads = 0;
+  const { view, state } = setup(
+    {
+      ...signedIn(),
+      'GET /api/usage': () =>
+        json({ usage: reads++ === 0 ? [usageRow('t1', 'Find suppliers')] : [usageRow(null, null)] }),
+      'DELETE /api/tasks/t1': noContent,
+    },
+    '/settings',
+  );
+  await state.session.load();
+  view(<SettingsPage />);
+  await screen.findByRole('link', { name: 'Find suppliers' });
+  await act(() => state.tasks.remove('t1'));
+  await screen.findByText('Deleted tasks');
+  expect(screen.queryByRole('link', { name: 'Find suppliers' })).toBeNull();
+  expect(reads).toBe(2);
 });
 
 test('an empty history and a failed load say so', async () => {

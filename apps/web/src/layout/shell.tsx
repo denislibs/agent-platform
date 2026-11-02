@@ -9,6 +9,7 @@ import { SEARCH_DEBOUNCE_MS } from '../state/tasks.ts';
 import { errorText } from '../view/errors.ts';
 import { taskItemStatus } from '../view/status.ts';
 import { MAIN_ID } from './page.ts';
+import { neighbourOf, removalButton, removalField, useRemovalFocus } from './removal-focus.ts';
 
 /** Название задачи в сайдбаре — первая строка запроса. */
 export const taskTitle = (prompt: string): string => prompt.split('\n', 1)[0]!.trim() || 'Untitled task';
@@ -19,6 +20,7 @@ function TaskNav() {
   const toast = useToast();
   const [deleting, setDeleting] = useState<TaskSummary | null>(null);
   const [busy, setBusy] = useState(false);
+  const focusAfterRemoval = useRemovalFocus('task', deleting === null);
   // Текст поиска живёт дольше экрана: Shell монтируется заново на каждом маршруте, а поиск остаётся в состоянии списка.
   const [searchText, setSearchText] = useState(tasks.query.peek());
   useEffect(() => {
@@ -35,10 +37,13 @@ function TaskNav() {
   const confirmDelete = async () => {
     if (!deleting) return;
     setBusy(true);
+    const neighbour = neighbourOf(tasks.items.peek(), deleting.id);
     try {
       await tasks.remove(deleting.id);
-      // Экрану удалённой задачи показывать нечего.
+      toast.show({ tone: 'success', title: 'Task deleted' });
+      // Экрану удалённой задачи показывать нечего: route('/') сам переносит фокус в <main>.
       if (path === `/tasks/${deleting.id}`) route('/');
+      else focusAfterRemoval(neighbour);
     } catch (err) {
       toast.show({ tone: 'danger', title: 'Could not delete the task', description: errorText(err) });
     } finally {
@@ -54,6 +59,7 @@ function TaskNav() {
         type="search"
         size="sm"
         icon={Search}
+        {...removalField('task')}
         aria-label="Search tasks"
         placeholder="Search tasks"
         maxLength={MAX_SEARCH_CHARS}
@@ -72,6 +78,7 @@ function TaskNav() {
               icon={Trash2}
               label={`Delete task ${taskTitle(task.prompt)}`}
               size="xs"
+              {...removalButton('task', task.id)}
               onClick={() => setDeleting(task)}
             />
           }
@@ -92,8 +99,11 @@ function TaskNav() {
         </>
       ) : (
         items.length === 0 &&
+        tasks.nextCursor.value === null &&
         tasks.loaded.value && (
-          <p class="ui-hint">{tasks.query.value ? 'No tasks match your search.' : 'No tasks yet.'}</p>
+          <p class="ui-hint" role="status">
+            {tasks.query.value ? 'No tasks match your search.' : 'No tasks yet.'}
+          </p>
         )
       )}
       {tasks.nextCursor.value !== null && (

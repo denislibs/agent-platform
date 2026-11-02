@@ -97,13 +97,25 @@ export function createTaskList(api: Api) {
       if (at !== -1) items.value = [...list.slice(0, at), task, ...list.slice(at)];
       else if (nextCursor.value === null) items.value = [...list, task];
     },
-    /** Удаляет задачу на сервере и из списка; ошибка запроса пробрасывается, список не меняется. */
+    /**
+     * Удаляет задачу на сервере и из списка; ошибка запроса пробрасывается, список не меняется. 404 — задачу уже
+     * удалили (в другой вкладке): для списка это тот же успех. Список, который шёл до удаления, отбрасывается: его
+     * ответ мог вернуть задачу. Если такой запрос был, первая страница грузится заново.
+     */
     async remove(id: string): Promise<void> {
-      await api.deleteTask(id);
+      try {
+        await api.deleteTask(id);
+      } catch (err) {
+        if (!(err instanceof ApiRequestError && err.status === 404)) throw err;
+      }
+      const inFlight = loading.value;
+      latest++;
       batch(() => {
         items.value = items.value.filter(t => t.id !== id);
         removals.value += 1;
+        loading.value = false;
       });
+      if (inFlight) await fetchPage(undefined, page => page);
     },
     clear(): void {
       latest++;
@@ -113,6 +125,7 @@ export function createTaskList(api: Api) {
         loaded.value = false;
         loading.value = false;
         query.value = '';
+        error.value = null;
       });
     },
   };
