@@ -28,10 +28,19 @@ function mergeStep(list: StepDto[], step: StepDto): StepDto[] {
   return [...list.slice(0, at), step, ...list.slice(at)];
 }
 
+/**
+ * Через сколько показать, что связи нет. Сервер штатно закрывает поток раз в 15 минут, и EventSource переподключается
+ * за секунды — плашка «Reconnecting…» не должна мигать на каждом таком закрытии.
+ */
+export const OFFLINE_NOTICE_MS = 5000;
+
 export interface TaskStoreDeps {
   api: Api;
   /** Тесты подставляют свой поток. */
   openEvents?: (opts: TaskEventsOptions) => { close(): void };
+  /** Таймер задержки пометки «нет связи»; тесты подставляют ручной. */
+  setTimer?: (fn: () => void, ms: number) => unknown;
+  clearTimer?: (handle: unknown) => void;
 }
 
 /**
@@ -50,17 +59,39 @@ export function createTaskStore(deps: TaskStoreDeps, taskId: string) {
   const stale = signal<ApiRequestError | null>(null);
   /** Сколько шагов пришло в непонятном виде и не показано. */
   const skippedSteps = signal(0);
-  /** Поток на связи; false — переподключается. */
+  /** Поток на связи; false — переподключается дольше OFFLINE_NOTICE_MS (короткие обрывы не показываются). */
   const connected = signal(true);
+  const setTimer = deps.setTimer ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
+  const clearTimer = deps.clearTimer ?? ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
+  let offlineTimer: unknown;
   let stream: { close(): void } | undefined;
   let starting: Promise<void> | undefined;
   let refreshing: Promise<void> | undefined;
   let dirty = false;
   let disposed = false;
 
+  function cancelOffline(): void {
+    if (offlineTimer !== undefined) clearTimer(offlineTimer);
+    offlineTimer = undefined;
+  }
+
+  /** Связь пропала: пометка — только если за OFFLINE_NOTICE_MS она не вернулась; вернулась — снять сразу. */
+  function setConnected(value: boolean): void {
+    if (value) {
+      cancelOffline();
+      connected.value = true;
+    } else if (connected.value && offlineTimer === undefined) {
+      offlineTimer = setTimer(() => {
+        offlineTimer = undefined;
+        connected.value = false;
+      }, OFFLINE_NOTICE_MS);
+    }
+  }
+
   function closeStream(): void {
     stream?.close();
     stream = undefined;
+    cancelOffline();
   }
 
   async function load(): Promise<void> {
@@ -135,8 +166,8 @@ export function createTaskStore(deps: TaskStoreDeps, taskId: string) {
       // Статус в end не нужен (и может не прочитаться): итог, файлы и статус — из карточки.
       onEnd: () => void refresh(),
       onConnection: value => {
-        connected.value = value;
-        // Пропала связь: проверить задачу и сессию (401 уведёт на вход, 404 — задачи больше нет).
+        setConnected(value);
+        // Пропала связь: сразу (без задержки пометки) проверить задачу и сессию — 401 уведёт на вход, 404 — задачи нет.
         // Вернулась, а карточка отстала: перечитать.
         if (!value || stale.value) void refresh();
       },

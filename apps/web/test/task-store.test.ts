@@ -88,13 +88,45 @@ test('an unknown task ends in an error and opens no stream', async () => {
   expect(FakeEventSource.all).toHaveLength(0);
 });
 
-test('a lost connection re-reads the card (it also re-checks the session)', async () => {
+test('a lost connection re-reads the card at once (it also re-checks the session)', async () => {
   const { store, reads } = setup([taskResponse()]);
   await store.start();
   FakeEventSource.last.fail(0);
   await tick();
-  expect(store.connected.value).toBe(false);
   expect(reads()).toBe(2);
+});
+
+test('the lost connection is shown only after 5 s without open: the 15-minute close does not flash', async () => {
+  const { fetch } = fakeFetch({ 'GET /api/tasks/task-1': () => json(taskResponse()) });
+  const offline = manualTimers();
+  const store = createTaskStore(
+    {
+      api: createApi({ fetch }),
+      openEvents: opts => openTaskEvents({ ...opts, createSource: url => new FakeEventSource(url) }),
+      ...offline,
+    },
+    'task-1',
+  );
+  await store.start();
+  // Сервер штатно закрыл поток, EventSource переподключился быстрее 5 с: показывать нечего.
+  FakeEventSource.last.fail(0);
+  expect(offline.delays()).toEqual([5000]);
+  expect(store.connected.value).toBe(true);
+  FakeEventSource.last.open();
+  expect(offline.delays()).toEqual([]);
+  expect(store.connected.value).toBe(true);
+  // Связи нет 5 с — экран говорит, что переподключается; open снимает пометку.
+  FakeEventSource.last.fail(0);
+  FakeEventSource.last.fail(0);
+  expect(offline.delays()).toEqual([5000]);
+  offline.run();
+  expect(store.connected.value).toBe(false);
+  FakeEventSource.last.open();
+  expect(store.connected.value).toBe(true);
+  // Уборка снимает отложенную пометку.
+  FakeEventSource.last.fail(0);
+  store.dispose();
+  expect(offline.delays()).toEqual([]);
 });
 
 test('dispose closes the stream', async () => {

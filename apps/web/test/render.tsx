@@ -4,7 +4,7 @@ import { LocationProvider } from 'preact-iso';
 import { ToastProvider } from '@agent/ui';
 import { openTaskEvents } from '../src/api/events.ts';
 import { APP_LINKS, resetPageFocus } from '../src/layout/page.ts';
-import { AppContext, createAppState } from '../src/state/app.ts';
+import { AppContext, createAppState, type AppDeps } from '../src/state/app.ts';
 import { fakeFetch, json, me } from './fixtures.ts';
 import { FakeEventSource } from './sse.ts';
 
@@ -19,9 +19,9 @@ export const signedIn = (): Routes => ({
 
 /**
  * Экран в окружении приложения: состояние на фейковом fetch и фейковом EventSource, роутер и тосты.
- * path — адрес, с которого начинается тест (history.replaceState).
+ * path — адрес, с которого начинается тест (history.replaceState); deps — ручные таймеры экрана задачи.
  */
-export function setup(routes: Routes, path = '/') {
+export function setup(routes: Routes, path = '/', deps: Pick<AppDeps, 'setTimer' | 'clearTimer'> = {}) {
   history.replaceState(null, '', path);
   resetPageFocus();
   FakeEventSource.reset();
@@ -31,6 +31,7 @@ export function setup(routes: Routes, path = '/') {
     fetch,
     openEvents: opts => openTaskEvents({ ...opts, createSource: url => new FakeEventSource(url) }),
     assign: url => assigned.push(url),
+    ...deps,
   });
   const view = (ui: ComponentChildren) =>
     render(

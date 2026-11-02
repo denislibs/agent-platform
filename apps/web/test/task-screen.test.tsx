@@ -5,7 +5,7 @@ import type { StepDto, TaskStatus } from '@agent/shared';
 import { TaskScreen } from '../src/routes/task.tsx';
 import { fileDto, json, status, step, subtask, taskDetail, taskResponse, toolStep } from './fixtures.ts';
 import { setup, signedIn, until } from './render.tsx';
-import { FakeEventSource } from './sse.ts';
+import { FakeEventSource, manualTimers } from './sse.ts';
 
 /** Живой регион статуса задачи (у индикатора «думает» своя роль status). */
 const liveStatus = () => document.getElementById('task-status')?.textContent;
@@ -27,7 +27,11 @@ const emit = (...steps: StepDto[]) =>
   });
 
 /** Экран задачи с карточкой из responses (по очереди на каждое чтение) и открытым потоком шагов. */
-async function open(responses: Array<ReturnType<typeof taskResponse>>, extra: Parameters<typeof setup>[0] = {}) {
+async function open(
+  responses: Array<ReturnType<typeof taskResponse>>,
+  extra: Parameters<typeof setup>[0] = {},
+  deps: Parameters<typeof setup>[2] = {},
+) {
   let reads = 0;
   const env = setup(
     {
@@ -36,6 +40,7 @@ async function open(responses: Array<ReturnType<typeof taskResponse>>, extra: Pa
       ...extra,
     },
     '/tasks/task-1',
+    deps,
   );
   env.view(<TaskScreen id="task-1" />);
   await until(() => FakeEventSource.all.length > 0);
@@ -461,4 +466,50 @@ test('a task of another account is reported as not found', async () => {
   expect(await screen.findByText('Task not found')).toBeTruthy();
   expect(screen.queryByText('not yours')).toBeNull();
   expect(FakeEventSource.all).toHaveLength(0);
+});
+
+const RECONNECTING = 'Reconnecting to the live feed…';
+
+test('a connection back within 5 s (the 15-minute close) shows no reconnecting notice', async () => {
+  const timers = manualTimers();
+  await open([taskResponse({ task: taskDetail({ status: 'running' }) })], {}, timers);
+  await screen.findByText('Find three suppliers', { selector: '.ui-msg-user' });
+  act(() => FakeEventSource.last.fail(0));
+  expect(screen.queryByText(RECONNECTING)).toBeNull();
+  act(() => FakeEventSource.last.open());
+  act(() => timers.run());
+  expect(screen.queryByText(RECONNECTING)).toBeNull();
+});
+
+test('a connection down for 5 s shows the reconnecting notice until the feed is back', async () => {
+  const timers = manualTimers();
+  await open([taskResponse({ task: taskDetail({ status: 'running' }) })], {}, timers);
+  await screen.findByText('Find three suppliers', { selector: '.ui-msg-user' });
+  act(() => FakeEventSource.last.fail(0));
+  expect(screen.queryByText(RECONNECTING)).toBeNull();
+  act(() => timers.run());
+  expect(await screen.findByText(RECONNECTING)).toBeTruthy();
+  act(() => FakeEventSource.last.open());
+  await until(() => screen.queryByText(RECONNECTING) === null);
+});
+
+test.each([
+  [404, 'not_found'],
+  [403, 'forbidden'],
+])('a task that is gone (%i) while shown says so instead of freezing', async (code, errorCode) => {
+  let reads = 0;
+  await open([], {
+    'GET /api/tasks/task-1': () =>
+      ++reads === 1
+        ? json(taskResponse({ task: taskDetail({ status: 'running' }) }))
+        : json({ error: { code: errorCode, message: 'secret detail' } }, code),
+  });
+  await screen.findByText('Find three suppliers', { selector: '.ui-msg-user' });
+  emit(prompt, status(2, 'running', 'waiting_user'));
+  const alert = await screen.findByRole('alert');
+  expect(alert.textContent).toContain('This task is no longer available');
+  expect(alert.textContent).not.toContain('secret detail');
+  // Поток закрыт навсегда: «переподключение» не обещается.
+  act(() => FakeEventSource.last.fail(2));
+  expect(screen.queryByText(RECONNECTING)).toBeNull();
 });

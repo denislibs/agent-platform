@@ -63,7 +63,10 @@ const isMissing = (err: ApiRequestError): boolean => err.status === 404 || err.s
 export function TaskScreen({ id }: { id: string }) {
   const app = useApp();
   const toast = useToast();
-  const store = useMemo(() => createTaskStore({ api: app.api, openEvents: app.openEvents }, id), [app, id]);
+  const store = useMemo(
+    () => createTaskStore({ api: app.api, openEvents: app.openEvents, ...app.timers }, id),
+    [app, id],
+  );
   const [stepsOpen, setStepsOpen] = useState(true);
   // Ответ, который не ушёл, возвращается в поле: key пересоздаёт AskCard с этим текстом.
   const [draft, setDraft] = useState({ key: 0, text: '' });
@@ -209,6 +212,16 @@ export function TaskScreen({ id }: { id: string }) {
       {statusRegion}
       <div class="ui-shell__body">
         <h1 class="ui-sr-only">{taskTitle(task.prompt)}</h1>
+        {/* Задача пропала или стала чужой, пока экран открыт: поток закрыт навсегда — сказать, а не замереть. */}
+        {error && (
+          <Alert
+            tone="danger"
+            title={isMissing(error) ? 'This task is no longer available' : 'Live updates stopped'}
+            live
+          >
+            {isMissing(error) ? 'It may have been deleted or belong to another account.' : errorText(error)}
+          </Alert>
+        )}
         {store.stale.value && (
           <Alert
             tone="warning"
@@ -305,7 +318,7 @@ export function TaskScreen({ id }: { id: string }) {
             </div>
           )}
         </AgentMessage>
-        {!store.connected.value && !isTerminalTask(task.status) && (
+        {!store.connected.value && !error && !isTerminalTask(task.status) && (
           <Alert tone="info">Reconnecting to the live feed…</Alert>
         )}
       </div>

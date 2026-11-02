@@ -3,6 +3,7 @@ import { useContext } from 'preact/hooks';
 import { createApi, type ApiOptions } from '../api/client.ts';
 import { openTaskEvents, type TaskEventsOptions } from '../api/events.ts';
 import { createSession, type Session } from './session.ts';
+import type { TaskStoreDeps } from './task.ts';
 import { createTaskList, type TaskList } from './tasks.ts';
 
 export interface AppDeps {
@@ -11,6 +12,9 @@ export interface AppDeps {
   openEvents?: (opts: TaskEventsOptions) => { close(): void };
   /** Переход на страницу провайдера OAuth (window.location.assign). */
   assign?: (url: string) => void;
+  /** Таймеры экрана задачи (задержка пометки «нет связи»); тесты подставляют ручные. */
+  setTimer?: TaskStoreDeps['setTimer'];
+  clearTimer?: TaskStoreDeps['clearTimer'];
 }
 
 /** Состояние приложения: клиент API, сессия и список задач — одни на всё приложение. */
@@ -42,6 +46,10 @@ export function createAppState(deps: AppDeps = {}) {
     },
     openEvents: deps.openEvents ?? openTaskEvents,
     assign: deps.assign ?? ((url: string) => window.location.assign(url)),
+    timers: {
+      ...(deps.setTimer ? { setTimer: deps.setTimer } : {}),
+      ...(deps.clearTimer ? { clearTimer: deps.clearTimer } : {}),
+    } satisfies Pick<TaskStoreDeps, 'setTimer' | 'clearTimer'>,
   };
 }
 
