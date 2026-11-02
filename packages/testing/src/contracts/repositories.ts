@@ -524,6 +524,22 @@ export function repositoryContract(
         expect((await h.tasks.get(task.id))?.tokensUsed).toBe(1800);
       });
 
+      test('spentOnTask sums the usage of that task only; unknown and malformed ids are 0', async () => {
+        const userId = await h.seedUser({ millicredits: 100 });
+        const a = await h.tasks.create({ userId, prompt: 'a' });
+        const b = await h.tasks.create({ userId, prompt: 'b' });
+        const charge = (taskId: string | null, millicredits: number) =>
+          h.ledger.record({ userId, taskId, model: 'qwen', tokensIn: 1, tokensOut: 1, millicredits });
+        await charge(a.id, 3);
+        await charge(b.id, 10);
+        await charge(a.id, 4);
+        await charge(null, 50);
+        expect(await h.ledger.spentOnTask(a.id)).toBe(7);
+        expect(await h.ledger.spentOnTask(b.id)).toBe(10);
+        expect(await h.ledger.spentOnTask(crypto.randomUUID())).toBe(0);
+        expect(await h.ledger.spentOnTask(MALFORMED_ID)).toBe(0);
+      });
+
       test('balance may go negative; the caller decides what to do', async () => {
         const userId = await h.seedUser({ millicredits: 1 });
         expect(

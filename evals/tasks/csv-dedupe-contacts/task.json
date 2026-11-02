@@ -12,6 +12,14 @@
       "rows": { "min": 8, "max": 8 },
       "contains": ["ada@example.com", "alan.turing@example.org", "katherine@example.com", "linus@example.fi"]
     },
-    { "kind": "answer", "contains": [{ "regex": "\\b4\\b" }] }
+    {
+      "kind": "answer",
+      "contains": [
+        {
+          "regex": "\\b(?:4|four)\\s+(?:\\w+\\s+){0,2}?(?:duplicat|rows?\\b|entries|records?\\b)|duplicat\\w*(?:\\s+(?:rows?|entries|records|contacts))?(?:\\s+removed)?\\s*[:=]?\\s*(?:4|four)\\b",
+          "flags": "i"
+        }
+      ]
+    }
   ]
 }

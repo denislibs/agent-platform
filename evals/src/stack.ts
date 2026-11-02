@@ -5,7 +5,7 @@ import { createDb, runMigrations, user, type Db } from '@agent/db';
 import { AGENT_QUEUE } from '@agent/queue';
 import type { Config } from '@agent/shared';
 import { startWorker } from '@agent/worker';
-import type { EvalStack } from './run';
+import { cancelUnfinished, type EvalStack } from './run';
 
 /** Пользователь, от имени которого идут задачи evals. */
 export const EVALS_EMAIL = 'evals@agent.local';
@@ -54,8 +54,11 @@ export async function openStack(config: Config): Promise<{ stack: EvalStack; clo
     void c.llm;
     await ensureDatabase(config.databaseUrl);
     await runMigrations(config.databaseUrl);
-    worker = await startWorker(c);
     userId = await ensureUser(c.database.db, EVALS_EMAIL);
+    // До воркера: задачи прерванного прогона иначе подхватил бы сборщик и они заняли бы единственный слот.
+    const leftovers = await cancelUnfinished(c, userId);
+    if (leftovers > 0) console.log(`[evals] cancelled ${leftovers} unfinished task(s) left by an earlier run`);
+    worker = await startWorker(c);
   } catch (err) {
     // Сбой старта не оставляет открытых соединений: процесс завершится с понятной ошибкой, а не повиснет.
     await worker?.close().catch(() => undefined);

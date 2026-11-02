@@ -13,7 +13,11 @@ export interface CheckResult {
   detail?: string;
 }
 
-const NUMBER = /-?\d[\d,]*(?:\.\d+)?/g;
+/**
+ * Число в тексте: запятые — только разделители тысяч группами по три (1,234,567), иначе строка CSV «East,2282,15»
+ * читалась бы как одно число 228215.
+ */
+const NUMBER = /-?(?:\d{1,3}(?:,\d{3})+(?!\d)|\d+)(?:\.\d+)?/g;
 
 /** Подпись совпадения для отчёта. */
 export function describeMatcher(m: Matcher): string {

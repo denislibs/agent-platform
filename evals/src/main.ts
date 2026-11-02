@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { PROMPTS } from '@agent/agent';
 import { errorMessage } from '@agent/core';
 import { evalsConfig, parseArgs, UsageError } from './cli';
+import { SIGNAL_EXIT_CODE, watchInterrupts } from './interrupt';
 import { compareReports, summarize, toMarkdown, writeReport, type EvalReport } from './report';
 import { runTask, type EvalResult, type EvalTrace } from './run';
 import { openStack } from './stack';
@@ -40,39 +41,49 @@ async function main(): Promise<void> {
     return;
   }
   const config = evalsConfig(process.env, args);
-  const startedAt = new Date();
-  const { stack, close } = await openStack(config);
-  const results: EvalResult[] = [];
-  const traces = new Map<EvalResult, EvalTrace>();
+  // До старта стека: Ctrl+C во время миграций и прогона останавливает мягко, второй — сразу.
+  const interrupts = watchInterrupts(process, { log: m => console.error(m), exit: code => process.exit(code) });
   try {
-    for (const task of tasks)
-      for (let attempt = 1; attempt <= args.repeat; attempt++) {
+    const startedAt = new Date();
+    const { stack, close } = await openStack(config);
+    const results: EvalResult[] = [];
+    const traces = new Map<EvalResult, EvalTrace>();
+    try {
+      const runs = tasks.flatMap(task => Array.from({ length: args.repeat }, (_, i) => ({ task, attempt: i + 1 })));
+      for (const { task, attempt } of runs) {
+        if (interrupts.signal.aborted) break;
         console.log(`[evals] ${task.id}${args.repeat > 1 ? ` #${attempt}` : ''}…`);
-        const { result, trace } = await runTask(stack, task, attempt);
+        const { result, trace } = await runTask(stack, task, attempt, { signal: interrupts.signal });
         console.log(`[evals] ${task.id}: ${result.status}${result.reason ? ` — ${result.reason}` : ''}`);
         results.push(result);
         if (result.status !== 'skipped') traces.set(result, trace);
       }
+      const report: EvalReport = {
+        run: {
+          startedAt: startedAt.toISOString(),
+          finishedAt: new Date().toISOString(),
+          git: gitCommit(),
+          promptsHash: promptsHash(),
+          models: { planner: config.llm.models.planner ?? '', executor: config.llm.models.executor ?? '' },
+          toolChoice: config.llm.toolChoice,
+          search: stack.searchAvailable,
+          repeat: args.repeat,
+          ...(interrupts.signal.aborted ? { interrupted: true } : {}),
+        },
+        summary: summarize(results),
+        results,
+      };
+      // Отчёт — до закрытия стека: сбой close не должен терять оплаченный прогон.
+      const dir = join(ROOT, 'results', stamp(startedAt));
+      await writeReport(dir, report, traces);
+      console.log(`\n${toMarkdown(report)}\nreport: ${dir}`);
+    } finally {
+      await close().catch(err => console.error(`[evals] closing the stack failed: ${errorMessage(err)}`));
+    }
+    if (interrupts.interruptedBy) process.exitCode = SIGNAL_EXIT_CODE[interrupts.interruptedBy];
   } finally {
-    await close();
+    interrupts.dispose();
   }
-  const report: EvalReport = {
-    run: {
-      startedAt: startedAt.toISOString(),
-      finishedAt: new Date().toISOString(),
-      git: gitCommit(),
-      promptsHash: promptsHash(),
-      models: { planner: config.llm.models.planner ?? '', executor: config.llm.models.executor ?? '' },
-      toolChoice: config.llm.toolChoice,
-      search: stack.searchAvailable,
-      repeat: args.repeat,
-    },
-    summary: summarize(results),
-    results,
-  };
-  const dir = join(ROOT, 'results', stamp(startedAt));
-  await writeReport(dir, report, traces);
-  console.log(`\n${toMarkdown(report)}\nreport: ${dir}`);
 }
 
 try {

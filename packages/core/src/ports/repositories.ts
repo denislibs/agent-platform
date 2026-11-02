@@ -109,6 +109,8 @@ export interface CreditLedger {
   grant(email: string, millicredits: number): Promise<{ balance: number }>;
   /** Текущий баланс; неизвестный пользователь — NotFoundError('user'). */
   balance(userId: string): Promise<number>;
+  /** Сколько списано за задачу (сумма событий расхода с этим taskId); неизвестная или кривая задача — 0. */
+  spentOnTask(taskId: string): Promise<number>;
 }
 
 export interface FileRepository {

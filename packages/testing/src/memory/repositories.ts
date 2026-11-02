@@ -295,6 +295,10 @@ export class InMemoryCreditLedger implements CreditLedger {
     if (!user) throw new NotFoundError('user', userId);
     return user.millicredits;
   }
+
+  async spentOnTask(taskId: string): Promise<number> {
+    return this.m.usage.filter(e => e.taskId === taskId).reduce((n, e) => n + e.millicredits, 0);
+  }
 }
 
 export class InMemoryFileRepository implements FileRepository {

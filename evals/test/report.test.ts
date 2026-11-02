@@ -89,6 +89,13 @@ describe('toMarkdown', () => {
     expect(md.endsWith('\n')).toBe(true);
   });
 
+  test('an interrupted run says so in the header', () => {
+    expect(toMarkdown(report([result('t', 'passed')], { interrupted: true }))).toContain(
+      '**Interrupted: partial report.**',
+    );
+    expect(toMarkdown(report([result('t', 'passed')]))).not.toContain('Interrupted');
+  });
+
   test('with --repeat the rows carry the attempt number', () => {
     const md = toMarkdown(report([result('t', 'passed'), result('t', 'passed', { attempt: 2 })], { repeat: 2 }));
     expect(md).toContain('| t #1 | passed');
@@ -135,6 +142,8 @@ describe('writeReport', () => {
               { path: 'outputs/a.csv', bytes: new TextEncoder().encode('a\n1\n') },
               { path: 'outputs/../../evil.sh', bytes: new TextEncoder().encode('rm -rf') },
               { path: 'plan.md', bytes: new TextEncoder().encode('#') },
+              { path: 'outputs/./dot.md', bytes: new TextEncoder().encode('#') },
+              { path: 'outputs//empty.md', bytes: new TextEncoder().encode('#') },
             ],
           },
         ],

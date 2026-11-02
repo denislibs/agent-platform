@@ -21,7 +21,7 @@ function compiles(pattern: string, flags: string | undefined): boolean {
 
 /**
  * Совпадение в тексте: строка — подстрока без учёта регистра; regex — регулярное выражение; anyOf — любая из
- * подстрок; number — число в тексте (запятые-разделители тысяч допускаются) с допуском tolerance.
+ * подстрок; number — число в тексте (запятые-разделители тысяч — группами по три) с допуском tolerance.
  */
 export const MatcherSchema = z.union([
   z.string().min(1),

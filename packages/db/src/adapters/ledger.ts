@@ -50,4 +50,14 @@ export class DrizzleCreditLedger implements CreditLedger {
     if (!u) throw new NotFoundError('user', userId);
     return u.millicredits;
   }
+
+  async spentOnTask(taskId: string): Promise<number> {
+    // Кривой id — как неизвестный: Postgres отверг бы его ошибкой формата uuid.
+    if (!isUuid(taskId)) return 0;
+    const [row] = await this.db
+      .select({ total: sql<string | null>`sum(${usageEvents.millicredits})` })
+      .from(usageEvents)
+      .where(eq(usageEvents.taskId, taskId));
+    return Number(row?.total ?? 0);
+  }
 }

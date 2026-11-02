@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
+import { runChecks } from '../src/checks';
 import { isSafeOutputPath, loadTasks } from '../src/task';
 
 const tasks = await loadTasks(join(import.meta.dir, '..', 'tasks'));
@@ -45,5 +46,31 @@ describe('the reference task set (evals/tasks)', () => {
       for (const c of t.checks)
         for (const m of c.contains ?? [])
           if (typeof m === 'object' && 'regex' in m) expect(() => new RegExp(m.regex, m.flags)).not.toThrow();
+  });
+});
+
+describe('csv-dedupe-contacts', () => {
+  const task = tasks.find(t => t.id === 'csv-dedupe-contacts')!;
+  const answerOk = (answer: string) =>
+    runChecks(
+      task.checks.filter(c => c.kind === 'answer'),
+      { answer, outputs: [] },
+    ).every(c => c.ok);
+
+  test('the answer must name 4 removed duplicates, not just contain a 4 somewhere', () => {
+    for (const answer of [
+      'I removed 4 duplicate rows; 8 contacts remain.',
+      'Removed four duplicates.',
+      'Duplicates removed: 4',
+      '4 rows were duplicates and are gone.',
+      'Found and removed 4 duplicate contact rows.',
+    ])
+      expect({ answer, ok: answerOk(answer) }).toEqual({ answer, ok: true });
+    for (const answer of [
+      'Saved 8 contacts; row 4 had extra spaces.',
+      'Removed 3 duplicates, 4 emails were lower-cased.',
+      'Done: outputs/contacts_clean.csv has 8 rows.',
+    ])
+      expect({ answer, ok: answerOk(answer) }).toEqual({ answer, ok: false });
   });
 });

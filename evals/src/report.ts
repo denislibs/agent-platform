@@ -1,6 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { EvalResult, EvalTrace } from './run';
+import { isSafeOutputPath } from './task';
 
 /** Чем прогон отличается от другого: модели, промпты, коммит. */
 export interface RunInfo {
@@ -13,6 +14,8 @@ export interface RunInfo {
   toolChoice: 'auto' | 'required';
   search: boolean;
   repeat: number;
+  /** Прогон прервали (Ctrl+C): в отчёте только то, что успело пройти. */
+  interrupted?: boolean;
 }
 
 export interface Summary {
@@ -75,6 +78,7 @@ export function toMarkdown(report: EvalReport): string {
       `prompts \`${run.promptsHash}\`, commit \`${run.git ?? 'unknown'}\`, web search ${run.search ? 'on' : 'off'}, ` +
       `repeat ${run.repeat}.`,
     '',
+    ...(run.interrupted ? ['**Interrupted: partial report.**', ''] : []),
     `**${summary.passed}/${summary.total - summary.skipped} passed (${pct(summary.passRate)})** — failed ${summary.failed}, ` +
       `over budget ${summary.overBudget}, errors ${summary.errors}, skipped ${summary.skipped}; ` +
       `${summary.tokens} tokens, ${credits(summary.millicredits)} credits, median ${secs(summary.medianWallMs)}.`,
@@ -129,7 +133,7 @@ export const traceDir = (r: EvalResult) => `${r.id}-${r.attempt}`;
 
 /**
  * Отчёт прогона: report.json, report.md и по папке на попытку — steps.json (лента шагов), answer.md и outputs/
- * (файлы результата). Пути результатов — только outputs/… без «..»: файлы пишет модель.
+ * (файлы результата). Пути результатов — только безопасные outputs/… (isSafeOutputPath): файлы пишет модель.
  */
 export async function writeReport(
   dir: string,
@@ -145,7 +149,7 @@ export async function writeReport(
     await Bun.write(join(base, 'steps.json'), `${JSON.stringify(trace.steps, null, 2)}\n`);
     await Bun.write(join(base, 'answer.md'), result.answer ?? '');
     for (const output of trace.outputs) {
-      if (!output.path.startsWith('outputs/') || output.path.split('/').includes('..')) continue;
+      if (!isSafeOutputPath(output.path)) continue;
       const target = join(base, output.path);
       await mkdir(dirname(target), { recursive: true });
       await Bun.write(target, output.bytes);

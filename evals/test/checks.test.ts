@@ -28,6 +28,14 @@ describe('matches', () => {
     expect(matches('about 30576 visits', { number: 30575, tolerance: 0.5 })).toBe(false);
     expect(matches('no numbers here', { number: 1 })).toBe(false);
   });
+
+  test('number: thousands commas only in groups of three, so a CSV row is not one long number', () => {
+    expect(matches('East,2282,15', { number: 2282 })).toBe(true);
+    expect(matches('East,2282,15', { number: 228215 })).toBe(false);
+    expect(matches('total 1,234,567 rows', { number: 1234567 })).toBe(true);
+    expect(matches('-1,500.25 change', { number: -1500.25 })).toBe(true);
+    expect(matches('a,1,2', { number: 12 })).toBe(false);
+  });
 });
 
 describe('parseCsv', () => {

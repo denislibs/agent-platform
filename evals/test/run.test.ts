@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { MAX_REPLIES, runTask, TOP_UP_MILLICREDITS } from '../src/run';
+import { cancelUnfinished, MAX_REPLIES, runTask, TOP_UP_MILLICREDITS } from '../src/run';
 import type { EvalDeps } from '../src/run';
 import { BudgetSchema } from '../src/task';
 import { calls, evalTask, memoryStack } from './helpers';
@@ -202,5 +202,94 @@ describe('runTask', () => {
     );
     expect(result).toMatchObject({ status: 'over_budget', taskStatus: 'failed' });
     expect(result.reason).toMatch(/^tokens \d+ > 100$/);
+  });
+
+  test('a third ask_user, over MAX_REPLIES, cancels the task: failed after two replies', async () => {
+    const { c, stack } = memoryStack();
+    const ask = calls(['ask_user', { question: 'Which greeting?' }]);
+    c.llm.push(ask, ask, ask, ...happyPath());
+    const { result } = await runTask(stack, evalTask({ reply: 'A markdown heading', checks: helloChecks }));
+    expect(result).toMatchObject({ status: 'failed', taskStatus: 'cancelled' });
+    expect(result.metrics.replies).toBe(MAX_REPLIES);
+    expect(result.reason).toContain(`more than ${MAX_REPLIES} questions`);
+  });
+
+  test('an exception mid-run cancels the task, so it does not keep running after the error result', async () => {
+    const { c, stack } = memoryStack();
+    c.llm.push(...happyPath());
+    let reads = 0;
+    const deps: EvalDeps = {
+      ...c,
+      tasks: {
+        ...c.tasks,
+        get: async id => {
+          if (++reads === 2) throw new Error('connection reset');
+          return c.tasks.get(id);
+        },
+      },
+    };
+    const { result } = await runTask({ ...stack, deps }, evalTask({ checks: helloChecks }));
+    expect(result).toMatchObject({ status: 'error', reason: 'connection reset' });
+    expect((await c.tasks.get(result.taskId!))?.status).toBe('cancelled');
+    expect(await c.sandboxes.list()).toEqual([]);
+  });
+
+  test('an aborted signal (Ctrl+C) cancels the current task: an error result marked interrupted', async () => {
+    const { c, stack } = memoryStack();
+    c.llm.push(...happyPath());
+    const controller = new AbortController();
+    const tick = stack.tick;
+    let ticks = 0;
+    stack.tick = async () => {
+      await tick();
+      if (++ticks === 2) controller.abort();
+    };
+    const { result } = await runTask(stack, evalTask({ checks: helloChecks }), 1, { signal: controller.signal });
+    expect(result).toMatchObject({ status: 'error', reason: 'interrupted', taskStatus: 'cancelled' });
+    expect(await c.sandboxes.list()).toEqual([]);
+  });
+
+  test('credits are the usage of this task only: a late charge to the previous task is not billed to it', async () => {
+    const { c, stack } = memoryStack();
+    c.llm.push(...happyPath());
+    const first = await runTask(stack, evalTask({ checks: helloChecks }));
+    expect(first.result.metrics.millicredits).toBeGreaterThan(0);
+    c.llm.push(...happyPath());
+    const create = c.intake.create.bind(c.intake);
+    c.intake.create = async input => {
+      // Поздний job предыдущей задачи (после её отмены) списывает кредиты, пока идёт следующая.
+      await c.ledger.record({
+        userId: stack.user.id,
+        taskId: first.result.taskId!,
+        model: 'late',
+        tokensIn: 1,
+        tokensOut: 1,
+        millicredits: 777,
+      });
+      return create(input);
+    };
+    const second = await runTask(stack, evalTask({ checks: helloChecks }), 2);
+    expect(second.result.metrics.millicredits).toBe(first.result.metrics.millicredits);
+  });
+});
+
+describe('cancelUnfinished', () => {
+  test('cancels every non-terminal task of the user (an earlier interrupted run) and leaves the rest', async () => {
+    const { c, stack } = memoryStack();
+    c.llm.push(...happyPath());
+    const done = await runTask(stack, evalTask({ checks: helloChecks }));
+    const queued = await c.intake.create({ userId: stack.user.id, prompt: 'left behind', fileIds: [] });
+    const running = await c.tasks.create({ userId: stack.user.id, prompt: 'was running' });
+    await c.tasks.transition(running.id, 'planning', {}, { expectedFrom: 'queued' });
+    await c.tasks.transition(running.id, 'running', {}, { expectedFrom: 'planning' });
+    const other = c.memory.seedUser({ email: 'someone@agent.local' });
+    const foreign = await c.tasks.create({ userId: other, prompt: 'not ours' });
+
+    expect(await cancelUnfinished(c, stack.user.id)).toBe(2);
+    expect((await c.tasks.get(queued.id))?.status).toBe('cancelled');
+    expect((await c.tasks.get(running.id))?.status).toBe('cancelled');
+    expect((await c.tasks.get(done.result.taskId!))?.status).toBe('done');
+    expect((await c.tasks.get(foreign.id))?.status).toBe('queued');
+    expect(await cancelUnfinished(c, stack.user.id)).toBe(0);
   });
 });

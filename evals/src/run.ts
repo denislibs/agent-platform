@@ -14,6 +14,7 @@ import {
   type StepLog,
   type SubtaskRepository,
   type Task,
+  type TaskCursor,
   type TaskRepository,
   type UnitOfWork,
 } from '@agent/core';
@@ -59,7 +60,7 @@ export interface EvalMetrics {
   toolErrors: number;
   tokensIn: number;
   tokensOut: number;
-  /** Списано с баланса за задачу, милликредиты. */
+  /** Списано за задачу (события расхода с её taskId), милликредиты. */
   millicredits: number;
   subtasks: number;
   replies: number;
@@ -136,7 +137,7 @@ async function uploadInputs(deps: EvalDeps, userId: string, inputs: readonly Inp
 }
 
 /** Отмена, как POST /api/tasks/:id/cancel. 409 — задача успела завершиться сама: её финальный статус и есть итог. */
-async function cancel(deps: EvalDeps, taskId: string): Promise<void> {
+async function cancel(deps: Pick<EvalDeps, 'uow' | 'clock'>, taskId: string): Promise<void> {
   try {
     await cancelTask(deps, taskId);
   } catch (err) {
@@ -217,6 +218,7 @@ export async function runTask(
   stack: EvalStack,
   task: EvalTask,
   attempt = 1,
+  opts: { signal?: AbortSignal } = {},
 ): Promise<{ result: EvalResult; trace: EvalTrace }> {
   const base = { id: task.id, attempt, title: task.title, category: task.category };
   const empty = { metrics: EMPTY_METRICS, checks: [], outputs: [] };
@@ -230,7 +232,6 @@ export async function runTask(
   try {
     const balance = await deps.ledger.balance(user.id);
     if (balance < TOP_UP_MILLICREDITS) await deps.ledger.grant(user.email, TOP_UP_MILLICREDITS - balance);
-    const before = await deps.ledger.balance(user.id);
     const startedAt = deps.clock.now().getTime();
     const fileIds = await uploadInputs(deps, user.id, task.inputs);
     const created = await deps.intake.create({ userId: user.id, prompt: task.prompt, fileIds });
@@ -240,6 +241,12 @@ export async function runTask(
     let verdict: { status: EvalStatus; reason: string } | undefined;
     const budgetMs = task.budget.minutes * 60_000;
     for (;;) {
+      // Ctrl+C (interrupt.ts): задача отменяется, а не остаётся running с живой песочницей.
+      if (opts.signal?.aborted) {
+        await cancel(deps, created.id);
+        verdict = { status: 'error', reason: 'interrupted' };
+        break;
+      }
       const leftMs = budgetMs - (deps.clock.now().getTime() - startedAt);
       if (!(await tickWithin(stack, Math.max(leftMs, MIN_TICK_WAIT_MS)))) {
         await cancel(deps, created.id);
@@ -266,7 +273,12 @@ export async function runTask(
         continue;
       }
       await cancel(deps, created.id);
-      verdict = { status: 'failed', reason: 'the agent asked the user a question and the eval has no reply for it' };
+      verdict = {
+        status: 'failed',
+        reason: task.reply
+          ? `the agent asked more than ${MAX_REPLIES} questions`
+          : 'the agent asked the user a question and the eval has no reply for it',
+      };
       break;
     }
 
@@ -283,7 +295,8 @@ export async function runTask(
       verdict = { status: 'failed', reason: `${failedChecks} of ${checks.length} checks failed` };
     const metrics = metricsOf(final, steps, {
       wallMs: deps.clock.now().getTime() - startedAt,
-      millicredits: before - (await deps.ledger.balance(user.id)),
+      // По событиям расхода этой задачи, а не по балансу: поздний job прошлой задачи сюда не попадает.
+      millicredits: await deps.ledger.spentOnTask(created.id),
       subtasks: (await deps.subtasks.list(created.id)).length,
       replies,
     });
@@ -304,6 +317,8 @@ export async function runTask(
       trace: { steps, outputs },
     };
   } catch (err) {
+    // Задача не должна идти дальше без присмотра: ни бюджет, ни ответы на ask_user её уже не остановят.
+    if (taskId) await cancel(deps, taskId).catch(() => undefined);
     return {
       result: { ...base, ...empty, status: 'error', reason: errorMessage(err), ...(taskId ? { taskId } : {}) },
       trace: { steps: taskId ? await deps.steps.list(taskId).catch(() => []) : [], outputs: [] },
@@ -313,4 +328,30 @@ export async function runTask(
     if (taskId)
       await (await deps.sandboxes.get(sandboxIdFor(taskId)).catch(() => undefined))?.destroy().catch(() => undefined);
   }
+}
+
+/**
+ * Отменяет все незавершённые задачи пользователя evals — следы прерванного прогона (kill, второй Ctrl+C), и убирает
+ * их песочницы. Без этого сборщик нового прогона переставил бы такую задачу в очередь и она заняла бы единственный слот.
+ * Возвращает, сколько задач отменено.
+ */
+export async function cancelUnfinished(
+  deps: Pick<EvalDeps, 'tasks' | 'uow' | 'clock' | 'sandboxes'>,
+  userId: string,
+): Promise<number> {
+  const PAGE = 100;
+  const unfinished: string[] = [];
+  let before: TaskCursor | undefined;
+  for (;;) {
+    const page = await deps.tasks.listForUser(userId, { limit: PAGE, ...(before ? { before } : {}) });
+    for (const t of page) if (!isTerminalTask(t.status)) unfinished.push(t.id);
+    const last = page.at(-1);
+    if (page.length < PAGE || !last) break;
+    before = { createdAt: last.createdAt, id: last.id };
+  }
+  for (const id of unfinished) {
+    await cancel(deps, id);
+    await (await deps.sandboxes.get(sandboxIdFor(id)).catch(() => undefined))?.destroy().catch(() => undefined);
+  }
+  return unfinished.length;
 }
