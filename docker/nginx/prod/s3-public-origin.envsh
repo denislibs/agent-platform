@@ -1,0 +1,35 @@
+#!/bin/sh
+# S3_PUBLIC_ORIGIN для connect-src CSP (csp.conf.template) — origin из S3_PUBLIC_ENDPOINT: scheme://host[:port].
+# Источник CSP с путём (https://files.example.com/s3) совпадает только с этим путём, а не с ключами объектов под
+# ним, поэтому путь отбрасывается. Образ подключает файл (.envsh) до 20-envsubst-on-templates.sh; неверный адрес —
+# выход с ошибкой, nginx не стартует. Символы имени ограничены: значение попадает в конфиг nginx как есть.
+
+s3_public_origin() {
+  case "$1" in
+    http://* | https://*) ;;
+    *)
+      echo "S3_PUBLIC_ENDPOINT must be an http(s) URL, got '$1'" >&2
+      return 1
+      ;;
+  esac
+  _s3_rest=${1#*://}
+  _s3_authority=${_s3_rest%%[/?#]*}
+  case "$_s3_authority" in
+    '' | *[!A-Za-z0-9.:-]*)
+      echo "S3_PUBLIC_ENDPOINT must be scheme://host[:port], got '$1'" >&2
+      return 1
+      ;;
+  esac
+  case "${_s3_rest#"$_s3_authority"}" in
+    *[?#]*)
+      echo "S3_PUBLIC_ENDPOINT must have no query or fragment, got '$1'" >&2
+      return 1
+      ;;
+    '' | /) ;;
+    *) echo "S3_PUBLIC_ENDPOINT has a path; the CSP uses only its origin" >&2 ;;
+  esac
+  printf '%s://%s\n' "${1%%://*}" "$_s3_authority"
+}
+
+S3_PUBLIC_ORIGIN=$(s3_public_origin "${S3_PUBLIC_ENDPOINT:-}") || exit 1
+export S3_PUBLIC_ORIGIN

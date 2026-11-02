@@ -53,7 +53,9 @@ dc() { docker compose --env-file .env.prod -f docker/compose.prod.yml "$@"; }
       - `LITELLM_BASE_URL`, `LITELLM_API_KEY`, `PLANNER_MODEL`, `EXECUTOR_MODEL` — воркер (без них он не стартует);
         `BRAVE_API_KEY` — поиск (без него инструмент поиска сообщает «не настроен»);
       - `GOOGLE_*` / `GITHUB_*` — OAuth-приложения (ниже); `SMTP_URL` и `MAIL_FROM` — почта (ниже);
-      - `S3_PUBLIC_ENDPOINT` — https-адрес, по которому **браузер** ходит в S3 (presigned URL и `connect-src` CSP).
+      - `S3_PUBLIC_ENDPOINT` — https-адрес, по которому **браузер** ходит в S3 (presigned URL и `connect-src` CSP):
+        только origin — `https://files.example.com` или `https://host:port`, без пути. nginx берёт для CSP origin
+        адреса (`docker/nginx/prod/s3-public-origin.envsh`) и не стартует, если это не `http(s)://host[:port]`.
 - [ ] `APP_ORIGIN` и `S3_PUBLIC_ENDPOINT` — `https://`: cookie сессии получают `Secure` и префикс `__Secure-`. Если
       `APP_ORIGIN` не совпадёт с адресом в браузере, вход и все POST отклонит проверка Origin.
 - [ ] TLS reverse proxy хоста (Caddy или nginx с сертификатом Let's Encrypt): `APP_HOST` → `127.0.0.1:APP_PORT`

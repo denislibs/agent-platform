@@ -152,7 +152,8 @@ try {
   check('exactly one inline script (the theme)', inline.length === 1, String(inline.length));
   check('the CSP allows the inline script by its hash', inline.length === 1 && csp.includes(sha256(inline[0]!)), csp);
   check("the CSP has no 'unsafe-inline' and no 'unsafe-eval'", !csp.includes('unsafe-'), csp);
-  check('the CSP lets the browser upload to S3', csp.includes(`connect-src 'self' ${env.S3_PUBLIC_ENDPOINT}`), csp);
+  const s3Origin = new URL(env.S3_PUBLIC_ENDPOINT!).origin;
+  check('the CSP lets the browser upload to S3 (its origin)', csp.includes(`connect-src 'self' ${s3Origin};`), csp);
 
   const asset = html.match(/src="(\/assets\/[^"]+\.js)"/)?.[1];
   const js = asset ? await fetch(`${ORIGIN}${asset}`) : undefined;

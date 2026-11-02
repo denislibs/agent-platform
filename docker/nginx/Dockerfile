@@ -11,8 +11,10 @@ RUN bun run --cwd apps/web build \
 
 FROM nginxinc/nginx-unprivileged:1.28-alpine
 # Шаблоны → /tmp/nginx/*.conf при старте (корень только для чтения); подставляются только эти две переменные.
+# S3_PUBLIC_ORIGIN выводит из S3_PUBLIC_ENDPOINT 18-s3-public-origin.envsh (до envsubst; неверный адрес — отказ старта).
 ENV NGINX_ENVSUBST_OUTPUT_DIR=/tmp \
     NGINX_ENVSUBST_FILTER='^(APP_HOST|S3_PUBLIC_ORIGIN)$'
+COPY --chmod=755 docker/nginx/prod/s3-public-origin.envsh /docker-entrypoint.d/18-s3-public-origin.envsh
 COPY docker/nginx/prod/nginx.conf /etc/nginx/nginx.conf
 COPY docker/nginx/prod/headers.conf /etc/nginx/snippets/headers.conf
 COPY docker/nginx/prod/app.conf.template /etc/nginx/templates/nginx/app.conf.template

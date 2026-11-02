@@ -198,7 +198,8 @@ the environment, `migrate` and `s3-cors` once, the API (`agent-api:prod`), the w
 Docker through `docker-proxy`) and nginx (`agent-nginx:prod`) with the static web app and the production CSP. Only
 loopback ports are published (`APP_PORT`, `GARAGE_PORT`): put a TLS reverse proxy of the host in front of them.
 Every service gets an explicit list of variables from `.env.prod` (copy `.env.prod.example`); required ones stop
-compose when missing.
+compose when missing. `S3_PUBLIC_ENDPOINT` is an origin only (`https://files.example.com`, no path): the nginx
+image puts its origin into the CSP `connect-src` and refuses to start when it is not `http(s)://host[:port]`.
 
 ```bash
 bun run sandbox:build       # the sandbox image (SANDBOX_IMAGE, default agent-sandbox:dev)

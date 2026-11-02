@@ -22,7 +22,8 @@ x-s3: &s3
   S3_BUCKET: ${S3_BUCKET:-agent-files}
   S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID}
   S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY}
-  # Адрес S3 для браузера (presigned URL, CSP connect-src): https-адрес reverse proxy перед Garage или R2/S3.
+  # Адрес S3 для браузера (presigned URL, CSP connect-src): https-адрес reverse proxy перед Garage или R2/S3 — только
+  # origin, без пути.
   S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:?set S3_PUBLIC_ENDPOINT}
 
 # Лимиты задач: и API (приём задачи), и воркер (бюджеты).
@@ -206,7 +207,8 @@ services:
     environment:
       # Имя приложения в server_name: чужой Host получает 444.
       APP_HOST: ${APP_HOST:?set APP_HOST}
-      S3_PUBLIC_ORIGIN: ${S3_PUBLIC_ENDPOINT:?set S3_PUBLIC_ENDPOINT}
+      # Для connect-src CSP образ берёт только origin (scheme://host[:port]) — docker/nginx/prod/s3-public-origin.envsh.
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:?set S3_PUBLIC_ENDPOINT}
     ports: ['127.0.0.1:${APP_PORT:-8080}:8080']
     depends_on:
       api: { condition: service_healthy, restart: true }

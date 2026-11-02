@@ -36,3 +36,41 @@ test('prod: real_ip for a TLS load balancer is a commented placeholder, not a gu
   expect(prod).toMatch(/^\s*# set_real_ip_from /m);
   expect(prod).not.toMatch(/^\s*set_real_ip_from /m);
 });
+
+/** Подключает скрипт образа, как entrypoint nginx (`. file`), и возвращает выведенный S3_PUBLIC_ORIGIN. */
+const originScript = new URL('../../../docker/nginx/prod/s3-public-origin.envsh', import.meta.url).pathname;
+function s3Origin(endpoint: string | undefined): { code: number; origin: string; stderr: string } {
+  const env: Record<string, string> = { PATH: process.env.PATH ?? '/usr/bin:/bin' };
+  if (endpoint !== undefined) env.S3_PUBLIC_ENDPOINT = endpoint;
+  const r = Bun.spawnSync(['sh', '-c', `set -e; . "$0"; printf %s "$S3_PUBLIC_ORIGIN"`, originScript], { env });
+  return { code: r.exitCode, origin: r.stdout.toString(), stderr: r.stderr.toString() };
+}
+
+test('prod: the CSP gets the origin of S3_PUBLIC_ENDPOINT, without a path', () => {
+  for (const [endpoint, origin] of [
+    ['https://files.example.com', 'https://files.example.com'],
+    ['https://files.example.com/', 'https://files.example.com'],
+    ['http://localhost:53990', 'http://localhost:53990'],
+    ['https://s3.example.com:8443/agent-files/', 'https://s3.example.com:8443'],
+  ] as const) {
+    expect({ endpoint, ...s3Origin(endpoint) }).toMatchObject({ endpoint, code: 0, origin });
+  }
+  expect(s3Origin('https://s3.example.com/bucket').stderr).toContain('the CSP uses only its origin');
+});
+
+test('prod: nginx refuses to start on an S3_PUBLIC_ENDPOINT that is not scheme://host[:port]', () => {
+  for (const endpoint of [
+    undefined,
+    '',
+    'files.example.com',
+    'ftp://files.example.com',
+    'https://',
+    'https://user:pass@files.example.com',
+    'https://files.example.com?x=1',
+    'https://files.example.com/#frag',
+    "https://files.example.com;add_header X 'y'",
+    'https://files example.com',
+  ]) {
+    expect({ endpoint, code: s3Origin(endpoint).code }).toEqual({ endpoint, code: 1 });
+  }
+});
