@@ -323,9 +323,15 @@
   z-index: var(--z-toast);
   bottom: var(--space-4);
   right: var(--space-4);
+  width: min(380px, calc(100vw - 32px));
+}
+/* Два списка: обычные тосты в polite-регионе, ошибки (role="alert") — под ним, вне региона. */
+.ui-toast-list {
   display: grid;
   gap: var(--space-2);
-  width: min(380px, calc(100vw - 32px));
+}
+.ui-toast-list:not(:empty) + .ui-toast-list:not(:empty) {
+  margin-top: var(--space-2);
 }
 .ui-toast {
   display: flex;

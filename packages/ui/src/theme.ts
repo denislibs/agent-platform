@@ -62,6 +62,8 @@ export function useTheme(): ThemeState {
   const prefersLight = useMediaQuery(LIGHT_QUERY);
   useEffect(() => {
     listeners.add(setState);
+    // setTheme между рендером и подпиской (например, из layout-эффекта соседа) слушатель не застал.
+    setState(current ?? DEFAULT_THEME);
     // Без boot-скрипта в <head> сохранённая тема применяется при первом монтировании.
     applyTheme(current ?? DEFAULT_THEME);
     return () => {

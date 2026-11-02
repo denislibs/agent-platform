@@ -130,7 +130,7 @@ export function Select<V extends string>({
         aria-label={label}
         aria-haspopup="listbox"
         aria-expanded={open}
-        aria-controls={listId}
+        aria-controls={mounted ? listId : undefined}
         aria-activedescendant={open && active >= 0 ? optionId(active) : undefined}
         disabled={disabled}
         onClick={() => (open ? setOpen(false) : openList())}

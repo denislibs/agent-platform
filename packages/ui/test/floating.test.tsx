@@ -110,6 +110,8 @@ test('Select keeps focus on the combobox and moves the active option with the ke
   render(<ModelSelect onChange={onChange} />);
   const combobox = screen.getByRole('combobox', { name: 'Default model' });
   expect(combobox.textContent).toBe('Planner · DeepSeek');
+  // Ссылка только на существующий в DOM список, как у Menu и Popover.
+  expect(combobox.hasAttribute('aria-controls')).toBe(false);
   combobox.focus();
   await user.keyboard('{ArrowDown}');
   const listbox = screen.getByRole('listbox', { name: 'Default model' });

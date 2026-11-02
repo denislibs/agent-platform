@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { act, render, screen } from '@testing-library/preact';
+import { useLayoutEffect } from 'preact/hooks';
 import { applyTheme, readStoredTheme, setTheme, THEME_STORAGE_KEY, themeBootScript, useTheme } from '../src/index.ts';
 
 const realMatchMedia = window.matchMedia;
@@ -72,4 +73,21 @@ test('useTheme resolves auto through prefers-color-scheme', () => {
   setTheme('auto');
   render(<ThemeProbe name="a" />);
   expect(screen.getByRole('button').textContent).toBe('a: auto/light');
+});
+
+function SetsLightOnMount() {
+  useLayoutEffect(() => setTheme('light'), []);
+  return null;
+}
+
+test('useTheme picks up a setTheme that happened between its render and its subscription', () => {
+  setTheme('dark');
+  // Layout-эффект соседа срабатывает после рендера ThemeProbe, но до его useEffect с подпиской.
+  render(
+    <>
+      <ThemeProbe name="a" />
+      <SetsLightOnMount />
+    </>,
+  );
+  expect(screen.getByRole('button').textContent).toBe('a: light/light');
 });

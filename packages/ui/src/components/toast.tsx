@@ -97,31 +97,37 @@ export function ToastProvider({
   }, []);
 
   const api = useMemo(() => ({ show, dismiss }), [show, dismiss]);
+  const renderToast = (toast: ToastEntry) => {
+    const Icon = ICONS[toast.tone];
+    return (
+      <div
+        key={toast.id}
+        class={cx('ui-toast', `ui-toast--${toast.tone}`)}
+        data-state={toast.closing ? 'closed' : undefined}
+        role={toast.tone === 'danger' ? 'alert' : undefined}
+      >
+        <span class="ui-toast__icon">
+          <Icon aria-hidden="true" />
+        </span>
+        <div class="ui-toast__body">
+          <span class="ui-toast__title">{toast.title}</span>
+          {toast.description && <span class="ui-toast__desc">{toast.description}</span>}
+        </div>
+        <IconButton icon={X} label="Dismiss" size="xs" onClick={() => dismiss(toast.id)} />
+      </div>
+    );
+  };
+  // Одно объявление на тост: обычные читает polite-регион (своей роли status у них нет), ошибки —
+  // role="alert" отдельным списком вне региона, иначе скринридер прочёл бы их дважды.
   return (
     <ToastContext.Provider value={api}>
       {children}
-      <section class="ui-toast-region" aria-label={label} aria-live="polite">
-        {toasts.map(toast => {
-          const Icon = ICONS[toast.tone];
-          return (
-            <div
-              key={toast.id}
-              class={cx('ui-toast', `ui-toast--${toast.tone}`)}
-              data-state={toast.closing ? 'closed' : undefined}
-              role={toast.tone === 'danger' ? 'alert' : 'status'}
-            >
-              <span class="ui-toast__icon">
-                <Icon aria-hidden="true" />
-              </span>
-              <div class="ui-toast__body">
-                <span class="ui-toast__title">{toast.title}</span>
-                {toast.description && <span class="ui-toast__desc">{toast.description}</span>}
-              </div>
-              <IconButton icon={X} label="Dismiss" size="xs" onClick={() => dismiss(toast.id)} />
-            </div>
-          );
-        })}
-      </section>
+      <div class="ui-toast-region">
+        <section class="ui-toast-list" aria-label={label} aria-live="polite">
+          {toasts.filter(toast => toast.tone !== 'danger').map(renderToast)}
+        </section>
+        <div class="ui-toast-list">{toasts.filter(toast => toast.tone === 'danger').map(renderToast)}</div>
+      </div>
     </ToastContext.Provider>
   );
 }

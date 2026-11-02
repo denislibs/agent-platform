@@ -46,12 +46,13 @@ test('a toast appears in the live region and closes with Dismiss', async () => {
   await user.click(screen.getByRole('button', { name: 'Notify' }));
   const region = screen.getByRole('region', { name: 'Notifications' });
   expect(region.getAttribute('aria-live')).toBe('polite');
-  const toast = screen.getByRole('status');
+  const toast = screen.getByText('Task completed').closest<HTMLElement>('.ui-toast')!;
+  expect(region.contains(toast)).toBe(true);
   expect(toast.textContent).toContain('Task completed');
   expect(toast.textContent).toContain('3 files saved.');
   await user.click(screen.getByRole('button', { name: 'Dismiss' }));
   expect(toast.dataset.state).toBe('closed');
-  await gone(() => screen.queryByRole('status'));
+  await gone(() => screen.queryByText('Task completed'));
 });
 
 test('toasts close by themselves after their duration; errors are alerts', async () => {
@@ -96,7 +97,7 @@ test('dismiss ignores missing and already closing toasts instead of arming extra
     </ToastProvider>,
   );
   await user.click(screen.getByRole('button', { name: 'Show' }));
-  await screen.findByRole('status');
+  await screen.findByText('Twice');
   const original = globalThis.setTimeout;
   let armed = 0;
   globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => {
@@ -109,5 +110,42 @@ test('dismiss ignores missing and already closing toasts instead of arming extra
     globalThis.setTimeout = original;
   }
   expect(armed).toBe(1);
-  await gone(() => screen.queryByRole('status'));
+  await gone(() => screen.queryByText('Twice'));
+});
+
+function Both() {
+  const toast = useToast();
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        toast.show({ tone: 'success', title: 'Saved' });
+        toast.show({ tone: 'danger', title: 'Sandbox crashed' });
+      }}
+    >
+      Notify both
+    </button>
+  );
+}
+
+test('the polite region announces regular toasts once; errors are alerts outside it', async () => {
+  const user = userEvent.setup();
+  render(
+    <ToastProvider duration={Infinity}>
+      <Both />
+    </ToastProvider>,
+  );
+  await user.click(screen.getByRole('button', { name: 'Notify both' }));
+  const region = screen.getByRole('region', { name: 'Notifications' });
+  expect(region.getAttribute('aria-live')).toBe('polite');
+  const saved = screen.getByText('Saved').closest('.ui-toast')!;
+  expect(region.contains(saved)).toBe(true);
+  // Своя роль status внутри живого региона — второе объявление того же текста.
+  expect(saved.getAttribute('role')).toBeNull();
+  expect(screen.queryByRole('status')).toBeNull();
+  const alert = screen.getByRole('alert');
+  expect(alert.textContent).toContain('Sandbox crashed');
+  // role="alert" сам assertive: внутри polite-региона его прочитали бы дважды.
+  expect(region.contains(alert)).toBe(false);
+  expect(alert.closest('[aria-live]')).toBeNull();
 });
