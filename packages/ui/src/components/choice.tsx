@@ -14,12 +14,14 @@ export interface CheckboxProps extends NativeInputProps {
 
 export function Checkbox({ label, description, indeterminate = false, class: className, ...rest }: CheckboxProps) {
   const ref = useRef<HTMLInputElement>(null);
+  const field = useFieldControl(rest);
+  // Без массива зависимостей: свойство DOM сбрасывается кликом, пропс должен его возвращать.
   useLayoutEffect(() => {
     if (ref.current) ref.current.indeterminate = indeterminate;
-  }, [indeterminate]);
+  });
   return (
     <label class={cx('ui-check', className)}>
-      <input {...rest} ref={ref} type="checkbox" class="ui-checkbox" />
+      <input {...rest} {...field} ref={ref} type="checkbox" class="ui-checkbox" />
       <span>
         {label}
         {description && <small>{description}</small>}
@@ -47,9 +49,11 @@ export function Switch({
   class: className,
   ...rest
 }: SwitchProps) {
+  const field = useFieldControl(rest);
   const input = (
     <input
       {...rest}
+      {...field}
       type="checkbox"
       role="switch"
       checked={checked}
@@ -127,10 +131,11 @@ export function Slider({
   onValueChange,
   formatValue,
   class: className,
+  style,
   ...rest
 }: SliderProps) {
   const field = useFieldControl(rest);
-  const percent = max > min ? ((value - min) / (max - min)) * 100 : 0;
+  const percent = max > min ? Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100)) : 0;
   return (
     <input
       {...rest}
@@ -141,7 +146,11 @@ export function Slider({
       max={max}
       step={step}
       value={value}
-      style={{ '--val': `${percent}%` }}
+      style={
+        typeof style === 'string'
+          ? `${style};--val:${percent}%`
+          : { ...(style as Record<string, unknown> | undefined), '--val': `${percent}%` }
+      }
       aria-valuetext={formatValue?.(value)}
       onInput={event => onValueChange(Number(event.currentTarget.value))}
     />

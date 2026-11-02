@@ -180,3 +180,150 @@ test('ChoiceGroup is a radiogroup of cards', async () => {
   await user.click(screen.getByText('Light'));
   expect(onChange).toHaveBeenCalledWith('light');
 });
+
+test('Field follows an explicit control id: label, hint and describedby agree', () => {
+  render(
+    <Field label="Handle" hint="Public name">
+      <Input id="foo" />
+    </Field>,
+  );
+  const input = screen.getByRole('textbox', { name: 'Handle' });
+  expect(input.id).toBe('foo');
+  expect(screen.getByText('Handle').getAttribute('for')).toBe('foo');
+  expect(document.getElementById(input.getAttribute('aria-describedby')!)?.textContent).toBe('Public name');
+});
+
+test('two Fields get unique ids', () => {
+  render(
+    <>
+      <Field label="First">
+        <Input />
+      </Field>
+      <Field label="Second" hint="Hint">
+        <Input />
+      </Field>
+    </>,
+  );
+  const first = screen.getByRole('textbox', { name: 'First' });
+  const second = screen.getByRole('textbox', { name: 'Second' });
+  expect(first.id).not.toBe(second.id);
+  expect(first.id).toBeTruthy();
+});
+
+test('a consumer aria-invalid and aria-describedby survive outside a Field error', () => {
+  render(<Input aria-label="Name" aria-invalid="grammar" aria-describedby="note" />);
+  const input = screen.getByRole('textbox', { name: 'Name' });
+  expect(input.getAttribute('aria-invalid')).toBe('grammar');
+  expect(input.getAttribute('aria-describedby')).toBe('note');
+});
+
+test('Field error is announced with role alert', () => {
+  render(
+    <Field label="Email" error="Enter a valid email address">
+      <Input />
+    </Field>,
+  );
+  expect(screen.getByRole('alert').textContent).toBe('Enter a valid email address');
+});
+
+test('uncontrolled Textarea with autosize grows while typing', () => {
+  render(<Textarea aria-label="Notes" autosize />);
+  const textarea = screen.getByRole('textbox', { name: 'Notes' }) as HTMLTextAreaElement;
+  Object.defineProperty(textarea, 'scrollHeight', { configurable: true, value: 96 });
+  const onInput = mock((_event: Event) => {});
+  render(<Textarea aria-label="Other" autosize onInput={onInput} />);
+  fireEvent.input(textarea, { target: { value: 'a\nb' } });
+  expect(textarea.style.height).toBe('96px');
+  const other = screen.getByRole('textbox', { name: 'Other' });
+  fireEvent.input(other, { target: { value: 'x' } });
+  expect(onInput).toHaveBeenCalledTimes(1);
+});
+
+test('Checkbox and Switch take the Field label, invalid state and description', () => {
+  render(
+    <>
+      <Field label="Accept terms" error="Required">
+        <Checkbox label="I agree" />
+      </Field>
+      <Field label="Notifications" hint="Sent by email">
+        <Switch label="Enabled" checked={false} onCheckedChange={() => {}} />
+      </Field>
+    </>,
+  );
+  const box = screen.getByRole('checkbox');
+  expect(box.getAttribute('aria-invalid')).toBe('true');
+  expect(document.getElementById(box.getAttribute('aria-describedby')!)?.textContent).toBe('Required');
+  const sw = screen.getByRole('switch');
+  expect(sw.id).toBeTruthy();
+  expect(document.getElementById(sw.getAttribute('aria-describedby')!)?.textContent).toBe('Sent by email');
+});
+
+test('Checkbox keeps indeterminate in sync with the prop on every render', () => {
+  const { rerender } = render(<Checkbox label="All" indeterminate />);
+  const box = screen.getByRole('checkbox') as HTMLInputElement;
+  box.indeterminate = false;
+  rerender(<Checkbox label="All" indeterminate />);
+  expect(box.indeterminate).toBe(true);
+  rerender(<Checkbox label="All" />);
+  expect(box.indeterminate).toBe(false);
+});
+
+test('Switch is off with aria-checked false and toggles with Space', async () => {
+  const user = userEvent.setup();
+  const onCheckedChange = mock((_checked: boolean) => {});
+  render(<Switch label="Beta" checked={false} onCheckedChange={onCheckedChange} />);
+  const sw = screen.getByRole('switch', { name: 'Beta' });
+  expect(sw.getAttribute('aria-checked')).toBe('false');
+  sw.focus();
+  await user.keyboard(' ');
+  expect(onCheckedChange).toHaveBeenCalledWith(true);
+});
+
+test('RadioGroup shares one name and honours disabled options', async () => {
+  const user = userEvent.setup();
+  const onChange = mock((_value: string) => {});
+  render(
+    <RadioGroup
+      label="Plan"
+      name="plan"
+      value="free"
+      onChange={onChange}
+      options={[
+        { value: 'free', label: 'Free' },
+        { value: 'pro', label: 'Pro', disabled: true },
+      ]}
+    />,
+  );
+  const radios = screen.getAllByRole('radio') as HTMLInputElement[];
+  expect(radios.map(r => r.name)).toEqual(['plan', 'plan']);
+  expect(radios[1]!.disabled).toBe(true);
+  await user.click(radios[1]!);
+  expect(onChange).not.toHaveBeenCalled();
+});
+
+test('Slider merges the consumer style and clamps the fill to 0-100%', () => {
+  const { rerender } = render(
+    <Slider aria-label="Volume" value={150} min={0} max={100} style={{ width: '200px' }} onValueChange={() => {}} />,
+  );
+  const slider = screen.getByRole('slider', { name: 'Volume' }) as HTMLInputElement;
+  expect(slider.style.getPropertyValue('--val')).toBe('100%');
+  expect(slider.style.width).toBe('200px');
+  rerender(<Slider aria-label="Volume" value={-10} style={{ width: '200px' }} onValueChange={() => {}} />);
+  expect(slider.style.getPropertyValue('--val')).toBe('0%');
+});
+
+test('SegmentedControl marks non-selected segments aria-pressed false', () => {
+  render(
+    <SegmentedControl
+      label="View"
+      value="a"
+      onChange={() => {}}
+      options={[
+        { value: 'a', label: 'A' },
+        { value: 'b', label: 'B' },
+      ]}
+    />,
+  );
+  expect(screen.getByRole('button', { name: 'A' }).getAttribute('aria-pressed')).toBe('true');
+  expect(screen.getByRole('button', { name: 'B' }).getAttribute('aria-pressed')).toBe('false');
+});

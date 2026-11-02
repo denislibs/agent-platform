@@ -2,9 +2,9 @@ import type { ComponentChildren, JSX } from 'preact';
 import { forwardRef } from 'preact/compat';
 import { useRef } from 'preact/hooks';
 import type { LucideIcon } from 'lucide-preact';
-import { useAutosize } from '../lib/autosize.ts';
+import { fitToContent, useAutosize } from '../lib/autosize.ts';
 import { cx } from '../lib/cx.ts';
-import { mergeRefs } from '../lib/refs.ts';
+import { useMergedRefs } from '../lib/refs.ts';
 import { useFieldControl } from './field.tsx';
 
 export interface InputProps extends Omit<JSX.InputHTMLAttributes<HTMLInputElement>, 'size' | 'icon' | 'prefix'> {
@@ -61,13 +61,27 @@ export interface TextareaProps extends JSX.TextareaHTMLAttributes<HTMLTextAreaEl
 }
 
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function Textarea(
-  { autosize = false, class: className, value, ...rest },
+  { autosize = false, class: className, value, onInput, ...rest },
   ref,
 ) {
   const own = useRef<HTMLTextAreaElement>(null);
   const field = useFieldControl(rest);
   useAutosize(own, value, autosize);
-  return <textarea {...rest} {...field} value={value} ref={mergeRefs(ref, own)} class={cx('ui-textarea', className)} />;
+  const merged = useMergedRefs(ref, own);
+  return (
+    <textarea
+      {...rest}
+      {...field}
+      value={value}
+      ref={merged}
+      class={cx('ui-textarea', className)}
+      onInput={event => {
+        // Неуправляемое поле: значение не приходит пропсом, подгоняем высоту по вводу.
+        if (autosize) fitToContent(event.currentTarget);
+        onInput?.(event);
+      }}
+    />
+  );
 });
 
 export interface SelectOption {

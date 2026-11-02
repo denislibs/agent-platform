@@ -1,11 +1,13 @@
 import { createContext, type ComponentChildren } from 'preact';
-import { useContext, useId } from 'preact/hooks';
+import { useContext, useId, useLayoutEffect, useState } from 'preact/hooks';
 import { CircleAlert } from 'lucide-preact';
 
 interface FieldContextValue {
   id: string;
   describedBy?: string;
   invalid: boolean;
+  /** Контрол с собственным id сообщает его полю, чтобы `<label for>` и id сообщений не разошлись. */
+  registerId(id: string | undefined): void;
 }
 
 const FieldContext = createContext<FieldContextValue | null>(null);
@@ -20,7 +22,9 @@ const own = (value: unknown) => (typeof value === 'string' && value ? value : un
 
 /**
  * Атрибуты контрола внутри `<Field>`: id для `<label for>`, подсказка или ошибка в
- * `aria-describedby`, `aria-invalid` при ошибке. Явные пропсы контрола важнее поля.
+ * `aria-describedby`, `aria-invalid` при ошибке. Явный id контрола важнее поля (поле
+ * подхватывает его для `<label for>`). Возвращает только заданные атрибуты, чтобы
+ * спред после пропсов потребителя не затирал его `aria-*` значением `undefined`.
  */
 export function useFieldControl(props: {
   id?: unknown;
@@ -28,13 +32,21 @@ export function useFieldControl(props: {
   'aria-invalid'?: unknown;
 }): FieldControlProps {
   const field = useContext(FieldContext);
+  const ownId = own(props.id);
+  const registerId = field?.registerId;
+  useLayoutEffect(() => {
+    if (!registerId || !ownId) return;
+    registerId(ownId);
+    return () => registerId(undefined);
+  }, [registerId, ownId]);
   const describedBy = [own(props['aria-describedby']), field?.describedBy].filter(Boolean).join(' ');
   const invalid = props['aria-invalid'] === true || props['aria-invalid'] === 'true' || field?.invalid === true;
-  return {
-    id: own(props.id) ?? field?.id,
-    'aria-describedby': describedBy || undefined,
-    'aria-invalid': invalid || undefined,
-  };
+  const result: FieldControlProps = {};
+  const id = ownId ?? field?.id;
+  if (id) result.id = id;
+  if (describedBy) result['aria-describedby'] = describedBy;
+  if (invalid) result['aria-invalid'] = true;
+  return result;
 }
 
 export interface FieldProps {
@@ -51,10 +63,11 @@ export interface FieldProps {
 
 export function Field({ label, hint, error, optional = false, counter, id, children }: FieldProps) {
   const autoId = useId();
-  const controlId = id ?? `ui-field-${autoId}`;
+  const [registeredId, registerId] = useState<string>();
+  const controlId = registeredId ?? id ?? `ui-field-${autoId}`;
   const messageId = `${controlId}-message`;
   const message = error ? (
-    <span class="ui-error" id={messageId}>
+    <span class="ui-error" id={messageId} role="alert">
       <CircleAlert aria-hidden="true" class="ui-icon-sm" />
       {error}
     </span>
@@ -70,7 +83,7 @@ export function Field({ label, hint, error, optional = false, counter, id, child
         {optional && <span class="ui-label__opt">Optional</span>}
       </label>
       <FieldContext.Provider
-        value={{ id: controlId, describedBy: message ? messageId : undefined, invalid: Boolean(error) }}
+        value={{ id: controlId, describedBy: message ? messageId : undefined, invalid: Boolean(error), registerId }}
       >
         {children}
       </FieldContext.Provider>
