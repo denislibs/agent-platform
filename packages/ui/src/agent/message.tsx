@@ -81,6 +81,8 @@ export interface AskCardProps {
   heading?: string;
   placeholder?: string;
   disabled?: boolean;
+  /** Начальный текст поля: например, ответ, который не ушёл и вернулся пользователю. */
+  defaultValue?: string;
 }
 
 /** Вопрос агента пользователю (ask_user): варианты ответа и поле для своего. */
@@ -91,11 +93,12 @@ export function AskCard({
   heading = 'Your agent needs an answer',
   placeholder = 'Or type your answer…',
   disabled = false,
+  defaultValue = '',
 }: AskCardProps) {
   const id = useId();
   const headingId = `${id}-ask`;
   const questionId = `${id}-question`;
-  const [draft, setDraft] = useState('');
+  const [draft, setDraft] = useState(defaultValue);
   const send = () => {
     const answer = draft.trim();
     if (!answer || disabled) return;

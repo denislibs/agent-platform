@@ -255,6 +255,16 @@ test('AskCard disabled blocks options and typed answers', async () => {
   expect(onAnswer).not.toHaveBeenCalled();
 });
 
+test('AskCard starts from a default answer, so an unsent answer is not lost', async () => {
+  const user = userEvent.setup();
+  const onAnswer = mock((_answer: string) => {});
+  render(<AskCard question="Which?" defaultValue="EU only" onAnswer={onAnswer} />);
+  const field = screen.getByRole('textbox', { name: /^Your answer/ }) as HTMLInputElement;
+  expect(field.value).toBe('EU only');
+  await user.type(field, '{Enter}');
+  expect(onAnswer).toHaveBeenLastCalledWith('EU only');
+});
+
 test('StepGroup can be controlled', async () => {
   const user = userEvent.setup();
   const onExpandedChange = mock((_expanded: boolean) => {});
