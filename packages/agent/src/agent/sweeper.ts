@@ -1,11 +1,14 @@
 import {
   errorMessage,
   InvalidTransitionError,
+  type FileRepository,
+  type FileStore,
   type JobQueue,
   type Logger,
   type SandboxProvider,
   type Task,
   type TaskRepository,
+  type UnitOfWork,
 } from '@agent/core';
 import { isTerminalTask, type Config, type JobKind } from '@agent/shared';
 import { answeredAfterLastPause, type TaskGuard } from './guard';
@@ -18,7 +21,8 @@ interface PassResult {
 }
 
 /**
- * Сборщик (спецификация 8, 4.2): раз в SWEEP_EVERY_MS — зависшие задачи, тайм-аут ответа, песочницы-сироты.
+ * Сборщик (спецификация 8, 4.2): раз в SWEEP_EVERY_MS — зависшие задачи, тайм-аут ответа, песочницы-сироты
+ * и входные файлы, которые объявили, но не привязали к задаче за UPLOAD_TTL_MS.
  * Ошибка на одной задаче или песочнице не прерывает проход: остальные обрабатываются, а недоделанное подхватит следующий.
  * Число таких ошибок — `failed` в результате: воркер пишет его в лог.
  * Выборка findStale — не больше 100 задач (старейшие первыми) на набор статусов за проход; остальные — в следующий.
@@ -31,20 +35,25 @@ export class Sweeper {
       sandboxes: SandboxProvider;
       queue: JobQueue;
       guard: TaskGuard;
+      files: FileRepository;
+      fileStore: FileStore;
+      uow: UnitOfWork;
       config: Config;
       logger: Logger;
     },
   ) {}
 
-  async sweep(): Promise<{ requeued: number; timedOut: number; destroyed: number; failed: number }> {
+  async sweep(): Promise<{ requeued: number; timedOut: number; destroyed: number; uploads: number; failed: number }> {
     const requeued = await this.requeueStale();
     const timedOut = await this.timeOutWaiting();
     const destroyed = await this.destroyOrphans();
+    const uploads = await this.removeStaleUploads();
     return {
       requeued: requeued.count,
       timedOut: timedOut.count,
       destroyed: destroyed.count,
-      failed: requeued.failed + timedOut.failed + destroyed.failed,
+      uploads: uploads.count,
+      failed: requeued.failed + timedOut.failed + destroyed.failed + uploads.failed,
     };
   }
 
@@ -138,6 +147,38 @@ export class Sweeper {
         this.deps.logger.warn('sweeper could not destroy a sandbox', {
           sandboxId: info.id,
           taskId: info.taskId,
+          error: errorMessage(err),
+        });
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Загрузки, которые так и не привязали к задаче (POST /api/uploads без POST /api/tasks): не больше 100 старейших
+   * за проход. Каждая — в своей транзакции: строка блокируется (lockUnattached, только если файл всё ещё
+   * не привязан), удаляется объект S3, затем запись. Привязка (TaskIntake) ждёт блокировку строки и после коммита
+   * не находит файла — задача не создаётся (404). Сбой S3 откатывает транзакцию: запись остаётся, следующий проход
+   * повторит, а ждавшая привязка проходит. Объекта, которого уже нет, удаление S3 не замечает. Выходные файлы
+   * и привязанные входные сюда не попадают никогда. Транзакция открыта на время одного удаления объекта S3.
+   */
+  private async removeStaleUploads(): Promise<PassResult> {
+    const { files, fileStore, uow, config, logger } = this.deps;
+    const result: PassResult = { count: 0, failed: 0 };
+    for (const file of await files.listUnattachedInputs({ olderThanMs: config.worker.uploadTtlMs })) {
+      try {
+        const removed = await uow.run(async tx => {
+          const locked = await tx.files.lockUnattached(file.id);
+          if (!locked) return false;
+          await fileStore.delete(locked.storageKey);
+          return tx.files.deleteUnattached(locked.id);
+        });
+        if (removed) result.count++;
+      } catch (err) {
+        result.failed++; // запись на месте: следующий проход попробует снова
+        logger.warn('sweeper could not remove a stale upload', {
+          fileId: file.id,
+          storageKey: file.storageKey,
           error: errorMessage(err),
         });
       }

@@ -1,6 +1,12 @@
 import { expect, test } from 'bun:test';
 import { themeBootScript } from '@agent/ui/theme';
-import { contentSecurityPolicy, scriptHash, themeBoot } from '../csp.ts';
+import {
+  contentSecurityPolicy,
+  nginxCspTemplate,
+  productionContentSecurityPolicy,
+  scriptHash,
+  themeBoot,
+} from '../csp.ts';
 
 const policy = contentSecurityPolicy({
   s3Endpoint: 'http://localhost:53900/agent-files',
@@ -36,4 +42,29 @@ test('index.html: <body class="ui-root"> (portals rely on it), English, dark unt
   expect(html).toContain('<html lang="en" data-theme="dark">');
   expect(html).toContain('<body class="ui-root">');
   expect(html).not.toMatch(/<script>(?!<\/script>)/);
+});
+
+/** Директивы политики, кроме style-src и connect-src: они у разработки и продакшена разные. */
+const withoutStylesAndConnections = (p: string) =>
+  p.split('; ').filter(d => !d.startsWith('style-src') && !d.startsWith('connect-src'));
+
+test('production: no inline styles, no HMR; connections to the app and S3 only', () => {
+  const prod = productionContentSecurityPolicy('https://files.example.com');
+  const dev = contentSecurityPolicy({ s3Endpoint: 'https://files.example.com', hmrOrigin: 'ws://localhost:8080' });
+  expect(prod).toContain("style-src 'self';");
+  expect(prod).not.toContain('unsafe-');
+  expect(prod).toContain("connect-src 'self' https://files.example.com;");
+  // Остальное — как в разработке: та же политика скриптов, шрифтов, картинок и фреймов.
+  expect(withoutStylesAndConnections(prod)).toEqual(withoutStylesAndConnections(dev));
+});
+
+test('the nginx template carries the hash of the theme script and leaves the S3 origin to envsubst', () => {
+  const template = nginxCspTemplate();
+  expect(template).toContain(
+    `add_header Content-Security-Policy "default-src 'self'; script-src 'self' ${scriptHash(themeBootScript)};`,
+  );
+  expect(template).toContain("connect-src 'self' ${S3_PUBLIC_ORIGIN};");
+  expect(template.trimEnd().endsWith('" always;')).toBe(true);
+  // Внутри значения нет двойных кавычек: иначе nginx оборвал бы строку.
+  expect(template.match(/"/g)).toHaveLength(2);
 });

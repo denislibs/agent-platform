@@ -1,0 +1,21 @@
+{
+  "title": "Scrape titles and prices from a catalogue page",
+  "category": "scraping",
+  "prompt": "Open https://books.toscrape.com/ and collect the title and price of every book on the first page of the catalogue. Save them to outputs/books.csv with the columns title and price (the price as a number without the currency sign). Use the full titles, not the shortened ones shown under the covers.",
+  "budget": { "modelCalls": 50, "tokens": 400000, "minutes": 20 },
+  "checks": [
+    {
+      "kind": "file",
+      "path": "outputs/books.csv",
+      "format": "csv",
+      "columns": ["title", "price"],
+      "rows": { "min": 20, "max": 20 },
+      "contains": [
+        "A Light in the Attic",
+        { "number": 51.77 },
+        "Sapiens: A Brief History of Humankind",
+        { "number": 54.23 }
+      ]
+    }
+  ]
+}

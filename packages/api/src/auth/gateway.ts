@@ -18,4 +18,10 @@ export interface AuthGateway {
   session(headers: Headers): Promise<SessionUser | undefined>;
   /** Сохраняет тему в профиле пользователя. */
   setTheme(userId: string, theme: ProfileTheme): Promise<void>;
+  /** Id пользователя по email; undefined — такого нет. Для admin:delete-user. */
+  findUserId(email: string): Promise<string | undefined>;
+  /** Отзывает все сессии пользователя: следующий его запрос — 401. Для admin:delete-user. */
+  deleteSessions(userId: string): Promise<void>;
+  /** Удаляет пользователя: сессии, аккаунты OAuth и все его данные приложения уходят каскадом. */
+  deleteUser(userId: string): Promise<void>;
 }

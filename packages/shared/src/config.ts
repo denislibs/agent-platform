@@ -57,6 +57,9 @@ const EnvSchema = z.object({
   WORKER_CONCURRENCY: positiveInt(4),
   SWEEP_EVERY_MS: positiveInt(60_000),
   STALE_TASK_MS: positiveInt(120_000),
+  /** Входной файл, объявленный, но не привязанный к задаче дольше этого, сборщик удаляет вместе с объектом S3. */
+  /** Не меньше часа: дольше самого долгого presigned PUT (час), иначе можно удалить файл, который ещё грузится. */
+  UPLOAD_TTL_MS: z.coerce.number().int().min(3_600_000).default(86_400_000),
   DB_LOCK_TIMEOUT_MS: positiveInt(10_000),
   SANDBOX_IMAGE: z.string().min(1).default('agent-sandbox:dev'),
   SANDBOX_NETWORK: z.string().min(1).default('agent-sandbox'),
@@ -91,12 +94,26 @@ const EnvSchema = z.object({
   GOOGLE_CLIENT_SECRET: optionalText,
   GITHUB_CLIENT_ID: optionalText,
   GITHUB_CLIENT_SECRET: optionalText,
+  /** Почта magic link: smtp(s)://user:password@host:port. Без него письма пишутся в журнал API (LogMailer). */
+  SMTP_URL: z.preprocess(blankAsUnset, z.url({ protocol: /^smtps?$/ }).optional()),
+  /** Отправитель писем: обязателен вместе с SMTP_URL. */
+  MAIL_FROM: optionalText,
 });
 
 export type Config = ReturnType<typeof loadConfig>;
 
+/** Почтовый провайдер включён, только если заданы и адрес SMTP, и отправитель. */
+function mailConfig(smtpUrl: string | undefined, from: string | undefined) {
+  if (!smtpUrl && !from) return { smtpUrl: null, from: null };
+  if (!smtpUrl || !from) throw new Error('Invalid environment: SMTP_URL and MAIL_FROM must be set together');
+  return { smtpUrl, from };
+}
+
 export function loadConfig(env: Record<string, string | undefined> = process.env) {
-  const parsed = EnvSchema.safeParse(env);
+  // Пустое или пробельное значение — «не задано» для любой переменной: compose передаёт необязательные
+  // настройки как ${VAR:-}, и пустая строка не должна ломать числа и перечисления или подменять умолчания.
+  const defined = Object.fromEntries(Object.entries(env).filter(([, v]) => v === undefined || v.trim() !== ''));
+  const parsed = EnvSchema.safeParse(defined);
   if (!parsed.success) {
     const details = parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
     throw new Error(`Invalid environment: ${details}`);
@@ -141,6 +158,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       concurrency: e.WORKER_CONCURRENCY,
       sweepEveryMs: e.SWEEP_EVERY_MS,
       staleTaskMs: e.STALE_TASK_MS,
+      uploadTtlMs: e.UPLOAD_TTL_MS,
     },
     db: { lockTimeoutMs: e.DB_LOCK_TIMEOUT_MS },
     sandbox: {
@@ -168,5 +186,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       google: oauthApp('GOOGLE', e.GOOGLE_CLIENT_ID, e.GOOGLE_CLIENT_SECRET),
       github: oauthApp('GITHUB', e.GITHUB_CLIENT_ID, e.GITHUB_CLIENT_SECRET),
     },
+    mail: mailConfig(e.SMTP_URL, e.MAIL_FROM),
   };
 }

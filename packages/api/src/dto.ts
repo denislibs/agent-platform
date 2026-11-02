@@ -14,10 +14,16 @@ const REASON_INPUT_LIMIT = 10_000;
 /** Абсолютный путь хоста из двух и более сегментов: /Users/me/app, /var/run/docker.sock (в том числе не ASCII). */
 const ABSOLUTE_PATH = /(?<![\p{L}\p{N}_.~-])(?:\/[\p{L}\p{N}_.@+~-]+){2,}\/?/gu;
 
-/** Управляющие символы и непарные суррогаты (после Array.from они остаются отдельными «символами»). */
+/** Форматирующие символы (Cf: bidi-переопределения, невидимые пробелы) и разделители строк U+2028/2029. */
+const FORMAT_CHAR = /^[\p{Cf}\u2028\u2029]$/u;
+
+/**
+ * Управляющие и форматирующие символы, разделители строк и непарные суррогаты (после Array.from они остаются
+ * отдельными «символами»).
+ */
 const isUnsafeChar = (ch: string): boolean => {
   const code = ch.codePointAt(0) ?? 0;
-  return code < 0x20 || (code >= 0x7f && code <= 0x9f) || (code >= 0xd800 && code <= 0xdfff);
+  return code < 0x20 || (code >= 0x7f && code <= 0x9f) || (code >= 0xd800 && code <= 0xdfff) || FORMAT_CHAR.test(ch);
 };
 
 /**

@@ -33,6 +33,12 @@ export const PAYLOAD_BY_PORT: Record<number, string> = {
   [INFRA_PORTS.garage]: encodeHex('GET / HTTP/1.0\r\nHost: probe\r\n\r\n'),
 };
 export const HTTP_PAYLOAD = encodeHex('GET / HTTP/1.0\r\nHost: probe\r\n\r\n');
+/**
+ * HTTP-запрос к nginx стека приложения (APP_PORT и сам контейнер nginx). Host — localhost: nginx отвечает только своим
+ * именам, на чужой Host (в том числе `probe`) закрывает соединение без ответа (444) — тогда «нет ответа» из песочницы
+ * ничего бы не доказывало.
+ */
+export const APP_PAYLOAD = encodeHex('GET / HTTP/1.0\r\nHost: localhost\r\n\r\n');
 
 export type ReplyVerdict = 'reply' | 'connect_only' | 'refused' | 'unreachable' | 'timeout' | 'unresolved' | 'error';
 

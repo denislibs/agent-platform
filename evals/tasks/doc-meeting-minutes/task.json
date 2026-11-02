@@ -1,0 +1,21 @@
+{
+  "title": "Meeting minutes from rough notes",
+  "category": "document",
+  "prompt": "inputs/notes.txt has my rough notes from a team meeting. Turn them into clean minutes in outputs/minutes.md with these sections: Attendees, Decisions, Action items (each with an owner and a due date) and Next meeting.",
+  "budget": { "modelCalls": 30, "tokens": 250000, "minutes": 15 },
+  "checks": [
+    {
+      "kind": "file",
+      "path": "outputs/minutes.md",
+      "format": "markdown",
+      "contains": [
+        { "regex": "^#+\\s*Decisions", "flags": "im" },
+        { "regex": "^#+\\s*Action items", "flags": "im" },
+        "March 11",
+        { "regex": "Marco[^\\n]*index|index[^\\n]*Marco", "flags": "i" },
+        { "regex": "Jun[^\\n]*(assets|hand)|(assets|hand)[^\\n]*Jun", "flags": "i" },
+        "March 9"
+      ]
+    }
+  ]
+}

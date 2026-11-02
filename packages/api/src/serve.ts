@@ -40,12 +40,12 @@ export function withJsonErrors<A extends unknown[]>(
 }
 
 /**
- * Решение плана: пока нет почтового провайдера, magic link пишется в журнал. Вне test и development
+ * Решение плана: без SMTP_URL и MAIL_FROM magic link пишется в журнал. Вне test и development
  * (пустой NODE_ENV тоже) об этом предупреждаем при старте, чтобы не пригласить пользователей, которым письма не дойдут.
  */
 export function warnIfMailIsLogged(deps: { mailer: Mailer; logger: Logger }, nodeEnv: string | undefined): void {
   if (!isLocalRuntime(nodeEnv) && deps.mailer instanceof LogMailer)
-    deps.logger.warn('magic links are written to the log: configure a mail provider before inviting users (backlog)');
+    deps.logger.warn('magic links are written to the log: set SMTP_URL and MAIL_FROM before inviting users');
 }
 
 /** Сколько ждать штатного закрытия соединений при остановке, прежде чем рвать их (docker stop ждёт 10 с). */

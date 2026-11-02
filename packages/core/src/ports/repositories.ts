@@ -109,6 +109,8 @@ export interface CreditLedger {
   grant(email: string, millicredits: number): Promise<{ balance: number }>;
   /** Текущий баланс; неизвестный пользователь — NotFoundError('user'). */
   balance(userId: string): Promise<number>;
+  /** Сколько списано за задачу (сумма событий расхода с этим taskId); неизвестная или кривая задача — 0. */
+  spentOnTask(taskId: string): Promise<number>;
 }
 
 export interface FileRepository {
@@ -116,10 +118,28 @@ export interface FileRepository {
   insert(input: NewFile): Promise<FileRecord>;
   get(id: string): Promise<FileRecord | undefined>;
   listForTask(taskId: string, kind?: FileKind): Promise<FileRecord[]>;
+  /** Все файлы пользователя (входные и результаты), старые первыми: для удаления его данных. */
+  listForUser(userId: string): Promise<FileRecord[]>;
   /**
    * Привязывает только файлы этого пользователя, ещё не привязанные к задаче. Возвращает их число.
    * Кривые и чужие id файлов молча пропускаются; неизвестная задача — NotFoundError('task')
    * (пустой список возвращает 0 без проверок).
    */
   attachToTask(fileIds: string[], userId: string, taskId: string): Promise<number>;
+  /**
+   * Входные файлы, которые так и не привязали к задаче, объявленные раньше чем olderThanMs назад по часам хранилища,
+   * старые первыми; limit по умолчанию 100. Для уборки сборщиком.
+   */
+  listUnattachedInputs(opts: { olderThanMs: number; limit?: number }): Promise<FileRecord[]>;
+  /**
+   * Входной файл, всё ещё не привязанный к задаче, с блокировкой его строки до конца транзакции (SELECT … FOR
+   * UPDATE): смысл имеет только на tx в UnitOfWork.run. Привязка в другой транзакции ждёт блокировку, а после
+   * коммита удаления не находит файла. Привязанный, выходной, неизвестный или кривой id — undefined.
+   */
+  lockUnattached(id: string): Promise<FileRecord | undefined>;
+  /**
+   * Удаляет запись входного файла, только если он всё ещё не привязан к задаче: привязка и удаление не гоняются
+   * друг с другом. true — удалена. Привязанный, выходной, неизвестный или кривой id — false, ничего не меняется.
+   */
+  deleteUnattached(id: string): Promise<boolean>;
 }

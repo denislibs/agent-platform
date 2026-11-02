@@ -1,0 +1,16 @@
+{
+  "name": "@agent/mail",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@agent/core": "workspace:*",
+    "nodemailer": "10.1.7"
+  },
+  "devDependencies": {
+    "@types/nodemailer": "8.0.2"
+  }
+}

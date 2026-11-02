@@ -1,0 +1,19 @@
+{
+  "title": "Group users by country (JSON)",
+  "category": "csv",
+  "prompt": "inputs/users.json is a list of users with a country field. Count the users in each country and save the counts to outputs/users_by_country.json as one JSON object that maps the country name to its number of users.",
+  "budget": { "modelCalls": 30, "tokens": 200000, "minutes": 10 },
+  "checks": [
+    {
+      "kind": "file",
+      "path": "outputs/users_by_country.json",
+      "format": "json",
+      "contains": [
+        { "regex": "\"Germany\"\\s*:\\s*4\\b" },
+        { "regex": "\"Japan\"\\s*:\\s*3\\b" },
+        { "regex": "\"United Kingdom\"\\s*:\\s*2\\b" },
+        { "regex": "\"Spain\"\\s*:\\s*2\\b" }
+      ]
+    }
+  ]
+}

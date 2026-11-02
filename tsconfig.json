@@ -24,6 +24,8 @@
     "apps/*/test",
     "apps/*/e2e",
     "apps/*/*.ts",
+    "evals/src",
+    "evals/test",
     "scripts"
   ]
 }

@@ -50,6 +50,7 @@ describe('loadConfig', () => {
       concurrency: 4,
       sweepEveryMs: 60_000,
       staleTaskMs: 120_000,
+      uploadTtlMs: 86_400_000,
     });
     expect(c.db).toEqual({ lockTimeoutMs: 10_000 });
     expect(loadConfig({ ...base, QUEUE_PREFIX: 'test-1', DB_LOCK_TIMEOUT_MS: '2500' })).toMatchObject({
@@ -185,6 +186,12 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...base, GOOGLE_CLIENT_ID: 'id' })).toThrow(/GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET/);
   });
 
+  test('UPLOAD_TTL_MS is at least an hour: longer than the longest presigned PUT', () => {
+    expect(loadConfig({ ...base, UPLOAD_TTL_MS: '3600000' }).worker.uploadTtlMs).toBe(3_600_000);
+    expect(() => loadConfig({ ...base, UPLOAD_TTL_MS: '3599999' })).toThrow(/UPLOAD_TTL_MS/);
+    expect(() => loadConfig({ ...base, UPLOAD_TTL_MS: '0' })).toThrow(/UPLOAD_TTL_MS/);
+  });
+
   test('the SSE heartbeat is at most 2 minutes; the stream lifetime can be overridden', () => {
     expect(loadConfig({ ...base, SSE_HEARTBEAT_MS: '120000' }).api.sseHeartbeatMs).toBe(120_000);
     expect(() => loadConfig({ ...base, SSE_HEARTBEAT_MS: '120001' })).toThrow(/SSE_HEARTBEAT_MS/);
@@ -196,5 +203,50 @@ describe('loadConfig', () => {
   test('the auth secret must be at least 32 characters', () => {
     expect(() => loadConfig({ ...base, BETTER_AUTH_SECRET: 'short' })).toThrow(/BETTER_AUTH_SECRET/);
     expect(loadConfig({ ...base, BETTER_AUTH_SECRET: 'x'.repeat(32) }).auth.secret).toBe('x'.repeat(32));
+  });
+});
+
+describe('mail', () => {
+  test('no SMTP_URL — no provider; SMTP_URL with MAIL_FROM — the provider', () => {
+    expect(loadConfig(base).mail).toEqual({ smtpUrl: null, from: null });
+    expect(
+      loadConfig({
+        ...base,
+        SMTP_URL: 'smtps://resend:re_key@smtp.resend.com:465',
+        MAIL_FROM: 'Agent <noreply@example.com>',
+      }).mail,
+    ).toEqual({ smtpUrl: 'smtps://resend:re_key@smtp.resend.com:465', from: 'Agent <noreply@example.com>' });
+  });
+
+  test('half of the pair or a non-SMTP URL is a config error', () => {
+    expect(() => loadConfig({ ...base, SMTP_URL: 'smtp://smtp.example.com:587' })).toThrow('SMTP_URL and MAIL_FROM');
+    expect(() => loadConfig({ ...base, MAIL_FROM: 'noreply@example.com' })).toThrow('SMTP_URL and MAIL_FROM');
+    expect(() => loadConfig({ ...base, SMTP_URL: 'https://api.resend.com', MAIL_FROM: 'a@b.c' })).toThrow('SMTP_URL');
+  });
+});
+
+describe('blank values', () => {
+  test('a blank value is unset for every variable: defaults apply (compose passes optional settings as ${VAR:-})', () => {
+    const c = loadConfig({
+      ...base,
+      WORKER_CONCURRENCY: '',
+      PLANNER_CONTEXT_TOKENS: ' ',
+      LLM_TOOL_CHOICE: '',
+      QUEUE_PREFIX: '',
+      SANDBOX_IMAGE: '',
+      MAX_ACTIVE_TASKS_PER_USER: '',
+      SSE_HEARTBEAT_MS: '',
+    });
+    expect(c.worker.concurrency).toBe(4);
+    expect(c.llm.contextTokens.planner).toBe(64_000);
+    expect(c.llm.toolChoice).toBe('required');
+    expect(c.worker.queuePrefix).toBe('bull');
+    expect(c.sandbox.image).toBe('agent-sandbox:dev');
+    expect(c.limits.maxActiveTasksPerUser).toBe(2);
+    expect(c.api.sseHeartbeatMs).toBe(15_000);
+  });
+
+  test('a blank required variable is reported as missing', () => {
+    expect(() => loadConfig({ ...base, DATABASE_URL: '  ' })).toThrow('DATABASE_URL');
   });
 });

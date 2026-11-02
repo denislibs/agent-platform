@@ -1,0 +1,23 @@
+{
+  "name": "@agent/evals",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@agent/agent": "workspace:*",
+    "@agent/api": "workspace:*",
+    "@agent/composition": "workspace:*",
+    "@agent/core": "workspace:*",
+    "@agent/db": "workspace:*",
+    "@agent/queue": "workspace:*",
+    "@agent/shared": "workspace:*",
+    "@agent/worker": "workspace:*",
+    "bullmq": "5.81.5",
+    "drizzle-orm": "^0.45.1",
+    "zod": "^4"
+  },
+  "devDependencies": {
+    "@agent/testing": "workspace:*",
+    "awilix": "^13"
+  }
+}

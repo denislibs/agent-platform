@@ -1,0 +1,10 @@
+{
+  "title": "Line chart of monthly visitors",
+  "category": "csv",
+  "prompt": "inputs/visitors.csv has the number of website visits per month in 2025. Draw a line chart of visits by month with labelled axes and a title, and save it as outputs/visitors.png. In your answer, name the month with the most visits and give the total number of visits for the year.",
+  "budget": { "modelCalls": 40, "tokens": 300000, "minutes": 15 },
+  "checks": [
+    { "kind": "file", "path": "outputs/visitors.png", "format": "png", "minBytes": 5000 },
+    { "kind": "answer", "contains": [{ "anyOf": ["July", "2025-07"] }, { "number": 30575 }] }
+  ]
+}

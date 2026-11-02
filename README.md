@@ -44,11 +44,40 @@ NODE_ENV=development BETTER_AUTH_URL=http://localhost:5173 bun run api
 bun run worker
 bun run web:dev
 bun run admin:grant you@example.com 10
+bun run admin:delete-user you@example.com   # deletes the user, their tasks and files (S3 objects first)
 ```
 
-Sign in with your email, open the link from the logs (API log without Docker), then grant credits: a user exists
-after the first sign-in, and a new account has none. `NODE_ENV=development` is for local runs only: it turns off
+Sign in with your email, open the link from the logs (API log without Docker; with `SMTP_URL` and `MAIL_FROM` set the
+link is emailed instead), then grant credits: a user exists after the first sign-in, and a new account has none. `NODE_ENV=development` is for local runs only: it turns off
 Better Auth rate limiting and the production warning; the Docker stack leaves it unset.
+
+## Evals
+
+Reference tasks on real models (spec 14): `evals/tasks/<id>/task.json` (prompt, checks, budget) with input files in
+`inputs/`. The runner puts each task through `TaskIntake` and an in-process worker (LiteLLM, Docker sandbox, S3) and
+checks the result: files present and in their format, key facts in files and in the answer.
+
+```bash
+bun run evals --list                         # the task set
+bun run evals                                # every task once (needs infra:up, sandbox:build and LiteLLM in .env)
+bun run evals --only csv-revenue-by-region --repeat 3
+bun run evals --planner qwen-max --executor qwen-turbo --tool-choice auto   # other model roles for this run
+bun run evals --compare evals/results/A/report.json evals/results/B/report.json
+```
+
+- Needs `LITELLM_BASE_URL`, `LITELLM_API_KEY`, `PLANNER_MODEL`, `EXECUTOR_MODEL` in `.env`; research tasks also need
+  `BRAVE_API_KEY` and are `skipped` without it. Not part of `test` or `test:unit`: no automated test calls a real model.
+- Runs use their own database (`agent_evals`, created on first run; `EVALS_DATABASE_URL` to override), queue prefix and
+  sandbox namespace, so the dev worker and the evals never pick up each other's tasks. Outputs land in the dev bucket
+  under `tasks/<taskId>/`.
+- Results: `evals/results/<time>/report.md` (status, checks, model calls, tool calls and errors, tokens, credits, time),
+  `report.json`, and per task `steps.json`, `answer.md`, `outputs/`. The report records the models, `tool_choice`,
+  the commit and a hash of the agent prompts (`packages/agent/src/agent/prompts.ts`) — tune prompts and model roles
+  by comparing reports.
+- A task: `title`, `category` (`research`, `csv`, `scraping`, `document`, `code`), `prompt`, optional `requires: ["search"]`,
+  `reply` (the answer to `ask_user`), `budget` (`modelCalls`, `tokens`, `minutes`; over budget the task is cancelled)
+  and `checks`: `file` (path or glob, `format`, `minBytes`, CSV `columns`, `rows`, `contains`) and `answer` (`contains`).
+  A fact is a substring (case-insensitive), `{ "regex", "flags" }`, `{ "anyOf": [...] }` or `{ "number", "tolerance" }`.
 
 ## UI kit
 
@@ -67,7 +96,7 @@ Usage, themes and the component list: `packages/ui/README.md`.
 
 ```bash
 bun run web:dev             # Vite on http://localhost:5173, /api proxied to the API on :3000
-bun run web:build           # production build in apps/web/dist (nginx serves it in plan 7)
+bun run web:build           # production build in apps/web/dist (docker/nginx/Dockerfile serves it)
 bun run test:web            # component tests (happy-dom in its own process; part of test:unit)
 bun run test:e2e:web        # Playwright: the real API and worker on ScriptedLlm (needs infra:up and Chromium)
 ```
@@ -94,7 +123,8 @@ bun run web:dev
 - The page CSP comes from the Vite dev server (`apps/web/csp.ts`): the inline theme script is allowed by its hash,
   connections go to the app, `S3_PUBLIC_ENDPOINT` and the HMR socket. Dev-server variables: `WEB_PORT`, `WEB_HOST`,
   `WEB_PUBLIC_ORIGIN` (the origin the browser sees), `S3_PUBLIC_ENDPOINT`, `API_PROXY_TARGET`, `VITE_CACHE_DIR`,
-  `WEB_WATCH_POLL=1`.
+  `WEB_WATCH_POLL=1`. The production CSP is generated when the nginx image is built (`apps/web/nginx-csp.ts`: no
+  `'unsafe-inline'`, the theme script hash from the same build); nginx fills in the S3 origin at start.
 - Uploads go from the browser straight to S3. The bucket accepts PUT from the origins added by
   `bun run s3:cors [origin…]` (default: the `BETTER_AUTH_URL` origin and `http://localhost:5173`).
 - The theme is stored in the profile (`PATCH /api/me`); `localStorage` only caches it for the first paint.
@@ -110,7 +140,7 @@ bun run stack:logs          # follow api, worker, web and nginx logs
 The app is served on `http://localhost:8080` only (nginx): `/` goes to the web app (Vite dev server, HMR over
 WebSocket through nginx, sources bind-mounted read-only), `/api/` to the API. The API and web containers are not
 published; the API has no Docker access. It needs `BETTER_AUTH_SECRET` in `.env`.
-Magic links show up in `bun run stack:logs` until a mail provider is configured (backlog).
+Magic links show up in `bun run stack:logs` unless `SMTP_URL` and `MAIL_FROM` are set.
 Grant credits inside the stack: `docker compose -f docker/compose.yml --profile app exec api bun packages/api/src/admin-grant.ts <email> <credits>`.
 
 `.env` for the stack: `BETTER_AUTH_SECRET` (API, `openssl rand -base64 32`) and the four `LITELLM_*` / `*_MODEL` values
@@ -124,14 +154,21 @@ counts), streams SSE unbuffered with a 1 h read timeout, rejects bodies over 1 M
 on `/api/` (the app's CSP comes from Vite).
 `api`, `web` and `nginx` run as non-root users with a read-only root filesystem, no capabilities and `no-new-privileges`.
 The sandbox isolation test (`packages/sandbox/test/docker-security.test.ts`) also probes port 8080 through every host
-name and the `api` / `nginx` containers by IP; run it after `bun run stack:up` for the full check.
+name and the `api` / `nginx` containers by IP; run it after `bun run stack:up` for the full check, with
+`REQUIRE_APP_STACK=1` to fail when the stack is not up instead of skipping those targets.
 
 The worker needs the sandbox image (`bun run sandbox:build`) and `LITELLM_BASE_URL`, `LITELLM_API_KEY`,
 `PLANNER_MODEL`, `EXECUTOR_MODEL` in `.env`: they are optional in the config schema (the API does without them),
 but the worker creates the LiteLLM client at startup and refuses to start when any is missing.
-In Docker the one-shot `migrate` service applies migrations before the worker and the API start; the worker manages
-sandboxes through the host `/var/run/docker.sock` (root-equivalent on the host: development and closed beta only,
-production uses E2B). `bun run backend:build` builds only the `agent-backend:dev` image, shared by `migrate`, `worker` and `api`.
+In Docker the one-shot `migrate` service applies migrations before the worker and the API start. The worker runs as
+the non-root `bun` user with a read-only root and reaches Docker only through `docker-proxy`
+(`docker/docker-proxy.yml`, `wollomatic/socket-proxy`): it allows only the Docker API paths of the sandbox provider
+(no images, builds or system calls) and blocks bind mounts in the container-create bodies it can parse. Volumes with
+bind driver options, `--privileged`, host namespaces and `exec` into any container are not prevented: the proxy narrows
+access against mistakes but is not a security boundary against a compromised worker — closed beta only, production
+uses E2B (see `docs/beta-checklist.md`). On Linux set `DOCKER_GID` to the docker group of the host
+(`getent group docker | cut -d: -f3`). `bun run backend:build` builds the `agent-backend:dev` image (target `worker`),
+shared by `migrate`, `worker`, `api` and `s3-cors`; it carries no ui-kit dependencies.
 
 Docker sandbox tests (`packages/sandbox`) need the image from `bun run sandbox:build`.
 The sandbox isolation (non-root, no capabilities, own network, limits) is for development and the closed beta;
@@ -154,6 +191,34 @@ Sandbox network isolation:
   must report `RESULT: host services are not reachable`. A Linux production host additionally needs
   `DOCKER-USER` egress rules that drop traffic from the sandbox network to the host gateway, the infra networks
   and `169.254.169.254` (cloud metadata).
+
+## Production-like stack
+
+`docker/compose.prod.yml` runs the closed beta on one host: Postgres and Valkey with passwords, Garage with secrets from
+the environment, `migrate` and `s3-cors` once, the API (`agent-api`), the worker (`agent-worker`, non-root, Docker
+through `docker-proxy`) and nginx (`agent-nginx`) with the static web app and the production CSP. Images are tagged
+`IMAGE_TAG` (default `prod`). Only
+loopback ports are published (`APP_PORT`, `GARAGE_PORT`): put a TLS reverse proxy of the host in front of them.
+Every service gets an explicit list of variables from `.env.prod` (copy `.env.prod.example`); required ones stop
+compose when missing. `S3_PUBLIC_ENDPOINT` is an origin only (`https://files.example.com`, no path): the nginx
+image puts its origin into the CSP `connect-src` and refuses to start when it is not `http(s)://host[:port]`.
+
+```bash
+bun run sandbox:build       # the sandbox image (SANDBOX_IMAGE, default agent-sandbox:dev)
+bun run prod:up             # build and start, wait until nginx and the worker are up
+bun run prod:logs
+docker compose --env-file .env.prod -f docker/compose.prod.yml exec api bun run admin:grant you@example.com 10
+docker compose --env-file .env.prod -f docker/compose.prod.yml exec worker bun run admin:delete-user user@example.com
+bun run prod:smoke --browser   # a throwaway copy on :58080 with one-off secrets: API, static app, CSP, logs, proxy, Chromium
+```
+
+`prod:smoke` never reads `.env` or `.env.prod`: it generates one-off secrets, runs as the compose project
+`agent-prod-smoke` with its own volumes (ports 58080 and 53990) and images (`IMAGE_TAG=smoke`: the `:prod` images of a
+beta on the same Docker are not overwritten) and removes the containers, networks and volumes at the end, also on
+failure or Ctrl+C (`--keep` leaves the stack up and prints the `down -v` command); the `:smoke` images stay as a build
+cache.
+
+The beta checklist and the runbook (backups, upgrades, restore, data deletion): `docs/beta-checklist.md`.
 
 ## API
 

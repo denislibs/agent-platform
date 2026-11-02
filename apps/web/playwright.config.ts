@@ -9,6 +9,8 @@ const webOrigin = `http://localhost:${WEB_PORT}`;
 
 export default defineConfig({
   testDir: './e2e',
+  // Проверка продакшен-сборки — своим конфигом против стека из prod:smoke (playwright.prod.config.ts).
+  testIgnore: 'prod-*.spec.ts',
   timeout: 120_000,
   workers: 1,
   reporter: 'line',

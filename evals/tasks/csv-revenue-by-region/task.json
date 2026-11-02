@@ -1,0 +1,22 @@
+{
+  "title": "Revenue by region from a sales CSV",
+  "category": "csv",
+  "prompt": "inputs/sales.csv lists sales: date, region, product, units and unit_price. Compute the total revenue (units × unit_price) for each region and save it to outputs/revenue_by_region.csv with exactly two columns, region and revenue, sorted by revenue from highest to lowest. Then tell me which region earned the most and how much.",
+  "budget": { "modelCalls": 40, "tokens": 300000, "minutes": 15 },
+  "checks": [
+    {
+      "kind": "file",
+      "path": "outputs/revenue_by_region.csv",
+      "format": "csv",
+      "columns": ["region", "revenue"],
+      "rows": { "min": 4, "max": 4 },
+      "contains": [
+        { "number": 2282, "tolerance": 0.01 },
+        { "number": 1893.5, "tolerance": 0.01 },
+        { "number": 1790.5, "tolerance": 0.01 },
+        { "number": 1751, "tolerance": 0.01 }
+      ]
+    },
+    { "kind": "answer", "contains": ["East", { "number": 2282, "tolerance": 0.01 }] }
+  ]
+}

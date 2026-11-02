@@ -295,6 +295,10 @@ export class InMemoryCreditLedger implements CreditLedger {
     if (!user) throw new NotFoundError('user', userId);
     return user.millicredits;
   }
+
+  async spentOnTask(taskId: string): Promise<number> {
+    return this.m.usage.filter(e => e.taskId === taskId).reduce((n, e) => n + e.millicredits, 0);
+  }
 }
 
 export class InMemoryFileRepository implements FileRepository {
@@ -340,5 +344,32 @@ export class InMemoryFileRepository implements FileRepository {
       }
     }
     return n;
+  }
+  async listForUser(userId: string): Promise<FileRecord[]> {
+    return [...this.m.files.values()]
+      .filter(f => f.userId === userId)
+      .toSorted((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      .map(copy);
+  }
+
+  async listUnattachedInputs(opts: { olderThanMs: number; limit?: number }): Promise<FileRecord[]> {
+    const cutoff = this.m.clock.now().getTime() - opts.olderThanMs;
+    return [...this.m.files.values()]
+      .filter(f => f.kind === 'input' && f.taskId === null && f.createdAt.getTime() < cutoff)
+      .toSorted((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      .slice(0, opts.limit ?? 100)
+      .map(copy);
+  }
+
+  /** Транзакции in-memory и так идут по одной: блокировка строки не нужна. */
+  async lockUnattached(id: string): Promise<FileRecord | undefined> {
+    const f = this.m.files.get(id);
+    return f && f.kind === 'input' && f.taskId === null ? copy(f) : undefined;
+  }
+
+  async deleteUnattached(id: string): Promise<boolean> {
+    const f = this.m.files.get(id);
+    if (!f || f.kind !== 'input' || f.taskId !== null) return false;
+    return this.m.files.delete(id);
   }
 }

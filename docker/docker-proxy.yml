@@ -1,0 +1,44 @@
+# Прокси Docker API для воркера (backlog: «Доступ воркера к Docker»): общий для docker/compose.yml и
+# docker/compose.prod.yml (extends). Воркер ходит на tcp://docker-proxy:2375 по внутренней сети docker-api,
+# docker.sock видит только прокси. Разрешены ровно запросы docker CLI провайдера песочниц (packages/sandbox):
+#   HEAD/GET /_ping, GET /version                         — согласование версии API
+#   GET  /containers/json                                  — docker ps (list, ensureNetwork)
+#   GET  /containers/{id|name}/json                        — docker inspect
+#   POST /containers/create, /containers/{id}/start|stop   — docker run -d, start, stop
+#   POST /containers/{id}/attach|wait                      — docker run --rm помощника правил egress
+#   POST /containers/{id}/exec, /exec/{id}/start, GET /exec/{id}/json — docker exec (команды, файлы, browserd)
+#   DELETE /containers/{id}                                — docker rm -f
+#   GET|DELETE /volumes/agent-ws-*, POST /volumes/create   — том /workspace
+#   GET|DELETE /networks/{name}, POST /networks/create     — сеть agent-sandbox
+# Запрещено всё остальное: образы, build, системные вызовы, swarm, plugins, архивы, network connect.
+# -allowbindmountfrom на несуществующую папку отклоняет bind mount в тех телах POST /containers/create, которые прокси
+# умеет разобрать. Не запрещены: том с драйвером local и опциями bind (volume-opt type=none,o=bind), privileged,
+# network/pid host, cap-add и exec в любой контейнер хоста. Это защита от ошибок и случайного доступа, а не граница
+# безопасности: взломанный воркер — root на хосте (docs/beta-checklist.md).
+services:
+  docker-proxy:
+    image: wollomatic/socket-proxy:1.13.2@sha256:ff95d6ff6c27853005ef85eb8f4ab5923dc3d2f1e055f98fb6aeeaceec3fe848
+    # Сокет на хосте — root:docker 660 (на Docker Desktop и OrbStack — root:root): группа сокета, а не root.
+    # На Linux: DOCKER_GID=$(getent group docker | cut -d: -f3).
+    user: '65534:${DOCKER_GID:-0}'
+    command:
+      - -listenip=0.0.0.0
+      - -allowfrom=worker
+      - -allowhealthcheck
+      - -loglevel=WARN
+      - -allowbindmountfrom=/nonexistent/agent-no-host-binds
+      - -allowHEAD=/_ping
+      - -allowGET=(?:/_ping|/v1\.[0-9]+/version|/v1\.[0-9]+/containers/json|/v1\.[0-9]+/containers/[a-zA-Z0-9_.-]+/json|/v1\.[0-9]+/exec/[0-9a-f]{64}/json|/v1\.[0-9]+/volumes/agent-ws-[a-zA-Z0-9_.-]+|/v1\.[0-9]+/networks/[a-zA-Z0-9_.-]+)
+      - -allowPOST=(?:/v1\.[0-9]+/containers/create|/v1\.[0-9]+/containers/[a-zA-Z0-9_.-]+/(?:start|stop|wait|attach|exec)|/v1\.[0-9]+/exec/[0-9a-f]{64}/start|/v1\.[0-9]+/volumes/create|/v1\.[0-9]+/networks/create)
+      - -allowDELETE=(?:/v1\.[0-9]+/containers/[a-zA-Z0-9_.-]+|/v1\.[0-9]+/volumes/agent-ws-[a-zA-Z0-9_.-]+|/v1\.[0-9]+/networks/[a-zA-Z0-9_.-]+)
+    volumes: ['/var/run/docker.sock:/var/run/docker.sock:ro']
+    networks: [docker-api]
+    healthcheck:
+      test: ['CMD', '/healthcheck']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    read_only: true
+    cap_drop: ['ALL']
+    security_opt: ['no-new-privileges:true']
+    restart: unless-stopped

@@ -9,3 +9,5 @@ packages/ui/showcase/dist
 apps/web/dist
 apps/web/test-results
 apps/web/playwright-report
+evals/results
+backups

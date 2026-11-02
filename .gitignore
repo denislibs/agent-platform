@@ -1,5 +1,6 @@
 node_modules/
 .env
+.env.prod
 .env.local
 *.log
 .DS_Store
@@ -8,3 +9,6 @@ packages/ui/showcase/dist/
 apps/web/dist/
 apps/web/test-results/
 apps/web/playwright-report/
+evals/results/
+# Бэкапы беты лежат вне репозитория (BACKUP_DIR, docs/beta-checklist.md); это — страховка
+backups/
