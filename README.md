@@ -44,10 +44,11 @@ NODE_ENV=development BETTER_AUTH_URL=http://localhost:5173 bun run api
 bun run worker
 bun run web:dev
 bun run admin:grant you@example.com 10
+bun run admin:delete-user you@example.com   # deletes the user, their tasks and files (S3 objects first)
 ```
 
-Sign in with your email, open the link from the logs (API log without Docker), then grant credits: a user exists
-after the first sign-in, and a new account has none. `NODE_ENV=development` is for local runs only: it turns off
+Sign in with your email, open the link from the logs (API log without Docker; with `SMTP_URL` and `MAIL_FROM` set the
+link is emailed instead), then grant credits: a user exists after the first sign-in, and a new account has none. `NODE_ENV=development` is for local runs only: it turns off
 Better Auth rate limiting and the production warning; the Docker stack leaves it unset.
 
 ## Evals
@@ -139,7 +140,7 @@ bun run stack:logs          # follow api, worker, web and nginx logs
 The app is served on `http://localhost:8080` only (nginx): `/` goes to the web app (Vite dev server, HMR over
 WebSocket through nginx, sources bind-mounted read-only), `/api/` to the API. The API and web containers are not
 published; the API has no Docker access. It needs `BETTER_AUTH_SECRET` in `.env`.
-Magic links show up in `bun run stack:logs` until a mail provider is configured (backlog).
+Magic links show up in `bun run stack:logs` unless `SMTP_URL` and `MAIL_FROM` are set.
 Grant credits inside the stack: `docker compose -f docker/compose.yml --profile app exec api bun packages/api/src/admin-grant.ts <email> <credits>`.
 
 `.env` for the stack: `BETTER_AUTH_SECRET` (API, `openssl rand -base64 32`) and the four `LITELLM_*` / `*_MODEL` values
