@@ -52,6 +52,9 @@ export interface MenuProps {
   items: readonly MenuEntry[];
   placement?: Placement;
   width?: number;
+  /** Дополнительные классы панели меню; склеиваются с базовыми. */
+  class?: string;
+  className?: string;
 }
 
 const ITEM_SELECTOR = '[role="menuitem"], [role="menuitemcheckbox"]';
@@ -61,7 +64,7 @@ const isDisabled = (el: Element) => el.getAttribute('aria-disabled') === 'true';
  * WAI-ARIA Menu Button: Enter, Space и ↓ открывают меню с фокусом на первом пункте, ↑ — на последнем;
  * стрелки по кругу, Home/End; Esc и выбор возвращают фокус на кнопку; Tab закрывает меню.
  */
-export function Menu({ trigger, items, placement = 'bottom-start', width }: MenuProps) {
+export function Menu({ trigger, items, placement = 'bottom-start', width, class: classProp, className }: MenuProps) {
   const base = useId();
   const triggerId = `${base}-trigger`;
   const menuId = `${base}-menu`;
@@ -147,7 +150,7 @@ export function Menu({ trigger, items, placement = 'bottom-start', width }: Menu
             role="menu"
             aria-labelledby={triggerId}
             tabIndex={-1}
-            class="ui-floating ui-menu"
+            class={cx('ui-floating ui-menu', className, classProp)}
             data-state={state}
             style={{ ...FLOATING_STYLE, width }}
             onKeyDown={onMenuKeyDown}

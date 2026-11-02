@@ -1,9 +1,9 @@
 import { expect, mock, test } from 'bun:test';
-import { fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'preact/hooks';
 import { Copy, Pencil, Trash2 } from 'lucide-preact';
-import { Button, IconButton, Menu, Popover, Select, Tooltip, type MenuEntry } from '../src/index.ts';
+import { Button, DURATION_MS, IconButton, Menu, Popover, Select, Tooltip, type MenuEntry } from '../src/index.ts';
 import { gone, trackGlobalListeners } from './helpers.ts';
 
 function TaskMenu({ onRename, onDelete }: { onRename(): void; onDelete(): void }) {
@@ -282,4 +282,206 @@ test('unmounting open layers removes every document and window listener', async 
   } finally {
     listeners.restore();
   }
+});
+
+test('Tooltip does not describe its anchor with text that repeats the accessible name', async () => {
+  render(
+    <>
+      <Tooltip content="Copy" delay={0}>
+        <IconButton icon={Copy} label="Copy" />
+      </Tooltip>
+      <Tooltip content="Save" delay={0}>
+        <Button>Save</Button>
+      </Tooltip>
+    </>,
+  );
+  const copy = screen.getByRole('button', { name: 'Copy' });
+  copy.focus();
+  expect((await screen.findByRole('tooltip')).textContent).toBe('Copy');
+  expect(copy.hasAttribute('aria-describedby')).toBe(false);
+  const save = screen.getByRole('button', { name: 'Save' });
+  save.focus();
+  await waitFor(() => {
+    if (screen.queryByRole('tooltip')?.textContent !== 'Save') throw new Error('no tooltip yet');
+  });
+  expect(save.hasAttribute('aria-describedby')).toBe(false);
+});
+
+const has = (el: Element, ...names: string[]) => names.every(name => el.classList.contains(name));
+
+test('Menu, Select, Popover and Tooltip merge class and className into their own classes', async () => {
+  render(
+    <>
+      <Menu
+        class="extra-a"
+        className="extra-b"
+        items={[{ kind: 'item', id: 'one', label: 'One', onSelect: () => {} }]}
+        trigger={props => <Button {...props}>Open menu</Button>}
+      />
+      <Select
+        class="extra-a"
+        className="extra-b"
+        label="Pick"
+        value={undefined}
+        onChange={() => {}}
+        options={[{ value: 'a', label: 'A' }]}
+      />
+      <Popover
+        class="extra-a"
+        className="extra-b"
+        label="Panel"
+        trigger={props => <Button {...props}>Open panel</Button>}
+      >
+        Body
+      </Popover>
+      <Tooltip class="extra-a" className="extra-b" content="Hint" delay={0}>
+        <Button>Hinted</Button>
+      </Tooltip>
+    </>,
+  );
+  expect(
+    has(screen.getByRole('combobox', { name: 'Pick' }), 'ui-input', 'ui-select-trigger', 'extra-a', 'extra-b'),
+  ).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: 'Open menu' }));
+  expect(has(screen.getByRole('menu'), 'ui-floating', 'ui-menu', 'extra-a', 'extra-b')).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: 'Open panel' }));
+  expect(has(screen.getByRole('dialog', { name: 'Panel' }), 'ui-floating', 'ui-popover', 'extra-a', 'extra-b')).toBe(
+    true,
+  );
+  screen.getByRole('button', { name: 'Hinted' }).focus();
+  expect(has(await screen.findByRole('tooltip'), 'ui-tooltip', 'extra-a', 'extra-b')).toBe(true);
+});
+
+function CreditsPopover() {
+  return (
+    <>
+      <Popover label="Credits" trigger={props => <Button {...props}>Credits</Button>}>
+        <button type="button">First</button>
+        <button type="button">Second</button>
+      </Popover>
+      <button type="button">After</button>
+    </>
+  );
+}
+
+test('Tab past the last control or Shift+Tab before the first closes the Popover and returns focus', async () => {
+  const user = userEvent.setup();
+  render(<CreditsPopover />);
+  const trigger = screen.getByRole('button', { name: 'Credits' });
+  await user.click(trigger);
+  expect(document.activeElement).toBe(screen.getByRole('dialog', { name: 'Credits' }));
+  await user.tab();
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'First' }));
+  await user.tab();
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Second' }));
+  await user.tab();
+  expect(trigger.getAttribute('aria-expanded')).toBe('false');
+  expect(document.activeElement).toBe(trigger);
+
+  await user.click(trigger);
+  await user.tab();
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'First' }));
+  await user.tab({ shift: true });
+  expect(trigger.getAttribute('aria-expanded')).toBe('false');
+  expect(document.activeElement).toBe(trigger);
+});
+
+test('focus moved out of the Popover by other means closes it without pulling focus back', async () => {
+  const user = userEvent.setup();
+  render(<CreditsPopover />);
+  const trigger = screen.getByRole('button', { name: 'Credits' });
+  await user.click(trigger);
+  const after = screen.getByRole('button', { name: 'After' });
+  act(() => after.focus());
+  expect(trigger.getAttribute('aria-expanded')).toBe('false');
+  expect(document.activeElement).toBe(after);
+});
+
+test('Select returns focus to the combobox when Escape closes it', () => {
+  render(<ModelSelect onChange={() => {}} />);
+  const combobox = screen.getByRole('combobox', { name: 'Default model' });
+  fireEvent.click(combobox);
+  combobox.blur();
+  fireEvent.keyDown(document, { key: 'Escape' });
+  expect(combobox.getAttribute('aria-expanded')).toBe('false');
+  expect(document.activeElement).toBe(combobox);
+});
+
+test('Menu arrows from the menu container go to the first or the last item', async () => {
+  const user = userEvent.setup();
+  render(<TaskMenu onRename={() => {}} onDelete={() => {}} />);
+  await user.click(screen.getByRole('button', { name: 'Task actions' }));
+  const menu = screen.getByRole('menu');
+  menu.focus();
+  await user.keyboard('{ArrowUp}');
+  expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Delete' }));
+  menu.focus();
+  await user.keyboard('{ArrowDown}');
+  expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Rename R' }));
+});
+
+/** Таймеры с заданной задержкой, которые ещё не сработали и не отменены. */
+function trackTimers(delay: number) {
+  const realSet = globalThis.setTimeout;
+  const realClear = globalThis.clearTimeout;
+  const pending = new Set<unknown>();
+  globalThis.setTimeout = ((handler: () => void, ms?: number, ...args: unknown[]) => {
+    if (ms !== delay) return realSet(handler, ms, ...args);
+    const id = realSet(() => {
+      pending.delete(id);
+      handler();
+    }, ms);
+    pending.add(id);
+    return id;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = ((id?: Parameters<typeof clearTimeout>[0]) => {
+    pending.delete(id);
+    realClear(id);
+  }) as typeof clearTimeout;
+  return {
+    pending: () => pending.size,
+    restore() {
+      globalThis.setTimeout = realSet;
+      globalThis.clearTimeout = realClear;
+    },
+  };
+}
+
+test('unmounting a Tooltip while its show delay runs cancels the timer', async () => {
+  const delay = 777;
+  const timers = trackTimers(delay);
+  try {
+    const view = render(
+      <Tooltip content="Copies the task link" delay={delay}>
+        <IconButton icon={Copy} label="Copy" />
+      </Tooltip>,
+    );
+    screen.getByRole('button', { name: 'Copy' }).focus();
+    await waitFor(() => {
+      if (timers.pending() === 0) throw new Error('timer not scheduled yet');
+    });
+    view.unmount();
+    expect(timers.pending()).toBe(0);
+  } finally {
+    timers.restore();
+  }
+});
+
+test('reopening a layer during its exit animation keeps it mounted and open', async () => {
+  const user = userEvent.setup();
+  render(<TaskMenu onRename={() => {}} onDelete={() => {}} />);
+  const trigger = screen.getByRole('button', { name: 'Task actions' });
+  trigger.focus();
+  await user.keyboard('{Enter}');
+  const menu = screen.getByRole('menu');
+  await waitFor(() => {
+    if (menu.dataset.state !== 'open') throw new Error('not open yet');
+  });
+  await user.keyboard('{Escape}');
+  expect(menu.dataset.state).toBe('closed');
+  await user.keyboard('{Enter}');
+  await new Promise(resolve => setTimeout(resolve, DURATION_MS.fast + 50));
+  expect(screen.getByRole('menu')).toBe(menu);
+  expect(menu.dataset.state).toBe('open');
+  expect(trigger.getAttribute('aria-expanded')).toBe('true');
 });

@@ -29,6 +29,9 @@ export interface SelectProps<V extends string> {
   icon?: LucideIcon;
   size?: 'sm' | 'md';
   disabled?: boolean;
+  /** Дополнительные классы кнопки-комбобокса; склеиваются с базовыми. */
+  class?: string;
+  className?: string;
 }
 
 /**
@@ -45,6 +48,8 @@ export function Select<V extends string>({
   icon: Icon,
   size = 'md',
   disabled,
+  class: classProp,
+  className,
 }: SelectProps<V>) {
   const base = useId();
   const listId = `${base}-listbox`;
@@ -58,7 +63,11 @@ export function Select<V extends string>({
   useFloating({ open, anchor: triggerRef, floating: listRef, matchWidth: true });
   useDismiss({
     open,
-    onDismiss: () => setOpen(false),
+    // Esc возвращает фокус на кнопку (он мог уйти с неё), клик снаружи оставляет его там, куда кликнули.
+    onDismiss: reason => {
+      setOpen(false);
+      if (reason === 'escape') triggerRef.current?.focus();
+    },
     inside: [triggerRef, listRef],
   });
 
@@ -115,7 +124,7 @@ export function Select<V extends string>({
         ref={triggerRef}
         type="button"
         role="combobox"
-        class={cx('ui-input', size === 'sm' && 'ui-input--sm', 'ui-select-trigger')}
+        class={cx('ui-input', size === 'sm' && 'ui-input--sm', 'ui-select-trigger', className, classProp)}
         data-placeholder={selected ? undefined : ''}
         aria-label={label}
         aria-haspopup="listbox"

@@ -22,6 +22,8 @@ test('nextIndex wraps around, honours Home/End and skips disabled items', () => 
   expect(nextIndex('End', 0, 3, i => i === 2, 'vertical')).toBe(1);
   expect(nextIndex('Home', 2, 3, none, 'vertical')).toBe(0);
   expect(nextIndex('ArrowDown', 0, 3, none, 'horizontal')).toBeNull();
+  expect(nextIndex('ArrowUp', -1, 3, none, 'vertical')).toBe(2);
+  expect(nextIndex('ArrowDown', -1, 3, none, 'vertical')).toBe(0);
   expect(nextIndex('ArrowRight', 0, 2, () => true, 'horizontal')).toBeNull();
 });
 

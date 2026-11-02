@@ -16,7 +16,8 @@ export function nextIndex(
   let start: number;
   let step: number;
   if (key === forward) [start, step] = [current + 1, 1];
-  else if (key === backward) [start, step] = [current - 1, -1];
+  // current < 0 — ничего не выбрано (фокус на контейнере): «назад» начинает с последнего.
+  else if (key === backward) [start, step] = [current < 0 ? count - 1 : current - 1, -1];
   else if (key === 'Home') [start, step] = [0, 1];
   else if (key === 'End') [start, step] = [count - 1, -1];
   else return null;
