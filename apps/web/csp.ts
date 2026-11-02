@@ -22,23 +22,50 @@ export interface CspOptions {
   hmrOrigin: string;
 }
 
-/**
- * CSP приложения в разработке (заметки плана 4b и 5): скрипты — только свои и inline-скрипт темы по хэшу;
- * соединения — свой origin, S3 и HMR. `style-src 'unsafe-inline'` нужен dev-серверу Vite (CSS приходит тегами
- * <style>); стили, которые ставят Floating UI и Preact через element.style, CSP не ограничивает. Продакшен-сборка
- * (план 7) отдаёт CSS файлами и обходится без 'unsafe-inline'.
- */
-export function contentSecurityPolicy({ s3Endpoint, hmrOrigin }: CspOptions): string {
+/** Общие директивы CSP приложения; отличаются только соединения и inline-стили. */
+function policy({ connect, inlineStyles }: { connect: readonly string[]; inlineStyles: boolean }): string {
   return [
     "default-src 'self'",
     `script-src 'self' ${scriptHash(themeBootScript)}`,
-    "style-src 'self' 'unsafe-inline'",
+    inlineStyles ? "style-src 'self' 'unsafe-inline'" : "style-src 'self'",
     "img-src 'self' data:",
     "font-src 'self'",
-    `connect-src 'self' ${new URL(s3Endpoint).origin} ${hmrOrigin}`,
+    `connect-src 'self' ${connect.join(' ')}`,
     "object-src 'none'",
     "base-uri 'none'",
     "form-action 'none'",
     "frame-ancestors 'none'",
   ].join('; ');
+}
+
+/**
+ * CSP приложения в разработке (заметки плана 4b и 5): скрипты — только свои и inline-скрипт темы по хэшу;
+ * соединения — свой origin, S3 и HMR. `style-src 'unsafe-inline'` нужен dev-серверу Vite (CSS приходит тегами
+ * <style>); стили, которые ставят Floating UI и Preact через element.style, CSP не ограничивает.
+ */
+export function contentSecurityPolicy({ s3Endpoint, hmrOrigin }: CspOptions): string {
+  return policy({ connect: [new URL(s3Endpoint).origin, hmrOrigin], inlineStyles: true });
+}
+
+/**
+ * CSP продакшен-сборки (nginx, план 7): сборка отдаёт CSS файлами, поэтому без 'unsafe-inline'; HMR нет.
+ * s3Origin — origin S3 для браузера или переменная шаблона nginx (S3_ORIGIN_VARIABLE).
+ */
+export function productionContentSecurityPolicy(s3Origin: string): string {
+  return policy({ connect: [s3Origin], inlineStyles: false });
+}
+
+/** Переменная шаблона nginx: origin S3 подставляет envsubst при старте контейнера (docker/nginx/Dockerfile). */
+export const S3_ORIGIN_VARIABLE = '${S3_PUBLIC_ORIGIN}';
+
+/**
+ * Шаблон nginx с CSP продакшена (csp.conf.template): его пишет apps/web/nginx-csp.ts при сборке образа, поэтому
+ * хэш скрипта темы всегда посчитан из того текста, что попал в index.html этой же сборки.
+ */
+export function nginxCspTemplate(): string {
+  return [
+    '# Сгенерировано apps/web/nginx-csp.ts при сборке образа: хэш скрипта темы — из его текста.',
+    `add_header Content-Security-Policy "${productionContentSecurityPolicy(S3_ORIGIN_VARIABLE)}" always;`,
+    '',
+  ].join('\n');
 }

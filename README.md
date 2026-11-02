@@ -95,7 +95,7 @@ Usage, themes and the component list: `packages/ui/README.md`.
 
 ```bash
 bun run web:dev             # Vite on http://localhost:5173, /api proxied to the API on :3000
-bun run web:build           # production build in apps/web/dist (nginx serves it in plan 7)
+bun run web:build           # production build in apps/web/dist (docker/nginx/Dockerfile serves it)
 bun run test:web            # component tests (happy-dom in its own process; part of test:unit)
 bun run test:e2e:web        # Playwright: the real API and worker on ScriptedLlm (needs infra:up and Chromium)
 ```
@@ -122,7 +122,8 @@ bun run web:dev
 - The page CSP comes from the Vite dev server (`apps/web/csp.ts`): the inline theme script is allowed by its hash,
   connections go to the app, `S3_PUBLIC_ENDPOINT` and the HMR socket. Dev-server variables: `WEB_PORT`, `WEB_HOST`,
   `WEB_PUBLIC_ORIGIN` (the origin the browser sees), `S3_PUBLIC_ENDPOINT`, `API_PROXY_TARGET`, `VITE_CACHE_DIR`,
-  `WEB_WATCH_POLL=1`.
+  `WEB_WATCH_POLL=1`. The production CSP is generated when the nginx image is built (`apps/web/nginx-csp.ts`: no
+  `'unsafe-inline'`, the theme script hash from the same build); nginx fills in the S3 origin at start.
 - Uploads go from the browser straight to S3. The bucket accepts PUT from the origins added by
   `bun run s3:cors [origin…]` (default: the `BETTER_AUTH_URL` origin and `http://localhost:5173`).
 - The theme is stored in the profile (`PATCH /api/me`); `localStorage` only caches it for the first paint.
