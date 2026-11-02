@@ -99,6 +99,9 @@
 .ui-progress--danger::before {
   background: var(--danger);
 }
+.ui-progress--info::before {
+  background: var(--info);
+}
 .ui-progress--indeterminate::before {
   width: 40%;
   animation: ui-indeterminate 1.4s var(--ease-standard) infinite;

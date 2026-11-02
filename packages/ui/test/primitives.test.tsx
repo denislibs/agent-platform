@@ -2,7 +2,19 @@ import { expect, mock, test } from 'bun:test';
 import { fireEvent, render, screen } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 import { Copy } from 'lucide-preact';
-import { Alert, Avatar, AvatarGroup, Badge, Button, Chip, IconButton, initials, Progress, Tag } from '../src/index.ts';
+import {
+  Alert,
+  Avatar,
+  AvatarGroup,
+  Badge,
+  Button,
+  Chip,
+  IconButton,
+  initials,
+  Progress,
+  Spinner,
+  Tag,
+} from '../src/index.ts';
 
 test('Button maps variant and size to ui-btn classes and defaults to type="button"', () => {
   const submit = mock((e: Event) => e.preventDefault());
@@ -75,7 +87,7 @@ test('Avatar is an image named after the person; AvatarGroup collapses the rest 
       />
     </>,
   );
-  expect(screen.getByRole('img', { name: 'Ada Lovelace' }).textContent).toBe('AL');
+  expect(screen.getByRole('img', { name: 'Ada Lovelace, online' }).textContent).toBe('AL');
   const group = screen.getByRole('group', { name: 'Members' });
   expect(group.querySelectorAll('.ui-avatar')).toHaveLength(4);
   expect(screen.getByRole('img', { name: '2 more' }).textContent).toBe('+2');
@@ -137,4 +149,77 @@ test('Alert is announced only when live: danger as alert, info as status', () =>
   expect(screen.getByRole('alert').textContent).toContain('Sandbox failed to start');
   expect(screen.getByRole('status').textContent).toContain('Working');
   expect(screen.getByText('Static').closest('.ui-alert')?.hasAttribute('role')).toBe(false);
+});
+
+test('Button and IconButton merge class and className with the base classes', () => {
+  render(
+    <>
+      <Button className="from-classname">A</Button>
+      <Button class="from-class">B</Button>
+      <IconButton icon={Copy} label="C" className="extra" />
+      <IconButton icon={Copy} label="D" class="extra2" />
+    </>,
+  );
+  expect(screen.getByRole('button', { name: 'A' }).className).toBe('ui-btn ui-btn--secondary from-classname');
+  expect(screen.getByRole('button', { name: 'B' }).className).toBe('ui-btn ui-btn--secondary from-class');
+  expect(screen.getByRole('button', { name: 'C' }).className).toBe(
+    'ui-btn ui-btn--ghost ui-btn--sm ui-btn--icon extra',
+  );
+  expect(screen.getByRole('button', { name: 'D' }).className).toBe(
+    'ui-btn ui-btn--ghost ui-btn--sm ui-btn--icon extra2',
+  );
+});
+
+test('a loading submit Button does not submit its form', () => {
+  const submit = mock((e: Event) => e.preventDefault());
+  render(
+    <form onSubmit={submit}>
+      <Button type="submit" loading>
+        Send
+      </Button>
+    </form>,
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+  expect(submit).not.toHaveBeenCalled();
+});
+
+test('Avatar falls back to initials when the image fails and retries when src changes', () => {
+  const { rerender } = render(<Avatar name="Ada Lovelace" src="/broken.png" />);
+  const avatar = screen.getByRole('img', { name: 'Ada Lovelace' });
+  const img = avatar.querySelector('img')!;
+  fireEvent.error(img);
+  expect(avatar.querySelector('img')).toBeNull();
+  expect(avatar.textContent).toBe('AL');
+  rerender(<Avatar name="Ada Lovelace" src="/other.png" />);
+  expect(avatar.querySelector('img')?.getAttribute('src')).toBe('/other.png');
+});
+
+test('Avatar announces online state and AvatarGroup tolerates duplicate names', () => {
+  render(
+    <>
+      <Avatar name="Ada" online />
+      <AvatarGroup label="Team" people={[{ name: 'Sam' }, { name: 'Sam' }]} />
+    </>,
+  );
+  expect(screen.getByRole('img', { name: 'Ada, online' })).toBeTruthy();
+  expect(screen.getByRole('group', { name: 'Team' }).querySelectorAll('.ui-avatar')).toHaveLength(2);
+});
+
+test('Spinner with a label has visually hidden text', () => {
+  render(<Spinner label="Loading data" />);
+  const status = screen.getByRole('status', { name: 'Loading data' });
+  expect(status.querySelector('.ui-sr-only')?.textContent).toBe('Loading data');
+});
+
+test('Progress supports the info tone and treats NaN as zero', () => {
+  render(
+    <>
+      <Progress label="Info" value={2} max={4} tone="info" />
+      <Progress label="Broken" value={Number.NaN} />
+    </>,
+  );
+  expect(screen.getByRole('progressbar', { name: 'Info' }).className).toBe('ui-progress ui-progress--info');
+  const broken = screen.getByRole('progressbar', { name: 'Broken' });
+  expect(broken.getAttribute('aria-valuenow')).toBe('0');
+  expect(broken.style.getPropertyValue('--val')).toBe('0%');
 });

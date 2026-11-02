@@ -1,4 +1,5 @@
 import type { ComponentChildren } from 'preact';
+import { useState } from 'preact/hooks';
 import type { LucideIcon } from 'lucide-preact';
 import { cx } from '../lib/cx.ts';
 
@@ -63,13 +64,20 @@ export interface AvatarProps {
 }
 
 export function Avatar({ name, src, size = 'md', square = false, online = false }: AvatarProps) {
+  // Адрес, который не загрузился: при смене src флаг сам перестаёт совпадать, и картинка пробуется заново.
+  const [failedSrc, setFailedSrc] = useState<string>();
+  const showImage = src !== undefined && src !== '' && failedSrc !== src;
   return (
     <span
       class={cx('ui-avatar', size !== 'md' && `ui-avatar--${size}`, square && 'ui-avatar--square')}
       role="img"
-      aria-label={name}
+      aria-label={online ? `${name}, online` : name}
     >
-      {src ? <img src={src} alt="" /> : <span aria-hidden="true">{initials(name)}</span>}
+      {showImage ? (
+        <img src={src} alt="" onError={() => setFailedSrc(src)} />
+      ) : (
+        <span aria-hidden="true">{initials(name)}</span>
+      )}
       {online && <span class="ui-avatar__status" />}
     </span>
   );
@@ -88,8 +96,9 @@ export function AvatarGroup({ people, max = 3, size = 'sm', label }: AvatarGroup
   const rest = people.length - shown.length;
   return (
     <span class="ui-avatar-group" role="group" aria-label={label}>
-      {shown.map(person => (
-        <Avatar key={person.name} name={person.name} src={person.src} size={size} />
+      {shown.map((person, i) => (
+        // Имена могут повторяться, поэтому ключ включает позицию.
+        <Avatar key={`${i}-${person.name}`} name={person.name} src={person.src} size={size} />
       ))}
       {rest > 0 && (
         <span class={cx('ui-avatar', size !== 'md' && `ui-avatar--${size}`)} role="img" aria-label={`${rest} more`}>
@@ -114,7 +123,9 @@ export function Spinner({ size = 'md', tone = 'neutral', label }: SpinnerProps) 
       role={label ? 'status' : undefined}
       aria-label={label}
       aria-hidden={label ? undefined : true}
-    />
+    >
+      {label && <span class="ui-sr-only">{label}</span>}
+    </span>
   );
 }
 
@@ -152,7 +163,8 @@ export function Progress({
   size = 'md',
   indeterminate = false,
 }: ProgressProps) {
-  const clamped = Math.min(Math.max(value, 0), max);
+  // NaN (например, из пустого деления) считается нулём, а не ломает aria-valuenow.
+  const clamped = Number.isNaN(value) ? 0 : Math.min(Math.max(value, 0), max);
   const percent = max > 0 ? (clamped / max) * 100 : 0;
   return (
     <div

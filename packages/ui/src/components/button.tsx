@@ -27,7 +27,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     pill = false,
     loading = false,
     type = 'button',
-    class: className,
+    class: classProp,
+    className,
     onClick,
     children,
     ...rest
@@ -46,6 +47,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
         block && 'ui-btn--block',
         pill && 'ui-btn--pill',
         className,
+        classProp,
       )}
       aria-busy={loading || undefined}
       onClick={event => {
@@ -69,7 +71,7 @@ export interface IconButtonProps extends Omit<ButtonProps, 'icon' | 'children' |
 }
 
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
-  { icon, label, variant = 'ghost', size = 'sm', class: className, ...rest },
+  { icon, label, variant = 'ghost', size = 'sm', class: classProp, className, ...rest },
   ref,
 ) {
   return (
@@ -80,7 +82,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
       variant={variant}
       size={size}
       aria-label={label}
-      class={cx('ui-btn--icon', className)}
+      class={cx('ui-btn--icon', className, classProp)}
     />
   );
 });

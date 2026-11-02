@@ -52,11 +52,14 @@ export function ToastProvider({
 }: ToastProviderProps) {
   const [toasts, setToasts] = useState<ToastEntry[]>([]);
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  // Тосты, которые ещё открыты: повторный или чужой dismiss не взводит лишних таймеров.
+  const open = useRef(new Set<string>());
   const reduced = useReducedMotion();
   const exit = reduced ? 0 : exitMs;
 
   const dismiss = useCallback(
     (id: string) => {
+      if (!open.current.delete(id)) return;
       clearTimeout(timers.current.get(id));
       setToasts(list => list.map(t => (t.id === id ? { ...t, closing: true } : t)));
       timers.current.set(
@@ -73,6 +76,7 @@ export function ToastProvider({
   const show = useCallback(
     (options: ToastOptions) => {
       const id = `ui-toast-${++nextId}`;
+      open.current.add(id);
       setToasts(list => [...list, { ...options, id, closing: false }]);
       const ms = options.duration ?? duration;
       if (Number.isFinite(ms))
