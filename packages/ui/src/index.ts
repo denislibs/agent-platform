@@ -24,3 +24,8 @@ export { tabbables, useFocusTrap, useScrollLock } from './lib/focus.ts';
 export { useHotkey, type HotkeyOptions } from './lib/hotkey.ts';
 export * from './components/dialog.tsx';
 export * from './components/command.tsx';
+export * from './agent/format.ts';
+export * from './agent/composer.tsx';
+export * from './agent/message.tsx';
+export * from './agent/run.tsx';
+export * from './agent/computer.tsx';
