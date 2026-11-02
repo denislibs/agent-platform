@@ -109,8 +109,10 @@ function expectInert(root: Element) {
     for (const attr of el.getAttributeNames()) expect(ALLOWED_ATTRS.has(attr)).toBe(true);
   }
   for (const a of root.querySelectorAll('a')) {
-    expect(a.getAttribute('href')).toMatch(/^(?:https?:\/\/|mailto:)/);
-    expect(a.getAttribute('target')).toBe('_blank');
+    const href = a.getAttribute('href')!;
+    expect(href).toMatch(/^(?:https?:\/\/|mailto:)/);
+    // Почта открывается почтовым клиентом, а не новой вкладкой.
+    expect(a.getAttribute('target')).toBe(href.startsWith('mailto:') ? null : '_blank');
     expect(a.getAttribute('rel')).toBe('noopener noreferrer nofollow');
   }
 }
@@ -213,6 +215,13 @@ describe('Markdown hardening', () => {
     expectInert(root);
   });
 
+  test('mailto links do not open a new tab', () => {
+    const a = show('[write](mailto:ada@example.com)').querySelector('a')!;
+    expect(a.getAttribute('href')).toBe('mailto:ada@example.com');
+    expect(a.hasAttribute('target')).toBe(false);
+    expect(a.getAttribute('rel')).toBe('noopener noreferrer nofollow');
+  });
+
   test('a code fence language is plain text in the head, the code is plain text in pre > code', () => {
     const root = show('```"><img src=x onerror=alert(1)>\n<script>alert(1)</script>\n```');
     expect(root.querySelector('.ui-codeblock__head')?.textContent).toBe('"><img');
@@ -257,13 +266,14 @@ describe('Markdown hardening', () => {
   });
 
   test.each([
-    ['a long answer', '## Part\n\nSome **bold** text with [a link](https://a.test) and `code`.\n\n'.repeat(5_000)],
-    ['unclosed brackets', '[a]('.repeat(20_000)],
-    ['unclosed emphasis', '*a _b '.repeat(20_000)],
-    ['angle brackets', '<'.repeat(50_000)],
-    ['backticks', '`a``'.repeat(20_000)],
-    ['entities', '&#x6A;'.repeat(50_000)],
-    ['table cells', '|a'.repeat(5_000) + '|\n' + '|-'.repeat(5_000) + '|\n' + '|x'.repeat(5_000) + '|'],
+    // Внутри пределов: проходит через парсер.
+    ['a long answer', '## Part\n\nSome **bold** text with [a link](https://a.test) and `code`.\n\n'.repeat(450)],
+    ['unclosed brackets', '[a]('.repeat(1_000)],
+    ['unclosed emphasis', '*a _b '.repeat(1_000)],
+    ['angle brackets', '<'.repeat(1_000)],
+    ['backticks', '`a`` '.repeat(9_000)],
+    ['entities', '&#x6A; '.repeat(7_000)],
+    ['table cells', '|a'.repeat(4_000) + '|\n' + '|-'.repeat(4_000) + '|\n' + '|x'.repeat(4_000) + '|'],
     // Замеренные сверхлинейные формы micromark (без пределов — от секунд до минут).
     ['alternating emphasis delimiters', '*_'.repeat(50_000)],
     ['setext headings', 'a\n=\n'.repeat(25_000)],
@@ -279,6 +289,30 @@ describe('Markdown hardening', () => {
     const started = performance.now();
     expectInert(show(input));
     expect(performance.now() - started).toBeLessThan(3_000);
+  });
+
+  // Формы из ревью безопасности: внутри прежних пределов парсер тратил на них секунды (`]` и `<` не считались).
+  test.each([
+    ['closing brackets', 'a' + ']'.repeat(49_000)],
+    ['opening then closing brackets', '['.repeat(999) + ']'.repeat(49_000)],
+    ['processing instructions', 'a ' + '<?'.repeat(24_000)],
+    ['declarations', 'a ' + '<!A'.repeat(16_000)],
+    ['comments', 'a ' + '<!--'.repeat(12_000)],
+    // Слитные «-», «.», «+»: литеральные автоссылки GFM квадратичны по длине куска без пробелов.
+    ['a run of dashes', 'a' + '-'.repeat(49_000)],
+    ['a hyphenated run', 'a' + '-a'.repeat(24_500)],
+    // На краю новых пределов: разбирается быстро.
+    ['closing brackets at the limit', 'a' + ']'.repeat(1_000) + ' word'.repeat(9_000)],
+    ['processing instructions at the limit', ('<?' + 'a'.repeat(46) + ' ').repeat(1_000)],
+    ['declarations at the limit', ('<!A' + 'a'.repeat(45) + ' ').repeat(1_000)],
+    ['comments at the limit', ('<!--' + 'a'.repeat(44) + ' ').repeat(1_000)],
+    ['dash runs at the limit', ('a' + '-.'.repeat(4_999) + ' ').repeat(4)],
+  ])('unbalanced brackets and HTML openers stay fast: %s', (_, input) => {
+    const started = performance.now();
+    const root = show(input);
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(root.textContent!.replace(/\s/g, '')).toBe(input.replace(/\s/g, ''));
+    expectInert(root);
   });
 
   test('text beyond the parsing limits is shown as plain text: content kept, nothing interpreted', () => {

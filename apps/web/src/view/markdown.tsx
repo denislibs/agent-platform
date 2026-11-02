@@ -21,8 +21,8 @@ export function parseMarkdown(text: string): Root {
 
 /**
  * Пределы, внутри которых разбор micromark гарантированно быстрый. Вне их парсер сверхлинеен: 50 000 символов
- * «*_» — минуты, 25 000 вложенных «> » — переполнение стека, тысячи заголовков Setext или «ленивых» строк — секунды
- * (замеры в отчёте задачи 7). Обычный ответ укладывается с большим запасом; текст сверх пределов (атака из снимка
+ * «*_» — минуты, 25 000 вложенных «> » — переполнение стека, тысячи заголовков Setext или «ленивых» строк, непарных
+ * «]», «<?» и «<!--» или слитная строка «a-a-a…» (литеральные автоссылки GFM) — секунды (замеры в отчёте задачи 7). Обычный ответ укладывается с большим запасом; текст сверх пределов (атака из снимка
  * чужой страницы или огромный вывод) показывается простым текстом — содержимое не теряется, вкладка не зависает.
  */
 const LIMITS = {
@@ -32,6 +32,12 @@ const LIMITS = {
   delimiters: 2_000,
   /** `[` — начала ссылок, картинок и сносок. */
   brackets: 1_000,
+  /** `]` — концы меток: непарные парсер ищет квадратично. */
+  closingBrackets: 1_000,
+  /** `<` — автоссылки и сырой HTML: незакрытые `<?`, `<!…`, `<!--` парсер ищет квадратично. */
+  angles: 1_000,
+  /** Самый длинный кусок без пробелов и переводов строк: на слитных «-», «.», «+» квадратичны автоссылки GFM. */
+  run: 10_000,
   /** Маркеры контейнеров (`>`, маркеры списков) в начале строк, всего и в одной строке. */
   containers: 3_000,
   containersPerLine: 8,
@@ -71,12 +77,27 @@ function withinLimits(text: string): boolean {
   if (text.length > LIMITS.chars) return false;
   let delimiters = 0;
   let brackets = 0;
+  let closingBrackets = 0;
+  let angles = 0;
+  let run = 0;
+  let longestRun = 0;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
+    if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') run = 0;
+    else longestRun = Math.max(longestRun, ++run);
     if (ch === '*' || ch === '_' || ch === '~') delimiters++;
     else if (ch === '[') brackets++;
+    else if (ch === ']') closingBrackets++;
+    else if (ch === '<') angles++;
   }
-  if (delimiters > LIMITS.delimiters || brackets > LIMITS.brackets) return false;
+  if (
+    delimiters > LIMITS.delimiters ||
+    brackets > LIMITS.brackets ||
+    closingBrackets > LIMITS.closingBrackets ||
+    angles > LIMITS.angles ||
+    longestRun > LIMITS.run
+  )
+    return false;
   // Конец строки для micromark — и \n, и \r, и \r\n.
   const lines = text.split(/\r\n|\r|\n/);
   if (lines.length > LIMITS.lines) return false;
@@ -153,8 +174,10 @@ interface Context {
 function link(href: string | undefined, children: ComponentChildren, key: number, ctx: Context) {
   const safe = href === undefined || ctx.inLink ? undefined : markdownHref(href);
   if (safe === undefined) return <span key={key}>{children}</span>;
+  // Почту открывает почтовый клиент: новая вкладка ей не нужна (осталась бы пустой).
+  const target = /^mailto:/i.test(safe) ? undefined : '_blank';
   return (
-    <a key={key} class="ui-link" href={safe} target="_blank" rel="noopener noreferrer nofollow">
+    <a key={key} class="ui-link" href={safe} target={target} rel="noopener noreferrer nofollow">
       {children}
     </a>
   );
