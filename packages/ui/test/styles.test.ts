@@ -39,6 +39,12 @@ test('every ui-* class used by the components and the showcase exists in the sty
   expect([...missing]).toEqual([]);
 });
 
+test('elements that only receive focus from the app on navigation draw no ring', () => {
+  expect(styles).toMatch(
+    /\.ui-root main:focus-visible,\s*\.ui-root h1\[tabindex='-1'\]:focus-visible\s*\{[^}]*box-shadow:\s*none/,
+  );
+});
+
 test('the composer shows focus on its frame, not as a ring around the inner field', () => {
   expect(styles).toMatch(/\.ui-composer:focus-within\s*\{[^}]*border-color/);
   expect(styles).toMatch(/\.ui-composer__input:focus-visible\s*\{[^}]*box-shadow:\s*none/);

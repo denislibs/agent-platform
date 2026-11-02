@@ -139,9 +139,6 @@
 .ui-shell--computer .ui-shell__main {
   border-right: 1px solid var(--border-subtle);
 }
-.ui-shell__main:focus {
-  outline: none;
-}
 .ui-shell__body {
   flex: 1;
   overflow: auto;
