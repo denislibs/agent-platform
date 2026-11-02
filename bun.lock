@@ -36,6 +36,27 @@
         "vite": "8.3.5",
       },
     },
+    "evals": {
+      "name": "@agent/evals",
+      "version": "0.0.0",
+      "dependencies": {
+        "@agent/agent": "workspace:*",
+        "@agent/api": "workspace:*",
+        "@agent/composition": "workspace:*",
+        "@agent/core": "workspace:*",
+        "@agent/db": "workspace:*",
+        "@agent/queue": "workspace:*",
+        "@agent/shared": "workspace:*",
+        "@agent/worker": "workspace:*",
+        "bullmq": "5.81.5",
+        "drizzle-orm": "^0.45.1",
+        "zod": "^4",
+      },
+      "devDependencies": {
+        "@agent/testing": "workspace:*",
+        "awilix": "^13",
+      },
+    },
     "packages/agent": {
       "name": "@agent/agent",
       "version": "0.0.0",
@@ -245,6 +266,8 @@
     "@agent/core": ["@agent/core@workspace:packages/core"],
 
     "@agent/db": ["@agent/db@workspace:packages/db"],
+
+    "@agent/evals": ["@agent/evals@workspace:evals"],
 
     "@agent/llm": ["@agent/llm@workspace:packages/llm"],
 

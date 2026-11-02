@@ -4,11 +4,12 @@
   "type": "module",
   "workspaces": [
     "packages/*",
-    "apps/*"
+    "apps/*",
+    "evals"
   ],
   "scripts": {
     "test": "bun test && bun run test:ui && bun run test:web",
-    "test:unit": "bun test packages/shared packages/core packages/testing packages/llm packages/search packages/mail packages/agent packages/api/test/unit && bun run test:ui && bun run test:web",
+    "test:unit": "bun test packages/shared packages/core packages/testing packages/llm packages/search packages/mail packages/agent packages/api/test/unit evals/test && bun run test:ui && bun run test:web",
     "test:ui": "bun test --preload ./packages/ui/test/dom.ts --path-ignore-patterns '**/node_modules/**' packages/ui",
     "test:web": "bun test --preload ./apps/web/test/dom.ts --path-ignore-patterns '**/node_modules/**' apps/web/test",
     "test:e2e:web": "bun run --cwd apps/web e2e",
