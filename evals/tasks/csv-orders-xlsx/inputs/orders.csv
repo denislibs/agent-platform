@@ -1,0 +1,16 @@
+order_id,customer,amount
+1001,Northwind,250.00
+1002,Contoso,120.50
+1003,Fabrikam,980.00
+1004,Northwind,430.25
+1005,Tailspin,75.00
+1006,Contoso,610.00
+1007,Fabrikam,145.75
+1008,Northwind,220.00
+1009,Tailspin,310.40
+1010,Contoso,95.00
+1011,Fabrikam,505.25
+1012,Northwind,180.00
+1013,Tailspin,60.10
+1014,Contoso,240.00
+1015,Fabrikam,110.00

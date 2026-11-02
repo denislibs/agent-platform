@@ -1,0 +1,21 @@
+{
+  "title": "Research: licences of PostgreSQL, SQLite and MySQL",
+  "category": "research",
+  "prompt": "Find out under which licence each of these databases is distributed: PostgreSQL, SQLite and MySQL Community Server. Write a short comparison to outputs/licenses.md as a Markdown table with the columns Database, Licence and Source (a link to the official page you used), and add one sentence under the table on what the licences mean for embedding the database in a commercial product.",
+  "requires": ["search"],
+  "budget": { "modelCalls": 60, "tokens": 600000, "minutes": 25 },
+  "checks": [
+    {
+      "kind": "file",
+      "path": "outputs/licenses.md",
+      "format": "markdown",
+      "contains": [
+        { "regex": "^\\|.*\\|\\s*$", "flags": "m" },
+        "PostgreSQL License",
+        "public domain",
+        "GPL",
+        { "regex": "https?://" }
+      ]
+    }
+  ]
+}

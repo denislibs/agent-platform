@@ -1,0 +1,10 @@
+{
+  "title": "Project brief as a Word document",
+  "category": "document",
+  "prompt": "Write a one-page project brief for a mobile app that reminds people to water their house plants. Cover the problem, the target audience, at least three key features and a three-month timeline. Save it as a Word document, outputs/brief.docx, with headings for each part.",
+  "budget": { "modelCalls": 30, "tokens": 250000, "minutes": 15 },
+  "checks": [
+    { "kind": "file", "path": "outputs/brief.docx", "format": "docx", "minBytes": 5000 },
+    { "kind": "answer", "contains": ["brief.docx"] }
+  ]
+}

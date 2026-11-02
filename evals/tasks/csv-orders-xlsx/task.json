@@ -1,0 +1,10 @@
+{
+  "title": "Excel summary of orders by customer",
+  "category": "csv",
+  "prompt": "inputs/orders.csv lists orders (order_id, customer, amount). Make an Excel workbook outputs/orders_summary.xlsx with two sheets: \"Orders\" with the original rows and \"By customer\" with each customer's order count and total amount, sorted by total from highest to lowest. Tell me which customer has the largest total and what it is.",
+  "budget": { "modelCalls": 40, "tokens": 300000, "minutes": 15 },
+  "checks": [
+    { "kind": "file", "path": "outputs/orders_summary.xlsx", "format": "xlsx", "minBytes": 4000 },
+    { "kind": "answer", "contains": ["Fabrikam", { "number": 1741, "tolerance": 0.01 }] }
+  ]
+}

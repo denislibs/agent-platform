@@ -1,0 +1,16 @@
+{
+  "title": "Status codes from RFC 9110",
+  "category": "scraping",
+  "prompt": "Read the list of HTTP status codes defined in RFC 9110 (https://www.rfc-editor.org/rfc/rfc9110.html, section 15) and save every status code with its reason phrase exactly as RFC 9110 names it to outputs/status_codes.csv with the columns code and reason. Do not include codes from other RFCs.",
+  "budget": { "modelCalls": 50, "tokens": 500000, "minutes": 20 },
+  "checks": [
+    {
+      "kind": "file",
+      "path": "outputs/status_codes.csv",
+      "format": "csv",
+      "columns": ["code", "reason"],
+      "rows": { "min": 38, "max": 48 },
+      "contains": ["Content Too Large", "Unprocessable Content", "Misdirected Request", "Not Found"]
+    }
+  ]
+}

@@ -19,6 +19,7 @@ import {
 } from '@agent/core';
 import { isTerminalTask, type TaskStatus } from '@agent/shared';
 import { runChecks, type CheckResult, type OutputFile } from './checks';
+import { isSafeOutputPath } from './task';
 import type { Budget, Category, EvalTask, InputFile } from './task';
 
 /** Порты, которые нужны прогону: cradle боевого контейнера и тестового подходят как есть. */
@@ -132,15 +133,6 @@ async function uploadInputs(deps: EvalDeps, userId: string, inputs: readonly Inp
     ids.push(file.id);
   }
   return ids;
-}
-
-/**
- * Путь результата, который можно читать и отдавать дальше: outputs/… без `.`, `..`, пустых сегментов и обратных
- * слешей. Пути пишет модель, а main.ts кладёт файлы рядом с отчётом — всё остальное прогон не трогает.
- */
-export function isSafeOutputPath(path: string): boolean {
-  if (!path.startsWith('outputs/') || /[\\\0]/.test(path)) return false;
-  return path.split('/').every(part => part !== '' && part !== '.' && part !== '..');
 }
 
 /** Отмена, как POST /api/tasks/:id/cancel. 409 — задача успела завершиться сама: её финальный статус и есть итог. */

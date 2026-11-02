@@ -1,0 +1,17 @@
+{
+  "title": "Remove duplicate contacts",
+  "category": "csv",
+  "prompt": "inputs/contacts.csv is a contact list with duplicates: the same person can appear with a different letter case or extra spaces in the email. Remove the duplicates (two rows are the same contact when their emails match ignoring case and surrounding spaces), write the emails in lower case without spaces, and save the result to outputs/contacts_clean.csv with the columns name and email. Tell me how many duplicate rows you removed.",
+  "budget": { "modelCalls": 40, "tokens": 300000, "minutes": 15 },
+  "checks": [
+    {
+      "kind": "file",
+      "path": "outputs/contacts_clean.csv",
+      "format": "csv",
+      "columns": ["name", "email"],
+      "rows": { "min": 8, "max": 8 },
+      "contains": ["ada@example.com", "alan.turing@example.org", "katherine@example.com", "linus@example.fi"]
+    },
+    { "kind": "answer", "contains": [{ "regex": "\\b4\\b" }] }
+  ]
+}

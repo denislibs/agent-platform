@@ -1,0 +1,15 @@
+{
+  "title": "Save the Zen of Python from PEP 20",
+  "category": "scraping",
+  "prompt": "Open PEP 20 (https://peps.python.org/pep-0020/) and save the aphorisms of the Zen of Python to outputs/zen.txt, one aphorism per line, without numbering and without any other text.",
+  "budget": { "modelCalls": 30, "tokens": 250000, "minutes": 15 },
+  "checks": [
+    {
+      "kind": "file",
+      "path": "outputs/zen.txt",
+      "format": "text",
+      "rows": { "min": 19, "max": 19 },
+      "contains": ["Beautiful is better than ugly.", "Namespaces are one honking great idea"]
+    }
+  ]
+}

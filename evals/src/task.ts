@@ -3,18 +3,37 @@ import { join } from 'node:path';
 import { z } from 'zod';
 
 /**
+ * Путь результата, который можно читать и отдавать дальше: outputs/… без `.`, `..`, пустых сегментов и обратных
+ * слешей. Пути пишет модель, а main.ts кладёт файлы рядом с отчётом — всё остальное прогон не трогает.
+ */
+export function isSafeOutputPath(path: string): boolean {
+  if (!path.startsWith('outputs/') || /[\\\0]/.test(path)) return false;
+  return path.split('/').every(part => part !== '' && part !== '.' && part !== '..');
+}
+
+function compiles(pattern: string, flags: string | undefined): boolean {
+  try {
+    return new RegExp(pattern, flags) instanceof RegExp;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Совпадение в тексте: строка — подстрока без учёта регистра; regex — регулярное выражение; anyOf — любая из
  * подстрок; number — число в тексте (запятые-разделители тысяч допускаются) с допуском tolerance.
  */
 export const MatcherSchema = z.union([
   z.string().min(1),
-  z.object({
-    regex: z.string().min(1),
-    flags: z
-      .string()
-      .regex(/^[imsu]*$/)
-      .optional(),
-  }),
+  z
+    .object({
+      regex: z.string().min(1),
+      flags: z
+        .string()
+        .regex(/^[imsu]*$/)
+        .optional(),
+    })
+    .refine(m => compiles(m.regex, m.flags), { message: 'regex does not compile', path: ['regex'] }),
   z.object({ anyOf: z.array(z.string().min(1)).min(1) }),
   z.object({ number: z.number(), tolerance: z.number().nonnegative().optional() }),
 ]);
@@ -30,7 +49,7 @@ const LinesSchema = z
 export const FileCheckSchema = z.object({
   kind: z.literal('file'),
   /** Путь результата относительно /workspace (outputs/…) или glob: outputs/*.csv. */
-  path: z.string().min(1),
+  path: z.string().refine(isSafeOutputPath, 'path must be outputs/… without "..", empty segments or backslashes'),
   format: z.enum(FILE_FORMATS).optional(),
   minBytes: z.number().int().positive().optional(),
   /** csv: заголовок содержит эти колонки (без учёта регистра и пробелов по краям). */

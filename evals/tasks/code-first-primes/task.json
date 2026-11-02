@@ -1,0 +1,16 @@
+{
+  "title": "Write and run a script: the first 20 primes",
+  "category": "code",
+  "prompt": "Write a Python script outputs/primes.py that prints the first 20 prime numbers on one line, separated by a comma and a space. Run it and save exactly what it prints to outputs/primes.txt.",
+  "budget": { "modelCalls": 25, "tokens": 150000, "minutes": 10 },
+  "checks": [
+    { "kind": "file", "path": "outputs/primes.py", "format": "text", "contains": ["print"] },
+    {
+      "kind": "file",
+      "path": "outputs/primes.txt",
+      "format": "text",
+      "rows": { "min": 1, "max": 1 },
+      "contains": [{ "regex": "^2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71\\s*$" }]
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+weekly sync 2026-03-02 — attendees: Priya (PM), Marco (backend), Jun (design), Alex (QA)
+
+- billing page redesign: Jun showed v2 mockups, everyone ok with v2. DECIDED: ship v2, drop the old wizard
+- search is slow on big accounts (8s+). Marco thinks missing index on orders.created_at. Marco to add the index + measure, by March 9
+- release 4.2: Alex found 3 blockers, 2 fixed. last one (export to pdf) still open -> Alex retests Friday March 6
+- DECIDED: release 4.2 moves to March 11 (was March 4)
+- Priya to tell the sales team about the new date, today
+- Jun: hand off v2 assets to Marco by March 5
+- next sync March 9

@@ -1,0 +1,8 @@
+{
+  "title": "Research: when Rust 1.0 shipped and who started Rust",
+  "category": "research",
+  "prompt": "When was version 1.0 of the Rust programming language released, and who started the language? Search the web, answer in two or three sentences and link the sources you used.",
+  "requires": ["search"],
+  "budget": { "modelCalls": 40, "tokens": 400000, "minutes": 15 },
+  "checks": [{ "kind": "answer", "contains": ["2015", "Graydon Hoare", { "regex": "https?://" }] }]
+}

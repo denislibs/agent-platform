@@ -20,6 +20,8 @@ const minimal = {
   checks: [{ kind: 'file', path: 'outputs/sum.txt', format: 'text', contains: [{ number: 3 }] }],
 };
 
+const check = (regex: string) => ({ kind: 'answer', contains: [{ regex, flags: 'i' }] });
+
 describe('loadTasks', () => {
   test('reads task folders in name order with their input files; defaults fill requires and budget', async () => {
     dir = await mkdtemp(join(tmpdir(), 'evals-tasks-'));
@@ -34,8 +36,34 @@ describe('loadTasks', () => {
 
   test('a broken task file is an error that names the task and the field', async () => {
     dir = await mkdtemp(join(tmpdir(), 'evals-tasks-'));
-    await writeTask('broken', { ...minimal, checks: [{ kind: 'file', path: 'x', rows: {} }] });
+    await writeTask('broken', { ...minimal, checks: [{ kind: 'file', path: 'outputs/x', rows: {} }] });
     await expect(loadTasks(dir)).rejects.toThrow('eval task broken: checks.0.rows: rows needs min or max');
+  });
+
+  test('a regex that does not compile is an error that names the task, even when its flags are valid', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'evals-tasks-'));
+    await writeTask('good', { ...minimal, checks: [check('^(a|b)+$')] });
+    await expect(loadTasks(dir)).resolves.toHaveLength(1);
+    await writeTask('bad-regex', { ...minimal, checks: [check('(unclosed')] });
+    await expect(loadTasks(dir)).rejects.toThrow('eval task bad-regex: checks.0.contains.0');
+  });
+
+  test('expected output paths must stay under outputs/ without ..', async () => {
+    for (const path of [
+      'report.csv',
+      '../outputs/a.csv',
+      'outputs/../secret.txt',
+      'outputs//a.csv',
+      '/outputs/a.csv',
+    ]) {
+      dir = await mkdtemp(join(tmpdir(), 'evals-tasks-'));
+      await writeTask('bad-path', { ...minimal, checks: [{ kind: 'file', path }] });
+      await expect(loadTasks(dir)).rejects.toThrow('eval task bad-path: checks.0.path');
+      await rm(dir, { recursive: true, force: true });
+    }
+    dir = await mkdtemp(join(tmpdir(), 'evals-tasks-'));
+    await writeTask('glob', { ...minimal, checks: [{ kind: 'file', path: 'outputs/*.csv' }] });
+    await expect(loadTasks(dir)).resolves.toHaveLength(1);
   });
 
   test('a folder name that is not a lower-case id is refused', async () => {
