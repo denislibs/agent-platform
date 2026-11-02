@@ -69,5 +69,16 @@ test('sign in with a magic link, run a task that asks a question, read the answe
   // Вложение действительно лежит в S3 байт в байт (недогруженный файл API отдал бы 409 upload_incomplete).
   expect(await downloadText(/^names\.csv/, 'names.csv')).toBe('name\nAda\n');
 
+  // Library показывает результат задачи; удаление задачи возвращает на главную и убирает его файлы.
+  await page.getByRole('link', { name: 'Library' }).click();
+  await expect(page.getByRole('link', { name: 'Download hello.md' })).toBeVisible();
+  await page.getByRole('link', { name: 'Open task of hello.md' }).click();
+  await expect(page).toHaveURL(/\/tasks\/[\w-]+$/);
+  await page.getByRole('button', { name: /^Delete task Write a greeting/ }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete' }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await page.getByRole('link', { name: 'Library' }).click();
+  await expect(page.getByText('No files yet')).toBeVisible();
+
   expect(await page.evaluate(() => (window as unknown as { cspViolations: string[] }).cspViolations)).toEqual([]);
 });
