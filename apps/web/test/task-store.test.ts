@@ -172,15 +172,62 @@ test('a later refusal while already disconnected still re-checks the session', a
   expect(FakeEventSource.all).toHaveLength(2);
 });
 
-test('a network failure while re-checking keeps the stream retrying', async () => {
-  const { store, timers, answer } = setupLive();
+test('a transient failure while re-checking is only a stale card: the stream keeps retrying, reconnect re-reads', async () => {
+  const { store, timers, answer, reads } = setupLive();
   await store.start();
   answer(json({ error: { code: 'internal', message: 'boom' } }, 500));
   FakeEventSource.last.fail(2);
   await tick();
-  expect(store.error.value?.code).toBe('internal');
+  expect(store.error.value).toBeNull();
+  expect(store.stale.value?.code).toBe('internal');
+  answer(json(taskResponse()));
   timers.run();
   expect(FakeEventSource.all).toHaveLength(2);
+  const before = reads();
+  FakeEventSource.last.open();
+  await tick();
+  expect(reads()).toBe(before + 1);
+  expect(store.stale.value).toBeNull();
+});
+
+test('a failed first load can be retried with start() without leaking a stream', async () => {
+  const { store, answer } = setupLive();
+  answer(json({ error: { code: 'internal', message: 'boom' } }, 500));
+  await store.start();
+  expect(store.error.value?.code).toBe('internal');
+  expect(FakeEventSource.all).toHaveLength(0);
+  answer(json(taskResponse()));
+  await store.start();
+  expect(store.error.value).toBeNull();
+  expect(FakeEventSource.all).toHaveLength(1);
+});
+
+test('start() twice opens one stream and reads the card once', async () => {
+  const { store, reads } = setupLive();
+  await Promise.all([store.start(), store.start()]);
+  await store.start();
+  expect(reads()).toBe(1);
+  expect(FakeEventSource.all).toHaveLength(1);
+});
+
+test('a malformed end still re-reads the card', async () => {
+  const { store, answer, reads } = setupLive();
+  await store.start();
+  answer(json(taskResponse({ task: taskDetail({ status: 'done', result: 'ok' }) })));
+  FakeEventSource.last.emit('end', { status: 'exploded' });
+  await tick();
+  expect(reads()).toBe(2);
+  expect(store.finished).toBe(true);
+});
+
+test('steps that could not be read are counted for the feed', async () => {
+  const { store } = setupLive();
+  await store.start();
+  FakeEventSource.last.emit('step', { seq: 1, nonsense: true }, '1');
+  FakeEventSource.last.emitRaw('step', '{not json');
+  FakeEventSource.last.emit('step', step(3, { type: 'message', role: 'assistant', text: 'hi' }), '3');
+  expect(store.skippedSteps.value).toBe(2);
+  expect(store.steps.value.map(s => s.seq)).toEqual([3]);
 });
 
 test('dispose cancels a pending reconnect', async () => {

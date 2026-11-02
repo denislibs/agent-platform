@@ -44,10 +44,16 @@ export function createTaskStore(deps: TaskStoreDeps, taskId: string) {
   const subtasks = signal<SubtaskDto[]>([]);
   const files = signal<FileDto[]>([]);
   const steps = signal<StepDto[]>([]);
+  /** Карточку не показать: первое чтение не удалось, сессии нет (401) или задачи нет (403, 404). */
   const error = signal<ApiRequestError | null>(null);
+  /** Перечитать карточку не вышло (сеть, 5xx), но она есть и поток жив: показанное может отставать. */
+  const stale = signal<ApiRequestError | null>(null);
+  /** Сколько шагов пришло в непонятном виде и не показано. */
+  const skippedSteps = signal(0);
   /** Поток на связи; false — переподключается. */
   const connected = signal(true);
   let stream: { close(): void } | undefined;
+  let starting: Promise<void> | undefined;
   let refreshing: Promise<void> | undefined;
   let dirty = false;
   let disposed = false;
@@ -65,6 +71,7 @@ export function createTaskStore(deps: TaskStoreDeps, taskId: string) {
       subtasks.value = res.subtasks;
       files.value = res.files;
       error.value = null;
+      stale.value = null;
     });
   }
 
@@ -84,9 +91,12 @@ export function createTaskStore(deps: TaskStoreDeps, taskId: string) {
       } catch (err) {
         if (!disposed) {
           const failure = err instanceof ApiRequestError ? err : new ApiRequestError(0, 'network', String(err));
-          error.value = failure;
+          const fatal = FATAL_STATUSES.has(failure.status);
           // Сессия кончилась или задачи нет: переподключаться бессмысленно (401 уже увёл приложение на вход).
-          if (FATAL_STATUSES.has(failure.status)) closeStream();
+          if (fatal) closeStream();
+          // Временный сбой при показанной карточке — не ошибка экрана, а пометка «может отставать».
+          if (fatal || !task.value) error.value = failure;
+          else stale.value = failure;
         }
       } finally {
         refreshing = undefined;
@@ -95,9 +105,25 @@ export function createTaskStore(deps: TaskStoreDeps, taskId: string) {
     return refreshing;
   }
 
-  async function start(): Promise<void> {
-    await refresh();
-    if (disposed || !task.value) return;
+  /**
+   * Прочитать карточку и открыть поток. Повторный вызов, пока стор запускается или поток открыт, ничего не делает;
+   * после неудачи (error) — повторяет попытку: так экран предлагает «Try again».
+   */
+  function start(): Promise<void> {
+    if (disposed || stream) return Promise.resolve();
+    starting ??= (async () => {
+      try {
+        await refresh();
+        if (disposed || stream || error.value || !task.value) return;
+        openStream();
+      } finally {
+        starting = undefined;
+      }
+    })();
+    return starting;
+  }
+
+  function openStream(): void {
     // Шагов в карточке нет: поток с нуля отдаёт всю ленту, у финальной задачи — и сразу end.
     stream = (deps.openEvents ?? openTaskEvents)({
       taskId,
@@ -106,15 +132,18 @@ export function createTaskStore(deps: TaskStoreDeps, taskId: string) {
         steps.value = mergeStep(steps.value, step);
         if (changesTheTask(step)) void refresh();
       },
+      // Статус в end не нужен (и может не прочитаться): итог, файлы и статус — из карточки.
       onEnd: () => void refresh(),
       onConnection: value => {
         connected.value = value;
         // Пропала связь: проверить задачу и сессию (401 уведёт на вход, 404 — задачи больше нет).
-        if (!value) void refresh();
+        // Вернулась, а карточка отстала: перечитать.
+        if (!value || stale.value) void refresh();
       },
       // Сервер отказывает в потоке снова и снова: каждый отказ — повод проверить сессию и задачу ещё раз.
       // Чтение, начатое потерей связи из того же отказа, уже это проверяет — второе в очередь не ставим.
       onRefused: () => void (refreshing ?? refresh()),
+      onInvalidStep: () => void skippedSteps.value++,
     });
   }
 
@@ -124,6 +153,8 @@ export function createTaskStore(deps: TaskStoreDeps, taskId: string) {
     files,
     steps,
     error,
+    stale,
+    skippedSteps,
     connected,
     start,
     refresh,

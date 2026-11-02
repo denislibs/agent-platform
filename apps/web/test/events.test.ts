@@ -9,7 +9,7 @@ beforeEach(() => FakeEventSource.reset());
 function open(afterSeq = 0) {
   const timers = manualTimers();
   const steps: number[] = [];
-  const ends: StreamEnd[] = [];
+  const ends: Array<StreamEnd | null> = [];
   const connection: boolean[] = [];
   const stream = openTaskEvents({
     taskId: 'task 1',
@@ -41,7 +41,7 @@ test('end closes the stream for good and reports the final status', () => {
   expect(FakeEventSource.all).toHaveLength(1);
 });
 
-test('stream_error: close, wait, reconnect with ?after= the last seq; delays grow and reset on open', () => {
+test('stream_error: close, wait, reconnect with ?after= the last seq; delays grow and reset after 10 s connected', () => {
   const { timers, connection } = open(4);
   FakeEventSource.last.emit('step', message(5));
   FakeEventSource.last.emit('stream_error', { code: 'internal', message: 'the stream failed; reconnect' });
@@ -55,8 +55,55 @@ test('stream_error: close, wait, reconnect with ?after= the last seq; delays gro
   timers.run();
   FakeEventSource.last.open();
   expect(connection).toEqual([false, true]);
+  // Задержка сбрасывается, только когда соединение продержалось 10 с.
+  expect(timers.delays()).toEqual([10_000]);
+  timers.run();
   FakeEventSource.last.emit('stream_error');
   expect(timers.delays()).toEqual([1000]);
+});
+
+test('a server that opens the stream and fails at once (database down) is retried with growing delays', () => {
+  const { timers } = open();
+  const delays: number[][] = [];
+  for (let i = 0; i < 6; i++) {
+    FakeEventSource.last.open();
+    FakeEventSource.last.emit('stream_error');
+    delays.push(timers.delays());
+    timers.run();
+  }
+  expect(delays).toEqual([[1000], [2000], [4000], [8000], [16_000], [30_000]]);
+});
+
+test('a malformed end still closes the stream for good and reports an unknown status', () => {
+  const { ends, timers } = open();
+  FakeEventSource.last.emit('end', { status: 'exploded' });
+  expect(ends).toEqual([null]);
+  expect(FakeEventSource.last.closed).toBe(true);
+  timers.run();
+  expect(FakeEventSource.all).toHaveLength(1);
+});
+
+test('a step that fails the schema is reported once and not asked for again after a reconnect', () => {
+  const timers = manualTimers();
+  const steps: number[] = [];
+  let invalid = 0;
+  openTaskEvents({
+    taskId: 'task-1',
+    createSource: url => new FakeEventSource(url),
+    ...timers,
+    onStep: s => steps.push(s.seq),
+    onEnd: () => undefined,
+    onInvalidStep: () => invalid++,
+  });
+  FakeEventSource.last.emit('step', message(1), '1');
+  FakeEventSource.last.emit('step', { seq: 2, nonsense: true }, '2');
+  FakeEventSource.last.emit('step', { seq: 2, nonsense: true }, '2');
+  FakeEventSource.last.emit('stream_error');
+  timers.run();
+  expect(FakeEventSource.last.url).toBe('/api/tasks/task-1/events?after=2');
+  FakeEventSource.last.emit('step', message(3), '3');
+  expect(steps).toEqual([1, 3]);
+  expect(invalid).toBe(1);
 });
 
 test('a dropped connection that EventSource retries itself is only reported; a refused one is retried by us', () => {
@@ -95,7 +142,8 @@ test('the server closing the stream without end (15-minute limit) is left to Eve
   FakeEventSource.last.emit('step', message(1), '1');
   FakeEventSource.last.emit('step', message(2), '2');
   expect(FakeEventSource.all).toHaveLength(1);
-  expect(timers.delays()).toEqual([]);
+  // Только таймер «соединение устоялось», переподключения нет.
+  expect(timers.delays()).toEqual([10_000]);
   expect(steps).toEqual([1, 2]);
   expect(connection).toEqual([false, true]);
 });

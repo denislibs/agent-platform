@@ -12,6 +12,11 @@ export type EventSourceFactory = (url: string) => EventSourceLike;
 const CLOSED = 2;
 const RETRY_MIN_MS = 1000;
 const RETRY_MAX_MS = 30_000;
+/**
+ * Сколько соединение должно продержаться, чтобы задержка переподключения сбросилась. Сброс на open не годится:
+ * при сбое базы сервер отдаёт заголовки (open) и сразу stream_error — задержка не росла бы никогда.
+ */
+const STABLE_MS = 10_000;
 
 /** JSON события; не JSON — undefined (такое событие пропускается). */
 function parseData(event: MessageEvent<string>): unknown {
@@ -25,8 +30,11 @@ function parseData(event: MessageEvent<string>): unknown {
 export interface TaskEventHandlers {
   /** Новый шаг: каждый seq — ровно один раз и по возрастанию (дубли отброшены, спецификация 10). */
   onStep(step: StepDto): void;
-  /** Задача в финальном статусе, все шаги отправлены; поток закрыт и больше не откроется. */
-  onEnd(end: StreamEnd): void;
+  /**
+   * Задача в финальном статусе, все шаги отправлены; поток закрыт и больше не откроется.
+   * null — сервер прислал end, но статус не прочитать: приложение перечитывает карточку.
+   */
+  onEnd(end: StreamEnd | null): void;
   /** Связь потеряна (false) и восстановлена (true): приложение перечитывает задачу и сессию. */
   onConnection?(connected: boolean): void;
   /**
@@ -34,6 +42,8 @@ export interface TaskEventHandlers {
    * на первый: приложение перечитывает задачу и решает, закрыть ли поток. Сам модуль продолжает попытки.
    */
   onRefused?(): void;
+  /** Шаг не прошёл схему (или пришёл не JSON) и пропущен: лента может сказать, что показано не всё. */
+  onInvalidStep?(): void;
 }
 
 export interface TaskEventsOptions extends TaskEventHandlers {
@@ -57,6 +67,7 @@ export function openTaskEvents(opts: TaskEventsOptions): { close(): void } {
   let lastSeq = opts.afterSeq ?? 0;
   let source: EventSourceLike | undefined;
   let timer: unknown;
+  let stableTimer: unknown;
   let retryMs = RETRY_MIN_MS;
   let closed = false;
   let connected = true;
@@ -67,11 +78,17 @@ export function openTaskEvents(opts: TaskEventsOptions): { close(): void } {
     opts.onConnection?.(value);
   };
 
+  const clearStable = () => {
+    if (stableTimer !== undefined) clearTimer(stableTimer);
+    stableTimer = undefined;
+  };
+
   const stop = () => {
     source?.close();
     source = undefined;
     if (timer !== undefined) clearTimer(timer);
     timer = undefined;
+    clearStable();
   };
 
   const reconnectLater = () => {
@@ -95,20 +112,35 @@ export function openTaskEvents(opts: TaskEventsOptions): { close(): void } {
         if (current === source) listener(event);
       });
     on('open', () => {
-      retryMs = RETRY_MIN_MS;
       setConnected(true);
+      clearStable();
+      stableTimer = setTimer(() => {
+        stableTimer = undefined;
+        retryMs = RETRY_MIN_MS;
+      }, STABLE_MS);
     });
     on('step', event => {
       const parsed = StepDtoSchema.safeParse(parseData(event));
-      if (!parsed.success || parsed.data.seq <= lastSeq) return;
-      lastSeq = parsed.data.seq;
-      opts.onStep(parsed.data);
+      if (parsed.success) {
+        if (parsed.data.seq <= lastSeq) return;
+        lastSeq = parsed.data.seq;
+        opts.onStep(parsed.data);
+        return;
+      }
+      // id события — seq: битый шаг пропускаем один раз, и после переподключения сервер его не повторит.
+      const seq = Number(event.lastEventId);
+      if (Number.isSafeInteger(seq) && seq > 0) {
+        if (seq <= lastSeq) return;
+        lastSeq = seq;
+      }
+      opts.onInvalidStep?.();
     });
     on('end', event => {
       closed = true;
       stop();
       setConnected(true);
-      opts.onEnd(StreamEndSchema.parse(parseData(event)));
+      const parsed = StreamEndSchema.safeParse(parseData(event));
+      opts.onEnd(parsed.success ? parsed.data : null);
     });
     // Сбой чтения на сервере: поток закрывается, переподключаемся сами с последним seq.
     on('stream_error', () => reconnectLater());
