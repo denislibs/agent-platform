@@ -10,3 +10,6 @@ export * from './components/toast.tsx';
 export * from './components/field.tsx';
 export * from './components/input.tsx';
 export * from './components/choice.tsx';
+export { nextIndex, type Orientation } from './lib/roving.ts';
+export * from './components/tabs.tsx';
+export * from './components/special-inputs.tsx';
