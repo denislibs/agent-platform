@@ -77,13 +77,11 @@ export function useFocusTrap(container: RefObject<HTMLElement>, active: boolean,
       const top = index === traps.length - 1;
       traps.splice(index, 1);
       document.removeEventListener('keydown', onKeyDown);
-      if (top || holds(trap, document.activeElement)) {
-        trap.previous?.focus();
-        return;
-      }
       // Ловушки выше, запомнившие фокус внутри этой, вернут его туда же, куда вернула бы она:
-      // элемент закрытого слоя скоро исчезнет из документа.
+      // элемент закрытого слоя скоро исчезнет из документа. До возврата фокуса — верхняя ловушка
+      // может жить в слое этой (подтверждение внутри диалога) и закрыться вместе с ней.
       for (const upper of traps.slice(index)) if (holds(trap, upper.previous)) upper.previous = trap.previous;
+      if (top || holds(trap, document.activeElement)) trap.previous?.focus();
     };
   }, [active, container, layer]);
 }

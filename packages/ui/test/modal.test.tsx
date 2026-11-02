@@ -675,3 +675,42 @@ test('closing a dialog under an open palette leaves focus in the palette, and th
   view.rerender(<PaletteOverDialog dialog={false} palette={false} />);
   expect(document.activeElement).toBe(opener);
 });
+
+function EditWithConfirm({ edit, confirm }: { edit: boolean; confirm: boolean }) {
+  return (
+    <>
+      <Button>Opener</Button>
+      <Dialog open={edit} onOpenChange={() => {}} title="Edit">
+        <Button>Discard</Button>
+        <ConfirmDialog
+          open={confirm}
+          onOpenChange={() => {}}
+          title="Discard changes?"
+          confirmLabel="Discard"
+          onConfirm={() => {}}
+        />
+      </Dialog>
+    </>
+  );
+}
+
+test('a dialog closing under its nested confirm hands its opener to the confirm, so focus ends on the opener', async () => {
+  const view = render(<EditWithConfirm edit={false} confirm={false} />);
+  const opener = screen.getByRole('button', { name: 'Opener' });
+  opener.focus();
+  view.rerender(<EditWithConfirm edit confirm={false} />);
+  const discard = await screen.findByRole('button', { name: 'Discard' });
+  await waitFor(() => {
+    if (document.activeElement !== discard) throw new Error('focus not trapped yet');
+  });
+  view.rerender(<EditWithConfirm edit confirm />);
+  const cancel = await screen.findByRole('button', { name: 'Cancel' });
+  await waitFor(() => {
+    if (document.activeElement !== cancel) throw new Error('confirm not focused yet');
+  });
+  // Родитель закрывается, пока подтверждение (портал в его overlay) ещё открыто.
+  view.rerender(<EditWithConfirm edit={false} confirm />);
+  await gone(() => screen.queryByRole('dialog', { name: 'Edit' }));
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  expect(document.activeElement).toBe(opener);
+});
