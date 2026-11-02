@@ -123,6 +123,17 @@ export class InMemoryTaskRepository implements TaskRepository {
       .map(copy);
   }
 
+  /** Каскады внешних ключей Postgres: шаги, подзадачи и файлы удаляются, события расхода остаются без задачи. */
+  async delete(id: string): Promise<boolean> {
+    const m = this.m;
+    if (!m.tasks.delete(id)) return false;
+    m.steps.splice(0, m.steps.length, ...m.steps.filter(s => s.taskId !== id));
+    for (const s of m.subtasks.values()) if (s.taskId === id) m.subtasks.delete(s.id);
+    for (const f of m.files.values()) if (f.taskId === id) m.files.delete(f.id);
+    for (const e of m.usage) if (e.taskId === id) e.taskId = null;
+    return true;
+  }
+
   async findStale(opts: { statuses: readonly TaskStatus[]; staleForMs: number; limit?: number }): Promise<Task[]> {
     const cutoff = this.m.clock.now().getTime() - opts.staleForMs;
     return [...this.m.tasks.values()]

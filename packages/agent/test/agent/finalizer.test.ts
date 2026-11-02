@@ -58,6 +58,20 @@ describe('safeOutputPath', () => {
 });
 
 describe('Finalizer', () => {
+  test('a task deleted while its file uploads leaves no object behind and the job stops', async () => {
+    const c = setupAgent();
+    const task = await ready(c, ['outputs/a.md', 'outputs/b.md'], { 'outputs/a.md': 'a', 'outputs/b.md': 'b' });
+    const put = c.fileStore.put.bind(c.fileStore);
+    c.fileStore.put = async (key, data, type) => {
+      await put(key, data, type);
+      await c.tasks.delete(task.id);
+    };
+    expect(await c.finalizer.finalize(task.id)).toEqual({ next: 'stop' });
+    expect(c.fileStore.objects.size).toBe(0);
+    // Повтор и follow job'а: задачи нет — стадия останавливается, не падая.
+    expect(await c.finalizer.finalize(task.id)).toEqual({ next: 'stop' });
+  });
+
   test('uploads the files, records them, marks the task done and destroys the sandbox', async () => {
     const c = setupAgent();
     const task = await ready(c, ['outputs/table.md'], { 'outputs/table.md': '| a |', 'outputs/chart.png': 'png' });

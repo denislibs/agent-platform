@@ -101,6 +101,13 @@ export class DrizzleTaskRepository implements TaskRepository {
       .limit(opts.limit ?? 50);
   }
 
+  /** Шаги, подзадачи и файлы — каскадом; usage_events.task_id становится null (schema.ts). */
+  async delete(id: string): Promise<boolean> {
+    if (!isUuid(id)) return false;
+    const rows = await this.db.delete(tasks).where(eq(tasks.id, id)).returning({ id: tasks.id });
+    return rows.length > 0;
+  }
+
   async findStale(opts: { statuses: readonly TaskStatus[]; staleForMs: number; limit?: number }): Promise<Task[]> {
     if (opts.statuses.length === 0) return [];
     return this.db

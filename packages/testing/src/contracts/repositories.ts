@@ -261,6 +261,34 @@ export function repositoryContract(
         expect(await h.tasks.listForUser(userId, { before: { createdAt: new Date(), id: MALFORMED_ID } })).toEqual([]);
       });
 
+      test('delete removes the task with its steps, subtasks and files; usage events stay without a task', async () => {
+        const userId = await h.seedUser({ millicredits: 1000 });
+        const task = await h.tasks.create({ userId, prompt: 'x' });
+        const other = await h.tasks.create({ userId, prompt: 'y' });
+        await h.steps.append({ taskId: task.id, agent: 'user', payload: msg('hi') });
+        await h.steps.append({ taskId: other.id, agent: 'user', payload: msg('kept') });
+        await h.subtasks.insertMany(task.id, [contract('a')]);
+        const file = await h.files.insert({ ...upload(userId, task.id), kind: 'output', path: 'outputs/r.csv' });
+        const kept = await h.files.insert(upload(userId, other.id));
+        await h.ledger.record({ userId, taskId: task.id, model: 'q', tokensIn: 1, tokensOut: 1, millicredits: 7 });
+
+        expect(await h.tasks.delete(task.id)).toBe(true);
+
+        expect(await h.tasks.get(task.id)).toBeUndefined();
+        expect(await h.steps.list(task.id)).toEqual([]);
+        expect(await h.subtasks.list(task.id)).toEqual([]);
+        expect(await h.files.get(file.id)).toBeUndefined();
+        expect((await h.files.get(kept.id))?.taskId).toBe(other.id);
+        expect(await h.steps.list(other.id)).toHaveLength(1);
+        expect(await h.countUsageEvents()).toBe(1);
+        expect(await h.ledger.spentOnTask(task.id)).toBe(0);
+        expect(await h.ledger.balance(userId)).toBe(993);
+      });
+
+      test('delete of an unknown or malformed id is false', async () => {
+        for (const id of [crypto.randomUUID(), MALFORMED_ID]) expect(await h.tasks.delete(id)).toBe(false);
+      });
+
       test('findStale returns tasks in the given statuses untouched for longer than staleForMs, oldest first', async () => {
         const userId = await h.seedUser();
         const oldest = await h.tasks.create({ userId, prompt: 'oldest' });

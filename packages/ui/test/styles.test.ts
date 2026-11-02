@@ -45,6 +45,11 @@ test('elements that only receive focus from the app on navigation draw no ring',
   );
 });
 
+test('a task item action shows on keyboard focus and on touch screens, not only on hover', () => {
+  expect(styles).toMatch(/\.ui-task-item:focus-within \.ui-btn\s*\{[^}]*opacity:\s*1/);
+  expect(styles).toMatch(/@media \(hover: none\)\s*\{\s*\.ui-task-item \.ui-btn\s*\{[^}]*opacity:\s*1/);
+});
+
 test('the composer shows focus on its frame, not as a ring around the inner field', () => {
   expect(styles).toMatch(/\.ui-composer:focus-within\s*\{[^}]*border-color/);
   expect(styles).toMatch(/\.ui-composer__input:focus-visible\s*\{[^}]*box-shadow:\s*none/);

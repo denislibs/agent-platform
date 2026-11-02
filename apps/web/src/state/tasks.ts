@@ -61,6 +61,11 @@ export function createTaskList(api: Api) {
       if (at !== -1) items.value = [...list.slice(0, at), task, ...list.slice(at)];
       else if (nextCursor.value === null) items.value = [...list, task];
     },
+    /** Удаляет задачу на сервере и из списка; ошибка запроса пробрасывается, список не меняется. */
+    async remove(id: string): Promise<void> {
+      await api.deleteTask(id);
+      items.value = items.value.filter(t => t.id !== id);
+    },
     clear(): void {
       batch(() => {
         items.value = [];

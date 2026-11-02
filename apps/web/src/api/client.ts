@@ -63,6 +63,9 @@ export interface ApiOptions {
 
 const task = (id: string) => `/api/tasks/${encodeURIComponent(id)}`;
 
+/** Ответ 204: тела нет, res.json() в send даёт undefined. */
+const NoContentSchema = z.undefined();
+
 /** Куда вернуть пользователя после входа по ссылке или через OAuth (по умолчанию на главную) и куда — при ошибке ссылки. */
 const authRedirects = (callbackURL: string) => ({ callbackURL, errorCallbackURL: '/sign-in' });
 
@@ -122,6 +125,7 @@ export function createApi(opts: ApiOptions = {}) {
         questionSeq === undefined ? { text } : { text, questionSeq },
       ),
     cancel: (id: string) => send('POST', `${task(id)}/cancel`, TaskEnvelopeSchema),
+    deleteTask: (id: string) => send('DELETE', task(id), NoContentSchema),
     declareUpload: (body: { name: string; contentType: string; size: number }) =>
       send('POST', '/api/uploads', UploadResponseSchema, body),
     sendMagicLink: (email: string, returnTo = '/') =>

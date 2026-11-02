@@ -107,15 +107,22 @@ export class Finalizer {
       const storageKey = `tasks/${taskId}/${path}`;
       const mime = mimeOf(path);
       await this.deps.fileStore.put(storageKey, bytes, mime);
-      await this.deps.files.insert({
-        userId: task.userId,
-        taskId,
-        kind: 'output',
-        path,
-        storageKey,
-        size: bytes.length,
-        mime,
-      });
+      try {
+        await this.deps.files.insert({
+          userId: task.userId,
+          taskId,
+          kind: 'output',
+          path,
+          storageKey,
+          size: bytes.length,
+          mime,
+        });
+      } catch (err) {
+        // Отменённую задачу удалили, пока файл грузился: записи не будет, и объект не должен остаться без неё.
+        if (!(err instanceof NotFoundError && err.entity === 'task')) throw err;
+        await this.deps.fileStore.delete(storageKey);
+        return { next: 'stop' };
+      }
       already.add(path);
     }
 

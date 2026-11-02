@@ -59,6 +59,11 @@ export interface TaskRepository {
    */
   listForUser(userId: string, opts?: { limit?: number; before?: TaskCursor }): Promise<Task[]>;
   /**
+   * Удаляет задачу: шаги, подзадачи и файлы уходят вместе с ней, у событий расхода taskId становится null (история
+   * списаний остаётся). true — удалена; неизвестный или кривой id — false. Статус не проверяется: решает вызывающий.
+   */
+  delete(id: string): Promise<boolean>;
+  /**
    * Задачи в статусах statuses, не обновлявшиеся дольше staleForMs по часам хранилища, старые первыми;
    * limit по умолчанию 100. Для сборщика зависших задач (спецификация 8). Запись шага тоже обновляет задачу.
    */

@@ -431,8 +431,15 @@
   opacity: 0;
   transition: opacity var(--dur-fast) var(--ease-standard);
 }
-.ui-task-item:hover .ui-btn {
+.ui-task-item:hover .ui-btn,
+.ui-task-item:focus-within .ui-btn {
   opacity: 1;
+}
+/* Без наведения (сенсорный экран) кнопку иначе не найти. */
+@media (hover: none) {
+  .ui-task-item .ui-btn {
+    opacity: 1;
+  }
 }
 
 .ui-computer {

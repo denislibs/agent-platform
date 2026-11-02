@@ -1,9 +1,11 @@
 import type { ComponentChildren } from 'preact';
-import { useEffect } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { useLocation } from 'preact-iso';
-import { Settings, SquarePen } from 'lucide-preact';
-import { Button, CreditBalance, TaskItem, cx } from '@agent/ui';
+import { Settings, SquarePen, Trash2 } from 'lucide-preact';
+import { Button, ConfirmDialog, CreditBalance, IconButton, TaskItem, cx, useToast } from '@agent/ui';
+import type { TaskSummary } from '@agent/shared';
 import { useApp } from '../state/app.ts';
+import { errorText } from '../view/errors.ts';
 import { taskItemStatus } from '../view/status.ts';
 import { MAIN_ID } from './page.ts';
 
@@ -12,12 +14,31 @@ export const taskTitle = (prompt: string): string => prompt.split('\n', 1)[0]!.t
 
 function TaskNav() {
   const { tasks } = useApp();
-  const { path } = useLocation();
+  const { path, route } = useLocation();
+  const toast = useToast();
+  const [deleting, setDeleting] = useState<TaskSummary | null>(null);
+  const [busy, setBusy] = useState(false);
   // Первая страница — один раз на приложение: список живёт в состоянии приложения между экранами.
   useEffect(() => {
     if (tasks.items.peek().length === 0) void tasks.reload();
   }, [tasks]);
   const items = tasks.items.value;
+
+  const confirmDelete = async () => {
+    if (!deleting) return;
+    setBusy(true);
+    try {
+      await tasks.remove(deleting.id);
+      // Экрану удалённой задачи показывать нечего.
+      if (path === `/tasks/${deleting.id}`) route('/');
+    } catch (err) {
+      toast.show({ tone: 'danger', title: 'Could not delete the task', description: errorText(err) });
+    } finally {
+      setBusy(false);
+      setDeleting(null);
+    }
+  };
+
   return (
     <nav class="ui-nav ui-shell__nav" aria-label="Tasks">
       <div class="ui-nav-label">Tasks</div>
@@ -28,6 +49,14 @@ function TaskNav() {
           status={taskItemStatus(task.status)}
           href={`/tasks/${encodeURIComponent(task.id)}`}
           current={path === `/tasks/${task.id}`}
+          menu={
+            <IconButton
+              icon={Trash2}
+              label={`Delete task ${taskTitle(task.prompt)}`}
+              size="xs"
+              onClick={() => setDeleting(task)}
+            />
+          }
         />
       ))}
       {items.length === 0 && tasks.loaded.value && <p class="ui-hint">No tasks yet.</p>}
@@ -36,6 +65,17 @@ function TaskNav() {
           Load more
         </Button>
       )}
+      <ConfirmDialog
+        open={deleting !== null}
+        onOpenChange={open => {
+          if (!open) setDeleting(null);
+        }}
+        title="Delete this task?"
+        description="The task and its files will be deleted. This cannot be undone."
+        confirmLabel="Delete"
+        busy={busy}
+        onConfirm={() => void confirmDelete()}
+      />
     </nav>
   );
 }
