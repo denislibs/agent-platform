@@ -109,6 +109,7 @@ describe('DELETE /api/me', () => {
     };
     const res = await t.call('DELETE', '/api/me', { headers, body: { email: user.email } });
     expect(res.status).toBe(409);
+    expect(await message(res)).toMatchObject({ code: 'deletion_incomplete' });
     expect(log).toEqual(['sessions']);
     expect(await t.c.fileStore.exists(key)).toBe(true);
   });
@@ -125,8 +126,106 @@ describe('DELETE /api/me', () => {
     };
     const res = await t.call('DELETE', '/api/me', { headers, body: { email: user.email } });
     expect(res.status).toBe(409);
-    expect((await message(res)).message).toContain('changed during the deletion');
+    expect(await message(res)).toMatchObject({ code: 'deletion_incomplete' });
     expect(log).not.toContain('user');
+  });
+
+  describe('a failure after the sessions are revoked', () => {
+    const INCOMPLETE = 'The deletion did not finish and you were signed out. Some files may already be gone.';
+
+    /** Отказ по делу: 409 deletion_incomplete, сессия отозвана, причина в журнале; после нового входа повтор доводит дело до конца. */
+    async function expectIncompleteThenRetry(t: ApiTest, log: string[], breakIt: () => void, mend: () => void) {
+      const { user, headers } = await t.signIn();
+      const key = await seedFile(t, user.id);
+      breakIt();
+      const res = await t.call('DELETE', '/api/me', { headers, body: { email: user.email } });
+      expect(res.status).toBe(409);
+      expect(await message(res)).toEqual({
+        code: 'deletion_incomplete',
+        message: `${INCOMPLETE} Sign in and delete the account again.`,
+      });
+      expect((await t.call('GET', '/api/me', { headers })).status).toBe(401);
+      expect(t.c.logger.entries).toMatchObject([
+        { level: 'error', message: 'account deletion did not finish', fields: { userId: user.id } },
+      ]);
+      expect(log).not.toContain('user');
+
+      mend();
+      const again = { cookie: `session=${t.auth.signIn(user)}`, origin: t.origin };
+      const retry = await t.call('DELETE', '/api/me', { headers: again, body: { email: user.email } });
+      expect(retry.status).toBe(204);
+      expect(log.at(-1)).toBe('user');
+      expect(await t.c.fileStore.exists(key)).toBe(false);
+    }
+
+    test('a failing object deletion', async () => {
+      const t = setupApi();
+      const log = record(t);
+      const del = t.c.fileStore.delete.bind(t.c.fileStore);
+      await expectIncompleteThenRetry(
+        t,
+        log,
+        () => {
+          t.c.fileStore.delete = async () => {
+            throw new Error('s3 down');
+          };
+        },
+        () => {
+          t.c.fileStore.delete = del;
+        },
+      );
+    });
+
+    test('a failing user deletion', async () => {
+      const t = setupApi();
+      const log = record(t);
+      const remove = t.auth.deleteUser.bind(t.auth);
+      await expectIncompleteThenRetry(
+        t,
+        log,
+        () => {
+          t.auth.deleteUser = async () => {
+            throw new Error('db down');
+          };
+        },
+        () => {
+          t.auth.deleteUser = remove;
+        },
+      );
+    });
+
+    test('a failing re-check', async () => {
+      const t = setupApi();
+      const log = record(t);
+      const count = t.c.tasks.countActive.bind(t.c.tasks);
+      let calls = 0;
+      await expectIncompleteThenRetry(
+        t,
+        log,
+        () => {
+          t.c.tasks.countActive = async id => {
+            if (++calls === 2) throw new Error('db down');
+            return count(id);
+          };
+        },
+        () => {
+          t.c.tasks.countActive = count;
+        },
+      );
+    });
+
+    test('a check that fails before the revocation keeps the old 409 and the session', async () => {
+      const t = setupApi();
+      const log = record(t);
+      const { user, headers } = await t.signIn();
+      await t.c.intake.create({ userId: user.id, prompt: 'Running' });
+      const res = await t.call('DELETE', '/api/me', { headers, body: { email: user.email } });
+      expect(res.status).toBe(409);
+      expect(await message(res)).toMatchObject({ code: 'conflict' });
+      expect(log).toEqual([]);
+      expect(t.c.logger.entries).toEqual([]);
+      expect((await t.call('GET', '/api/me', { headers })).status).toBe(200);
+    });
   });
 
   test('needs a session and the Origin of the app', async () => {

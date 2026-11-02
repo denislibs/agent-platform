@@ -13,6 +13,7 @@ export const API_ERROR_CODES = [
   'upload_incomplete',
   'payload_too_large',
   'too_many_active_tasks',
+  'deletion_incomplete',
   'internal',
 ] as const;
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];

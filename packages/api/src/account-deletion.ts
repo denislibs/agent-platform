@@ -1,7 +1,7 @@
-import type { Clock, FileRecord, FileRepository, FileStore, Task, TaskRepository } from '@agent/core';
+import type { Clock, FileRecord, FileRepository, FileStore, Logger, Task, TaskRepository } from '@agent/core';
 import { isTerminalTask } from '@agent/shared';
 import type { AuthGateway } from './auth/gateway';
-import { ApiError } from './errors';
+import { ApiError, errorLogFields } from './errors';
 
 /** Сколько минут после завершения последней задачи ждать: финализатор отменённой задачи ещё может грузить файлы. */
 export const DELETE_USER_IDLE_MINUTES = 10;
@@ -56,6 +56,7 @@ type AccountDeps = {
   fileStore: FileStore;
   tasks: TaskRepository;
   clock: Clock;
+  logger: Logger;
 };
 
 /** Активная или только что завершённая задача — 409: её job или финализатор ещё могут записать шаги и файлы. */
@@ -71,17 +72,26 @@ async function assertNoRecentWork(deps: AccountDeps, userId: string): Promise<vo
     );
 }
 
+const INCOMPLETE_MESSAGE =
+  'The deletion did not finish and you were signed out. Some files may already be gone. Sign in and delete the account again.';
+
 /**
  * Удаление аккаунта самим пользователем. Отличие от admin:delete-user: у контейнера API нет Docker (по замыслу),
  * поэтому песочницы не проверяются: песочницу задачи, которой больше нет, уберёт сборщик (Sweeper.destroyOrphans).
  * Первая проверка — до отзыва сессий: отказ не выкидывает пользователя из приложения, и он видит причину. Вторая —
  * после: запрос, прошедший охрану раньше, мог создать задачу, а объекты S3 ещё не тронуты.
+ * Всё после отзыва сессий — одна ошибка deletion_incomplete: пользователь уже вышел, часть файлов могла уйти, и
+ * «повторите» без пояснения привело бы его на вход без объяснений. Причина — в журнале; повтор безопасен (purgeUser).
  */
 export async function deleteOwnAccount(deps: AccountDeps, userId: string): Promise<void> {
   await assertNoRecentWork(deps, userId);
   await deps.auth.deleteSessions(userId);
-  await assertNoRecentWork(deps, userId);
-  const files = await deps.files.listForUser(userId);
-  if (!(await purgeUser(deps, userId, files)))
-    throw new ApiError(409, 'conflict', 'your account changed during the deletion: sign in and try again');
+  try {
+    await assertNoRecentWork(deps, userId);
+    const files = await deps.files.listForUser(userId);
+    if (!(await purgeUser(deps, userId, files))) throw new Error('the account changed during the deletion');
+  } catch (err) {
+    deps.logger.error('account deletion did not finish', { userId, ...errorLogFields(err) });
+    throw new ApiError(409, 'deletion_incomplete', INCOMPLETE_MESSAGE);
+  }
 }

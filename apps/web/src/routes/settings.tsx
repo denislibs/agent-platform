@@ -2,6 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { LogOut, Monitor, Moon, Sun, Trash2 } from 'lucide-preact';
 import { Avatar, Button, ChoiceGroup, CreditBalance, Dialog, Field, Input, Spinner, useToast } from '@agent/ui';
 import { MAX_NAME_CHARS, type MeResponse, type ProfileTheme, type UsageRow } from '@agent/shared';
+import { ApiRequestError } from '../api/client.ts';
 import { usePage } from '../layout/page.ts';
 import { Shell, taskTitle } from '../layout/shell.tsx';
 import { useApp } from '../state/app.ts';
@@ -100,14 +101,24 @@ function UsageSection() {
 }
 
 const DELETE_FORM_ID = 'delete-account';
+/** Объяснение читают уже на экране входа: дольше обычного тоста. */
+const INCOMPLETE_TOAST_MS = 15_000;
 
 /** Подтверждение удаления аккаунта: кнопка включается, когда введён email аккаунта. */
 function DeleteAccountDialog({ email, open, onClose }: { email: string; open: boolean; onClose(): void }) {
   const { session, tasks } = useApp();
+  const toast = useToast();
   const [typed, setTyped] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const matches = typed.trim().toLowerCase() === email.toLowerCase();
+
+  /** Закрытие забывает введённое и ошибку: открытый заново диалог начинается с чистого листа. */
+  const close = () => {
+    setTyped('');
+    setError(undefined);
+    onClose();
+  };
 
   const submit = async (event: Event) => {
     event.preventDefault();
@@ -118,6 +129,18 @@ function DeleteAccountDialog({ email, open, onClose }: { email: string; open: bo
       await session.deleteAccount(typed);
       tasks.clear();
     } catch (err) {
+      if (err instanceof ApiRequestError && err.code === 'deletion_incomplete') {
+        // Сессии уже отозваны: диалогу показывать некому, объяснение остаётся в тосте над роутером.
+        toast.show({
+          tone: 'danger',
+          title: 'The account was not fully deleted',
+          description: err.message,
+          duration: INCOMPLETE_TOAST_MS,
+        });
+        session.signedOut(true);
+        tasks.clear();
+        return;
+      }
       setError(errorText(err));
       setBusy(false);
     }
@@ -127,14 +150,14 @@ function DeleteAccountDialog({ email, open, onClose }: { email: string; open: bo
     <Dialog
       open={open}
       // Пока удаление идёт, Esc не закрывает: результат некуда было бы показать.
-      onOpenChange={next => busy || next || onClose()}
+      onOpenChange={next => busy || next || close()}
       role="alertdialog"
       size="sm"
       title="Delete your account?"
-      description="Your tasks, files and usage history will be deleted. This cannot be undone."
+      description="Your tasks, files, credit balance and usage history will be deleted. This cannot be undone."
       footer={
         <>
-          <Button variant="secondary" disabled={busy} onClick={onClose}>
+          <Button variant="secondary" disabled={busy} onClick={close}>
             Cancel
           </Button>
           <Button variant="danger" type="submit" form={DELETE_FORM_ID} disabled={!matches} loading={busy}>
@@ -244,7 +267,7 @@ export function SettingsPage() {
             <div class="ui-row">
               <div class="ui-row__body">
                 <span class="ui-row__title">Delete account</span>
-                <span class="ui-row__desc">Deletes your tasks, files and usage history.</span>
+                <span class="ui-row__desc">Deletes your tasks, files, credit balance and usage history.</span>
               </div>
               <div class="ui-row__control">
                 <Button variant="danger-outline" size="sm" icon={Trash2} onClick={() => setDeleting(true)}>

@@ -211,3 +211,40 @@ test('Cancel closes the dialog and deletes nothing', async () => {
   await until(() => screen.queryByRole('alertdialog') === null);
   expect(calls.some(c => c.method === 'DELETE')).toBe(false);
 });
+
+test('an incomplete deletion signs out, forgets the tasks and keeps the explanation in a toast', async () => {
+  const message =
+    'The deletion did not finish and you were signed out. Some files may already be gone. Sign in and delete the account again.';
+  const { field, state } = await openDeleteDialog({
+    'GET /api/tasks': json({ tasks: [taskSummary()], nextCursor: null }),
+    'DELETE /api/me': json({ error: { code: 'deletion_incomplete', message } }, 409),
+  });
+  await userEvent.type(field, 'ada@example.com{Enter}');
+  await until(() => state.session.status.value === 'signed_out');
+  expect(state.session.leftOnPurpose.value).toBe(true);
+  expect(state.tasks.items.value).toEqual([]);
+  expect((await screen.findByText(message)).closest('[role="alert"]')).toBeTruthy();
+});
+
+test('the dialog says the credit balance goes too', async () => {
+  const { dialog } = await openDeleteDialog({});
+  expect(within(dialog).getByText(/tasks, files, credit balance and usage history/)).toBeTruthy();
+  expect(screen.getByText('Deletes your tasks, files, credit balance and usage history.')).toBeTruthy();
+});
+
+test('Cancel forgets the typed email and the error: a reopened dialog starts clean', async () => {
+  const { dialog, field, confirm } = await openDeleteDialog({
+    'DELETE /api/me': json({ error: { code: 'conflict', message: 'you have running tasks' } }, 409),
+  });
+  await userEvent.type(field, 'ada@example.com{Enter}');
+  await within(dialog).findByText('you have running tasks');
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+  await until(() => screen.queryByRole('alertdialog') === null);
+  expect(confirm.isConnected).toBe(false);
+
+  await userEvent.click(screen.getByRole('button', { name: 'Delete account' }));
+  const reopened = await screen.findByRole('alertdialog', { name: 'Delete your account?' });
+  expect((within(reopened).getByRole('textbox') as HTMLInputElement).value).toBe('');
+  expect((within(reopened).getByRole('button', { name: 'Delete account' }) as HTMLButtonElement).disabled).toBe(true);
+  expect(within(reopened).queryByText('you have running tasks')).toBeNull();
+});

@@ -63,6 +63,21 @@ test('after deleting the account the app shows sign-in without a return address'
   expect(location.pathname + location.search).toBe('/sign-in');
 });
 
+test('an incomplete deletion shows sign-in with the explanation in a toast', async () => {
+  const message = 'The deletion did not finish and you were signed out. Sign in and delete the account again.';
+  start(
+    { ...signedIn(), 'DELETE /api/me': json({ error: { code: 'deletion_incomplete', message } }, 409) },
+    '/settings',
+  );
+  await userEvent.click(await screen.findByRole('button', { name: 'Delete account' }));
+  const dialog = await screen.findByRole('alertdialog');
+  await userEvent.type(within(dialog).getByRole('textbox'), 'ada@example.com');
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Delete account' }));
+  await screen.findByRole('button', { name: 'Email me a sign-in link' });
+  expect(location.pathname + location.search).toBe('/sign-in');
+  expect(await screen.findByText(message)).toBeTruthy();
+});
+
 test('a 401 in the middle of work ends the session and shows sign-in', async () => {
   start({ ...signedIn(), 'GET /api/tasks/t1': unauthorized }, '/tasks/t1');
   await screen.findByRole('button', { name: 'Email me a sign-in link' });
