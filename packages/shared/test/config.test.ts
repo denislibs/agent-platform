@@ -186,6 +186,12 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...base, GOOGLE_CLIENT_ID: 'id' })).toThrow(/GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET/);
   });
 
+  test('UPLOAD_TTL_MS is at least an hour: longer than the longest presigned PUT', () => {
+    expect(loadConfig({ ...base, UPLOAD_TTL_MS: '3600000' }).worker.uploadTtlMs).toBe(3_600_000);
+    expect(() => loadConfig({ ...base, UPLOAD_TTL_MS: '3599999' })).toThrow(/UPLOAD_TTL_MS/);
+    expect(() => loadConfig({ ...base, UPLOAD_TTL_MS: '0' })).toThrow(/UPLOAD_TTL_MS/);
+  });
+
   test('the SSE heartbeat is at most 2 minutes; the stream lifetime can be overridden', () => {
     expect(loadConfig({ ...base, SSE_HEARTBEAT_MS: '120000' }).api.sseHeartbeatMs).toBe(120_000);
     expect(() => loadConfig({ ...base, SSE_HEARTBEAT_MS: '120001' })).toThrow(/SSE_HEARTBEAT_MS/);

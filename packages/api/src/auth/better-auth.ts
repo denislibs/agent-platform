@@ -156,6 +156,12 @@ export class BetterAuthGateway implements AuthGateway {
     return (await ctx.internalAdapter.findUserByEmail(email.toLowerCase()))?.user.id;
   }
 
+  /** Сессии хранятся только в Postgres (secondaryStorage и cookie cache не включены): getSession их больше не найдёт. */
+  async deleteSessions(userId: string): Promise<void> {
+    const ctx = await this.auth.$context;
+    await ctx.internalAdapter.deleteUserSessions(userId);
+  }
+
   /** Строка user; сессии, аккаунты и таблицы приложения (задачи, файлы, расход) — каскадом в Postgres. */
   async deleteUser(userId: string): Promise<void> {
     const ctx = await this.auth.$context;

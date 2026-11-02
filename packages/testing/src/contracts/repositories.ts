@@ -49,6 +49,34 @@ async function expectNotFound(p: Promise<unknown>, entity: string): Promise<void
   await expect(p).rejects.toHaveProperty('entity', entity);
 }
 
+/**
+ * Уборка загрузки (сборщик): run блокирует строку lockUnattached, удаляет объект и запись. Привязка в другом
+ * run ждёт блокировку и не находит файла; откат run (сбой S3) оставляет файл, и привязка проходит.
+ */
+async function racingAttach(h: RepositoryHarness, outcome: 'commit' | 'rollback') {
+  const userId = await h.seedUser();
+  const task = await h.tasks.create({ userId, prompt: 'x' });
+  const file = await h.files.insert(upload(userId));
+  let locked!: () => void;
+  const isLocked = new Promise<void>(resolve => (locked = resolve));
+  let release!: () => void;
+  const released = new Promise<void>(resolve => (release = resolve));
+  const sweep = h.uow.run(async tx => {
+    expect(await tx.files.lockUnattached(file.id)).toBeDefined();
+    locked();
+    await released;
+    if (outcome === 'rollback') throw new Error('s3 is down');
+    return tx.files.deleteUnattached(file.id);
+  });
+  await isLocked;
+  const attach = h.uow.run(tx => tx.files.attachToTask([file.id], userId, task.id));
+  // Привязка успевает упереться в блокировку строки.
+  await new Promise(resolve => setTimeout(resolve, 100));
+  release();
+  const [swept, attached] = await Promise.allSettled([sweep, attach]);
+  return { file, task, swept, attached };
+}
+
 export function repositoryContract(
   name: string,
   open: () => Promise<{ harness: RepositoryHarness; close(): Promise<void> }>,
@@ -660,6 +688,23 @@ export function repositoryContract(
         );
       });
 
+      test('lockUnattached returns an input that is still unattached; attached, output and unknown ids give undefined', async () => {
+        const userId = await h.seedUser();
+        const task = await h.tasks.create({ userId, prompt: 'x' });
+        const loose = await h.files.insert(upload(userId));
+        const attached = await h.files.insert(upload(userId));
+        await h.files.attachToTask([attached.id], userId, task.id);
+        const output = await h.files.insert({ ...upload(userId, task.id), kind: 'output', path: 'outputs/r.csv' });
+
+        expect(await h.uow.run(tx => tx.files.lockUnattached(loose.id))).toMatchObject({
+          id: loose.id,
+          storageKey: loose.storageKey,
+          taskId: null,
+        });
+        for (const id of [attached.id, output.id, crypto.randomUUID(), MALFORMED_ID])
+          expect(await h.uow.run(tx => tx.files.lockUnattached(id))).toBeUndefined();
+      });
+
       test('get returns a file by id; unknown and malformed ids give undefined', async () => {
         const userId = await h.seedUser();
         const f = await h.files.insert(upload(userId));
@@ -723,6 +768,20 @@ export function repositoryContract(
         });
         await expectNotFound(p, 'task');
         expect(await h.tasks.countActive(userId)).toBe(0);
+      });
+
+      test('an attach waiting on a locked unattached file finds nothing once the run deletes it', async () => {
+        const { file, swept, attached } = await racingAttach(h, 'commit');
+        expect(swept).toEqual({ status: 'fulfilled', value: true });
+        expect(attached).toEqual({ status: 'fulfilled', value: 0 });
+        expect(await h.files.get(file.id)).toBeUndefined();
+      });
+
+      test('an attach waiting on a locked unattached file attaches it when the run rolls back', async () => {
+        const { file, task, swept, attached } = await racingAttach(h, 'rollback');
+        expect(swept.status).toBe('rejected');
+        expect(attached).toEqual({ status: 'fulfilled', value: 1 });
+        expect((await h.files.get(file.id))?.taskId).toBe(task.id);
       });
 
       test('lockUser serialises concurrent check-then-create for the same user', async () => {

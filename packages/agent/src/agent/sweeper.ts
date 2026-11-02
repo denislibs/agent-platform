@@ -8,6 +8,7 @@ import {
   type SandboxProvider,
   type Task,
   type TaskRepository,
+  type UnitOfWork,
 } from '@agent/core';
 import { isTerminalTask, type Config, type JobKind } from '@agent/shared';
 import { answeredAfterLastPause, type TaskGuard } from './guard';
@@ -36,6 +37,7 @@ export class Sweeper {
       guard: TaskGuard;
       files: FileRepository;
       fileStore: FileStore;
+      uow: UnitOfWork;
       config: Config;
       logger: Logger;
     },
@@ -154,31 +156,32 @@ export class Sweeper {
 
   /**
    * Загрузки, которые так и не привязали к задаче (POST /api/uploads без POST /api/tasks): не больше 100 старейших
-   * за проход. Сначала запись — только если файл всё ещё не привязан (deleteUnattached), потом объект: привязка,
-   * успевшая раньше, сохраняет файл задаче, а после удаления записи привязать уже нечего. Выходные файлы и
-   * привязанные входные сюда не попадают никогда. Объекта, которого уже нет, удаление S3 не замечает. Сбой удаления
-   * объекта оставляет в S3 сироту без записи — это пишется в журнал (повторить нечем: записи уже нет).
+   * за проход. Каждая — в своей транзакции: строка блокируется (lockUnattached, только если файл всё ещё
+   * не привязан), удаляется объект S3, затем запись. Привязка (TaskIntake) ждёт блокировку строки и после коммита
+   * не находит файла — задача не создаётся (404). Сбой S3 откатывает транзакцию: запись остаётся, следующий проход
+   * повторит, а ждавшая привязка проходит. Объекта, которого уже нет, удаление S3 не замечает. Выходные файлы
+   * и привязанные входные сюда не попадают никогда. Транзакция открыта на время одного удаления объекта S3.
    */
   private async removeStaleUploads(): Promise<PassResult> {
-    const { files, fileStore, config, logger } = this.deps;
+    const { files, fileStore, uow, config, logger } = this.deps;
     const result: PassResult = { count: 0, failed: 0 };
     for (const file of await files.listUnattachedInputs({ olderThanMs: config.worker.uploadTtlMs })) {
       try {
-        if (!(await files.deleteUnattached(file.id))) continue;
-        result.count++;
+        const removed = await uow.run(async tx => {
+          const locked = await tx.files.lockUnattached(file.id);
+          if (!locked) return false;
+          await fileStore.delete(locked.storageKey);
+          return tx.files.deleteUnattached(locked.id);
+        });
+        if (removed) result.count++;
       } catch (err) {
-        result.failed++; // следующий проход попробует снова
-        logger.warn('sweeper could not remove a stale upload', { fileId: file.id, error: errorMessage(err) });
-        continue;
-      }
-      await fileStore.delete(file.storageKey).catch((err: unknown) => {
-        result.failed++;
-        logger.warn('sweeper removed a stale upload but not its object', {
+        result.failed++; // запись на месте: следующий проход попробует снова
+        logger.warn('sweeper could not remove a stale upload', {
           fileId: file.id,
           storageKey: file.storageKey,
           error: errorMessage(err),
         });
-      });
+      }
     }
     return result;
   }

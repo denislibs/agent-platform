@@ -357,6 +357,12 @@ export class InMemoryFileRepository implements FileRepository {
       .map(copy);
   }
 
+  /** Транзакции in-memory и так идут по одной: блокировка строки не нужна. */
+  async lockUnattached(id: string): Promise<FileRecord | undefined> {
+    const f = this.m.files.get(id);
+    return f && f.kind === 'input' && f.taskId === null ? copy(f) : undefined;
+  }
+
   async deleteUnattached(id: string): Promise<boolean> {
     const f = this.m.files.get(id);
     if (!f || f.kind !== 'input' || f.taskId !== null) return false;

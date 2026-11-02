@@ -29,6 +29,10 @@ export class FakeAuth implements AuthGateway {
     return [...this.sessions.values()].find(u => u.email === email)?.id;
   }
 
+  async deleteSessions(userId: string): Promise<void> {
+    for (const [token, user] of this.sessions) if (user.id === userId) this.sessions.delete(token);
+  }
+
   /** Как удаление строки user: все сессии пользователя пропадают. */
   async deleteUser(userId: string): Promise<void> {
     for (const [token, user] of this.sessions) if (user.id === userId) this.sessions.delete(token);

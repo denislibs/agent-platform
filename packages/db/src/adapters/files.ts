@@ -75,6 +75,16 @@ export class DrizzleFileRepository implements FileRepository {
       .limit(opts.limit ?? 100);
   }
 
+  async lockUnattached(id: string): Promise<FileRecord | undefined> {
+    if (!isUuid(id)) return undefined;
+    const [row] = await this.db
+      .select()
+      .from(files)
+      .where(and(eq(files.id, id), eq(files.kind, 'input'), isNull(files.taskId)))
+      .for('update');
+    return row;
+  }
+
   async deleteUnattached(id: string): Promise<boolean> {
     if (!isUuid(id)) return false;
     const rows = await this.db

@@ -221,6 +221,32 @@ const upload = (userId: string) => ({
   mime: 'text/csv',
 });
 
+/** Сборщик держит файл (удаляет объект), а пользователь в это время создаёт задачу с ним. */
+async function racingIntake(s3: 'ok' | 'down') {
+  const c = setupAgent({ ...env, UPLOAD_TTL_MS: '3600000' });
+  const userId = c.memory.seedUser();
+  const file = await c.files.insert(upload(userId));
+  await c.fileStore.put(file.storageKey, 'a\n1\n');
+  c.clock.advance(3_600_001);
+  let deleting!: () => void;
+  const isDeleting = new Promise<void>(resolve => (deleting = resolve));
+  let release!: () => void;
+  const released = new Promise<void>(resolve => (release = resolve));
+  const del = c.fileStore.delete.bind(c.fileStore);
+  c.fileStore.delete = async key => {
+    deleting();
+    await released;
+    if (s3 === 'down') throw new Error('s3 is down');
+    await del(key);
+  };
+  const sweep = c.sweeper.sweep();
+  await isDeleting;
+  const intake = c.intake.create({ userId, prompt: 'use the file', fileIds: [file.id] });
+  release();
+  const [swept, created] = await Promise.allSettled([sweep, intake]);
+  return { c, userId, file, swept, created };
+}
+
 describe('Sweeper: stale uploads', () => {
   test('an upload never attached to a task is removed after UPLOAD_TTL_MS: the record and the S3 object', async () => {
     const c = setupAgent({ ...env, UPLOAD_TTL_MS: '3600000' });
@@ -297,17 +323,42 @@ describe('Sweeper: stale uploads', () => {
     expect(c.logger.entries).toEqual([]);
   });
 
-  test('a failing S3 delete is counted and logged; the record is gone either way', async () => {
+  test('a failing S3 delete is counted and logged; the record stays and the next pass removes both', async () => {
     const c = setupAgent({ ...env, UPLOAD_TTL_MS: '3600000' });
     const userId = c.memory.seedUser();
     const file = await c.files.insert(upload(userId));
+    await c.fileStore.put(file.storageKey, 'a\n1\n');
     c.clock.advance(3_600_001);
+    const del = c.fileStore.delete.bind(c.fileStore);
     c.fileStore.delete = () => Promise.reject(new Error('s3 is down'));
     const r = await c.sweeper.sweep();
-    expect(r).toMatchObject({ uploads: 1, failed: 1 });
-    expect(await c.files.get(file.id)).toBeUndefined();
+    expect(r).toMatchObject({ uploads: 0, failed: 1 });
+    expect(await c.files.get(file.id)).toBeDefined();
     expect(c.logger.entries).toMatchObject([
       { level: 'warn', fields: { fileId: file.id, storageKey: file.storageKey, error: 's3 is down' } },
     ]);
+
+    c.fileStore.delete = del;
+    expect(await c.sweeper.sweep()).toMatchObject({ uploads: 1, failed: 0 });
+    expect(await c.files.get(file.id)).toBeUndefined();
+    expect(await c.fileStore.exists(file.storageKey)).toBe(false);
+  });
+
+  test('a task created with an upload the sweeper is removing is refused: the sweep wins', async () => {
+    const { c, userId, file, swept, created } = await racingIntake('ok');
+    expect(swept).toMatchObject({ status: 'fulfilled', value: { uploads: 1, failed: 0 } });
+    expect(created.status).toBe('rejected');
+    expect(await c.tasks.countActive(userId)).toBe(0);
+    expect(await c.files.get(file.id)).toBeUndefined();
+    expect(await c.fileStore.exists(file.storageKey)).toBe(false);
+  });
+
+  test('when the S3 delete fails while a task is created with the upload, the task gets the file', async () => {
+    const { c, file, swept, created } = await racingIntake('down');
+    expect(swept).toMatchObject({ status: 'fulfilled', value: { uploads: 0, failed: 1 } });
+    expect(created.status).toBe('fulfilled');
+    const task = created.status === 'fulfilled' ? created.value : undefined;
+    expect((await c.files.get(file.id))?.taskId).toBe(task?.id);
+    expect(await c.fileStore.exists(file.storageKey)).toBe(true);
   });
 });

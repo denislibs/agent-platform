@@ -130,6 +130,12 @@ export interface FileRepository {
    */
   listUnattachedInputs(opts: { olderThanMs: number; limit?: number }): Promise<FileRecord[]>;
   /**
+   * Входной файл, всё ещё не привязанный к задаче, с блокировкой его строки до конца транзакции (SELECT … FOR
+   * UPDATE): смысл имеет только на tx в UnitOfWork.run. Привязка в другой транзакции ждёт блокировку, а после
+   * коммита удаления не находит файла. Привязанный, выходной, неизвестный или кривой id — undefined.
+   */
+  lockUnattached(id: string): Promise<FileRecord | undefined>;
+  /**
    * Удаляет запись входного файла, только если он всё ещё не привязан к задаче: привязка и удаление не гоняются
    * друг с другом. true — удалена. Привязанный, выходной, неизвестный или кривой id — false, ничего не меняется.
    */
