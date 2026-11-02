@@ -15,6 +15,7 @@ export const signedIn = (): Routes => ({
   'GET /api/config': json({ providers: ['github'], uploadMaxBytes: 1024 }),
   'GET /api/me': json(me()),
   'GET /api/tasks': json({ tasks: [], nextCursor: null }),
+  'GET /api/usage': json({ usage: [] }),
 });
 
 /**

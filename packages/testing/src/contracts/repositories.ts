@@ -611,6 +611,38 @@ export function repositoryContract(
         expect(await h.ledger.spentOnTask(MALFORMED_ID)).toBe(0);
       });
 
+      test('usageByTask groups the events of a user by task, last activity first; deleted tasks form one row', async () => {
+        const userId = await h.seedUser({ millicredits: 100 });
+        const old = await h.tasks.create({ userId, prompt: 'Old' });
+        const recent = await h.tasks.create({ userId, prompt: 'Recent' });
+        const gone = await h.tasks.create({ userId, prompt: 'Gone' });
+        const gone2 = await h.tasks.create({ userId, prompt: 'Gone too' });
+        const other = await h.seedUser();
+        const charge = (taskId: string | null, millicredits: number, by = userId) =>
+          h.ledger.record({ userId: by, taskId, model: 'q', tokensIn: 10, tokensOut: 1, millicredits });
+        await charge(gone.id, 1);
+        await charge(gone2.id, 2);
+        await charge(old.id, 3);
+        await h.elapse(5);
+        await charge(old.id, 4);
+        await h.elapse(5);
+        await charge(recent.id, 5);
+        await charge(null, 1, other);
+        await h.tasks.delete(gone.id);
+        await h.tasks.delete(gone2.id);
+
+        const usage = await h.ledger.usageByTask(userId);
+        expect(usage.map(u => [u.taskId, u.prompt, u.millicredits, u.tokens])).toEqual([
+          [recent.id, 'Recent', 5, 11],
+          [old.id, 'Old', 7, 22],
+          [null, null, 3, 22],
+        ]);
+        for (const u of usage) expect(u.lastActivityAt).toBeInstanceOf(Date);
+        expect(usage[0]!.lastActivityAt.getTime()).toBeGreaterThan(usage[1]!.lastActivityAt.getTime());
+        expect(await h.ledger.usageByTask(userId, { limit: 1 })).toHaveLength(1);
+        expect(await h.ledger.usageByTask('no-such-user')).toEqual([]);
+      });
+
       test('balance may go negative; the caller decides what to do', async () => {
         const userId = await h.seedUser({ millicredits: 1 });
         expect(

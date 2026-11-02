@@ -63,3 +63,98 @@ test('a failed sign-out keeps the session and says so', async () => {
   expect(state.session.status.value).toBe('signed_in');
   expect((screen.getByRole('button', { name: 'Sign out' }) as HTMLButtonElement).disabled).toBe(false);
 });
+
+test('the sections come in order: Profile, Appearance, Credits, Usage, Account', async () => {
+  const { view, state } = setup(signedIn(), '/settings');
+  await state.session.load();
+  view(<SettingsPage />);
+  expect(screen.getAllByRole('heading', { level: 2 }).map(h => h.textContent)).toEqual([
+    'Profile',
+    'Appearance',
+    'Credits',
+    'Usage',
+    'Account',
+  ]);
+  expect(screen.getByRole('img', { name: 'Ada' })).toBeTruthy();
+});
+
+test('the name is saved trimmed and shown; Save is off while nothing changed', async () => {
+  const { view, calls, state } = setup(
+    { ...signedIn(), 'PATCH /api/me': json(me({ name: 'Ada Lovelace' })) },
+    '/settings',
+  );
+  await state.session.load();
+  view(<SettingsPage />);
+  const save = screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement;
+  expect(save.disabled).toBe(true);
+  const field = screen.getByRole('textbox', { name: 'Name' });
+  await userEvent.clear(field);
+  expect(save.disabled).toBe(true);
+  await userEvent.type(field, '  Ada Lovelace ');
+  await userEvent.click(save);
+  await screen.findByText('Name saved');
+  expect(calls.find(c => c.method === 'PATCH')?.body).toEqual({ name: 'Ada Lovelace' });
+  expect(state.session.me.value?.user.name).toBe('Ada Lovelace');
+  expect(screen.getByRole('img', { name: 'Ada Lovelace' })).toBeTruthy();
+  expect(save.disabled).toBe(true);
+});
+
+test('a refused name is shown and the profile keeps the old one', async () => {
+  const { view, state } = setup(
+    { ...signedIn(), 'PATCH /api/me': json({ error: { code: 'bad_request', message: 'name is too long' } }, 400) },
+    '/settings',
+  );
+  await state.session.load();
+  view(<SettingsPage />);
+  await userEvent.type(screen.getByRole('textbox', { name: 'Name' }), ' B');
+  await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await screen.findByText('Could not save the name');
+  expect(state.session.me.value?.user.name).toBe('Ada');
+});
+
+test('usage lists tasks with links and credits; events of deleted tasks are one row', async () => {
+  const usage = [
+    {
+      taskId: 't1',
+      prompt: 'Find suppliers\nin the EU',
+      millicredits: 1500,
+      credits: '1.5',
+      tokens: 12_000,
+      lastActivityAt: '2026-11-02T10:00:00.000Z',
+    },
+    {
+      taskId: null,
+      prompt: null,
+      millicredits: 250,
+      credits: '0.25',
+      tokens: 90,
+      lastActivityAt: '2026-11-01T10:00:00.000Z',
+    },
+  ];
+  const { view, state } = setup({ ...signedIn(), 'GET /api/usage': json({ usage }) }, '/settings');
+  await state.session.load();
+  view(<SettingsPage />);
+  const link = await screen.findByRole('link', { name: 'Find suppliers' });
+  expect(link.getAttribute('href')).toBe('/tasks/t1');
+  expect(screen.getByText('1.5 credits')).toBeTruthy();
+  expect(screen.getByText(/^12,000 tokens · Nov 2, 2026$/)).toBeTruthy();
+  expect(screen.getByText('Deleted tasks')).toBeTruthy();
+  expect(screen.getByText('0.25 credits')).toBeTruthy();
+  expect(screen.queryByRole('link', { name: 'Deleted tasks' })).toBeNull();
+});
+
+test('an empty history and a failed load say so', async () => {
+  const empty = setup(signedIn(), '/settings');
+  await empty.state.session.load();
+  const { unmount } = empty.view(<SettingsPage />);
+  await screen.findByText('No credits spent yet.');
+  unmount();
+
+  const broken = setup(
+    { ...signedIn(), 'GET /api/usage': json({ error: { code: 'internal', message: 'boom' } }, 500) },
+    '/settings',
+  );
+  await broken.state.session.load();
+  broken.view(<SettingsPage />);
+  await screen.findByText('Could not load the usage history.');
+});

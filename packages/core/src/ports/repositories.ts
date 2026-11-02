@@ -9,6 +9,7 @@ import type {
   SubtaskPatch,
   Task,
   TaskPatch,
+  TaskUsage,
   UsageInput,
 } from '../entities';
 
@@ -117,6 +118,8 @@ export interface CreditLedger {
   balance(userId: string): Promise<number>;
   /** Сколько списано за задачу (сумма событий расхода с этим taskId); неизвестная или кривая задача — 0. */
   spentOnTask(taskId: string): Promise<number>;
+  /** Расход пользователя по задачам: последняя активность новее — раньше; limit по умолчанию 50. */
+  usageByTask(userId: string, opts?: { limit?: number }): Promise<TaskUsage[]>;
 }
 
 export interface FileRepository {

@@ -17,6 +17,7 @@ import {
   type TaskCursor,
   type TaskPatch,
   type TaskRepository,
+  type TaskUsage,
   type UsageInput,
 } from '@agent/core';
 import {
@@ -319,6 +320,30 @@ export class InMemoryCreditLedger implements CreditLedger {
 
   async spentOnTask(taskId: string): Promise<number> {
     return this.m.usage.filter(e => e.taskId === taskId).reduce((n, e) => n + e.millicredits, 0);
+  }
+
+  async usageByTask(userId: string, opts: { limit?: number } = {}): Promise<TaskUsage[]> {
+    const rows = new Map<string | null, TaskUsage>();
+    for (const e of this.m.usage.filter(u => u.userId === userId)) {
+      const row = rows.get(e.taskId);
+      if (row) {
+        row.millicredits += e.millicredits;
+        row.tokens += e.tokensIn + e.tokensOut;
+        if (e.createdAt > row.lastActivityAt) row.lastActivityAt = e.createdAt;
+      } else {
+        rows.set(e.taskId, {
+          taskId: e.taskId,
+          prompt: (e.taskId && this.m.tasks.get(e.taskId)?.prompt) ?? null,
+          millicredits: e.millicredits,
+          tokens: e.tokensIn + e.tokensOut,
+          lastActivityAt: e.createdAt,
+        });
+      }
+    }
+    return [...rows.values()]
+      .toSorted((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime())
+      .slice(0, opts.limit ?? 50)
+      .map(copy);
   }
 }
 

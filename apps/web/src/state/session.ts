@@ -56,6 +56,10 @@ export function createSession(api: Api) {
         throw err;
       }
     },
+    /** Имя в профиле; ошибка сохранения пробрасывается, профиль на экране не меняется. */
+    async saveName(name: string): Promise<void> {
+      me.value = await api.setName(name);
+    },
     async signOut(): Promise<void> {
       await api.signOut();
       this.signedOut(true);

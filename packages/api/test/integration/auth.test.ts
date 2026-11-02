@@ -211,6 +211,18 @@ test('signing out ends the session', async () => {
   expect((await app.request(`${origin}/api/me`, { headers: { cookie } })).status).toBe(401);
 });
 
+test('PATCH /api/me writes the name to the profile: the next request reads it from the session', async () => {
+  const cookie = await signIn(newEmail());
+  const patched = await app.request(`${origin}/api/me`, {
+    method: 'PATCH',
+    headers: { cookie, origin, 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'Ada Lovelace' }),
+  });
+  expect(patched.status).toBe(200);
+  const me = MeResponseSchema.parse(await (await app.request(`${origin}/api/me`, { headers: { cookie } })).json());
+  expect(me.user.name).toBe('Ada Lovelace');
+});
+
 test('the theme lives in the profile: PATCH /api/me writes it, the session reads it, update-user cannot', async () => {
   const cookie = await signIn(newEmail());
   const json = { cookie, origin, 'content-type': 'application/json' };

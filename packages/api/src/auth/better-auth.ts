@@ -150,6 +150,12 @@ export class BetterAuthGateway implements AuthGateway {
     await ctx.internalAdapter.updateUser(userId, { theme });
   }
 
+  /** Сессия читает профиль из Postgres на каждый запрос (cookie cache не включён): имя видно сразу. */
+  async setName(userId: string, name: string): Promise<void> {
+    const ctx = await this.auth.$context;
+    await ctx.internalAdapter.updateUser(userId, { name });
+  }
+
   /** Better Auth хранит адреса в нижнем регистре. */
   async findUserId(email: string): Promise<string | undefined> {
     const ctx = await this.auth.$context;

@@ -24,6 +24,7 @@ export const MAX_PROMPT_CHARS = 20_000;
 export const MAX_FILES_PER_TASK = 20;
 export const MAX_TASKS_PAGE = 100;
 export const MAX_SEARCH_CHARS = 200;
+export const MAX_NAME_CHARS = 100;
 
 // ── Запросы ──
 /** Postgres `text` не хранит U+0000: такая строка дала бы 500 при записи, поэтому отсекается как 400 на входе. */
@@ -71,7 +72,20 @@ export const UploadBodySchema = z.object({
 export const PROFILE_THEMES = ['dark', 'light', 'auto'] as const;
 export type ProfileTheme = (typeof PROFILE_THEMES)[number];
 export const ProfileThemeSchema = z.enum(PROFILE_THEMES);
-export const UpdateMeBodySchema = z.object({ theme: ProfileThemeSchema });
+/** Хотя бы одно поле: пустой PATCH — ошибка клиента, а не молчаливый успех. */
+export const UpdateMeBodySchema = z
+  .object({
+    theme: ProfileThemeSchema.optional(),
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .max(MAX_NAME_CHARS)
+      .refine(noNul, NO_NUL_MESSAGE)
+      .refine(wellFormed, WELL_FORMED_MESSAGE)
+      .optional(),
+  })
+  .refine(body => body.theme !== undefined || body.name !== undefined, 'nothing to update');
 
 /** Строка поиска в запросе. Пустая — фильтра нет; символы, которые Postgres не примет, — 400. */
 const SearchQuerySchema = z
@@ -195,6 +209,16 @@ export const MeResponseSchema = z.object({
   }),
   balance: z.object({ millicredits: z.number().int(), credits: z.string() }),
 });
+/** Расход по задаче; taskId null — все события задач, которых больше нет, одной строкой. */
+export const UsageRowSchema = z.object({
+  taskId: z.string().nullable(),
+  prompt: z.string().nullable(),
+  millicredits: z.number().int(),
+  credits: z.string(),
+  tokens: z.number().int(),
+  lastActivityAt: IsoDate,
+});
+export const UsageResponseSchema = z.object({ usage: z.array(UsageRowSchema) });
 export const UploadResponseSchema = z.object({
   file: FileDtoSchema,
   upload: z.object({ url: z.string(), method: z.literal('PUT'), headers: z.record(z.string(), z.string()) }),
@@ -219,6 +243,8 @@ export type TaskResponse = z.infer<typeof TaskResponseSchema>;
 export type TaskListResponse = z.infer<typeof TaskListResponseSchema>;
 export type FileListResponse = z.infer<typeof FileListResponseSchema>;
 export type MeResponse = z.infer<typeof MeResponseSchema>;
+export type UsageRow = z.infer<typeof UsageRowSchema>;
+export type UsageResponse = z.infer<typeof UsageResponseSchema>;
 export type UploadResponse = z.infer<typeof UploadResponseSchema>;
 export type StreamEnd = z.infer<typeof StreamEndSchema>;
 export type StreamError = z.infer<typeof StreamErrorSchema>;

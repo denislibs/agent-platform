@@ -25,6 +25,10 @@ export class FakeAuth implements AuthGateway {
     for (const [token, user] of this.sessions) if (user.id === userId) this.sessions.set(token, { ...user, theme });
   }
 
+  async setName(userId: string, name: string): Promise<void> {
+    for (const [token, user] of this.sessions) if (user.id === userId) this.sessions.set(token, { ...user, name });
+  }
+
   async findUserId(email: string): Promise<string | undefined> {
     return [...this.sessions.values()].find(u => u.email === email)?.id;
   }

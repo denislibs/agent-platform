@@ -8,6 +8,7 @@ import {
   TaskListResponseSchema,
   TaskResponseSchema,
   UploadResponseSchema,
+  UsageResponseSchema,
   type AuthProvider,
   type FileCategory,
   type ProfileTheme,
@@ -118,6 +119,8 @@ export function createApi(opts: ApiOptions = {}) {
     config: () => send('GET', '/api/config', ClientConfigSchema),
     me: () => send('GET', '/api/me', MeResponseSchema),
     setTheme: (theme: ProfileTheme) => send('PATCH', '/api/me', MeResponseSchema, { theme }),
+    setName: (name: string) => send('PATCH', '/api/me', MeResponseSchema, { name }),
+    usage: () => send('GET', '/api/usage', UsageResponseSchema),
     listTasks: (before?: string, q?: string) =>
       send('GET', `/api/tasks?${queryString({ limit: TASKS_PAGE, before, q })}`, TaskListResponseSchema),
     getTask: (id: string) => send('GET', task(id), TaskResponseSchema),
