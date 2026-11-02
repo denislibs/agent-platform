@@ -1,5 +1,5 @@
-import { eq, sql } from 'drizzle-orm';
-import { NotFoundError, type CreditLedger, type UsageInput } from '@agent/core';
+import { desc, eq, sql } from 'drizzle-orm';
+import { NotFoundError, type CreditLedger, type TaskUsage, type UsageInput } from '@agent/core';
 import type { DbHandle } from '../client';
 import { tasks, usageEvents, user } from '../schema';
 import { isUuid } from '../uuid';
@@ -59,5 +59,26 @@ export class DrizzleCreditLedger implements CreditLedger {
       .from(usageEvents)
       .where(eq(usageEvents.taskId, taskId));
     return Number(row?.total ?? 0);
+  }
+
+  /** usage_events.task_id удалённой задачи — null: все такие события собираются в одну строку группировкой. */
+  async usageByTask(userId: string, opts: { limit?: number } = {}): Promise<TaskUsage[]> {
+    const lastActivity = sql`max(${usageEvents.createdAt})`.mapWith(usageEvents.createdAt);
+    const rows = await this.db
+      .select({
+        taskId: usageEvents.taskId,
+        prompt: tasks.prompt,
+        // sum по bigint Postgres возвращает строкой (numeric).
+        millicredits: sql<string>`sum(${usageEvents.millicredits})`,
+        tokens: sql<string>`sum(${usageEvents.tokensIn} + ${usageEvents.tokensOut})`,
+        lastActivityAt: lastActivity,
+      })
+      .from(usageEvents)
+      .leftJoin(tasks, eq(tasks.id, usageEvents.taskId))
+      .where(eq(usageEvents.userId, userId))
+      .groupBy(usageEvents.taskId, tasks.prompt)
+      .orderBy(desc(lastActivity))
+      .limit(opts.limit ?? 50);
+    return rows.map(r => ({ ...r, millicredits: Number(r.millicredits), tokens: Number(r.tokens) }));
   }
 }

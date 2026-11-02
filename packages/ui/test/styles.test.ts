@@ -39,13 +39,28 @@ test('every ui-* class used by the components and the showcase exists in the sty
   expect([...missing]).toEqual([]);
 });
 
+test('a page taller than the window scrolls inside the main column of the shell', () => {
+  expect(styles).toMatch(/\.ui-shell__main\s*\{[^}]*overflow-y:\s*auto/);
+});
+
 test('elements that only receive focus from the app on navigation draw no ring', () => {
   expect(styles).toMatch(
     /\.ui-root main:focus-visible,\s*\.ui-root h1\[tabindex='-1'\]:focus-visible\s*\{[^}]*box-shadow:\s*none/,
   );
 });
 
+test('a task item action shows on keyboard focus and on touch screens, not only on hover', () => {
+  expect(styles).toMatch(/\.ui-task-item:focus-within \.ui-btn\s*\{[^}]*opacity:\s*1/);
+  expect(styles).toMatch(/@media \(hover: none\)\s*\{\s*\.ui-task-item \.ui-btn\s*\{[^}]*opacity:\s*1/);
+});
+
 test('the composer shows focus on its frame, not as a ring around the inner field', () => {
   expect(styles).toMatch(/\.ui-composer:focus-within\s*\{[^}]*border-color/);
   expect(styles).toMatch(/\.ui-composer__input:focus-visible\s*\{[^}]*box-shadow:\s*none/);
+});
+
+test('a long unbroken row title wraps inside its row instead of running under the controls', () => {
+  const block = styles.match(/\.ui-row__title\s*\{([^}]*)\}/)?.[1] ?? '';
+  expect(block).toMatch(/min-width:\s*0/);
+  expect(block).toMatch(/overflow-wrap:\s*anywhere/);
 });

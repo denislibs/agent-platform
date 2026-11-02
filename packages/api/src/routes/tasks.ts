@@ -43,6 +43,7 @@ export function taskRoutes(app: Hono<ApiEnv>, deps: ApiDeps): void {
     const rows = await deps.tasks.listForUser(c.get('user').id, {
       limit: query.limit + 1,
       ...(before ? { before } : {}),
+      ...(query.q ? { search: query.q } : {}),
     });
     const page = rows.slice(0, query.limit);
     const last = page.at(-1);

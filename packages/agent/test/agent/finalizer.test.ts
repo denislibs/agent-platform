@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { SandboxError } from '@agent/core';
+import { NotFoundError, SandboxError } from '@agent/core';
+import { FILE_CATEGORIES, FILE_CATEGORY_NAMES } from '@agent/shared';
 import { MAX_DELIVERED_FILES, mimeOf, safeOutputPath } from '../../src';
 import { calls, planned, say, setupAgent } from './fixtures';
 
@@ -55,9 +56,50 @@ describe('safeOutputPath', () => {
     expect(mimeOf('a.CSV')).toBe('text/csv');
     expect(mimeOf('a.unknown')).toBe('application/octet-stream');
   });
+  test('every Library category lists only types the finalizer produces', () => {
+    const extensions = 'md txt csv json html xml pdf png jpg gif svg zip xlsx docx pptx'.split(' ');
+    const produced = new Set(extensions.map(ext => mimeOf(`a.${ext}`)));
+    for (const name of FILE_CATEGORY_NAMES)
+      for (const mime of FILE_CATEGORIES[name]) expect(produced.has(mime)).toBe(true);
+  });
 });
 
 describe('Finalizer', () => {
+  test('a task deleted while its file uploads leaves no object behind and the job stops', async () => {
+    const c = setupAgent();
+    const task = await ready(c, ['outputs/a.md', 'outputs/b.md'], { 'outputs/a.md': 'a', 'outputs/b.md': 'b' });
+    const put = c.fileStore.put.bind(c.fileStore);
+    c.fileStore.put = async (key, data, type) => {
+      await put(key, data, type);
+      await c.tasks.delete(task.id);
+    };
+    expect(await c.finalizer.finalize(task.id)).toEqual({ next: 'stop' });
+    expect(c.fileStore.objects.size).toBe(0);
+    // Повтор и follow job'а: задачи нет — стадия останавливается, не падая.
+    expect(await c.finalizer.finalize(task.id)).toEqual({ next: 'stop' });
+  });
+
+  test('an owner deleted while the file uploads leaves no object behind and the job stops', async () => {
+    const c = setupAgent();
+    const task = await ready(c, ['outputs/a.md'], { 'outputs/a.md': 'a' });
+    c.files.insert = async input => {
+      throw new NotFoundError('user', input.userId);
+    };
+    expect(await c.finalizer.finalize(task.id)).toEqual({ next: 'stop' });
+    expect(c.fileStore.objects.size).toBe(0);
+  });
+
+  test('an insert error that is not a missing task or user propagates', async () => {
+    const c = setupAgent();
+    const task = await ready(c, ['outputs/a.md'], { 'outputs/a.md': 'a' });
+    for (const failure of [new Error('connection lost'), new NotFoundError('subtask', 'x')]) {
+      c.files.insert = async () => {
+        throw failure;
+      };
+      await expect(c.finalizer.finalize(task.id)).rejects.toBe(failure);
+    }
+  });
+
   test('uploads the files, records them, marks the task done and destroys the sandbox', async () => {
     const c = setupAgent();
     const task = await ready(c, ['outputs/table.md'], { 'outputs/table.md': '| a |', 'outputs/chart.png': 'png' });

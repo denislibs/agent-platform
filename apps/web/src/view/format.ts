@@ -21,6 +21,10 @@ export function formatBytes(bytes: number): string {
   return `${value >= 10 ? Math.round(value) : Math.round(value * 10) / 10} ${units[unit]}`;
 }
 
+/** «Nov 2, 2026» в часовом поясе браузера. */
+export const formatDate = (iso: string): string =>
+  new Date(iso).toLocaleDateString('en', { year: 'numeric', month: 'short', day: 'numeric' });
+
 /** Подпись карточки файла: «Spreadsheet · 84 KB». */
 export const fileMeta = (name: string, size: number): string => `${KIND_NAMES[fileKind(name)]} · ${formatBytes(size)}`;
 

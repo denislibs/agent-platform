@@ -261,6 +261,77 @@ export function repositoryContract(
         expect(await h.tasks.listForUser(userId, { before: { createdAt: new Date(), id: MALFORMED_ID } })).toEqual([]);
       });
 
+      test('listForUser search: case-insensitive substring of the prompt, also in Cyrillic; other users are not searched', async () => {
+        const userId = await h.seedUser();
+        const hit = await h.tasks.create({ userId, prompt: 'Find three SUPPLIERS' });
+        const cyrillic = await h.tasks.create({ userId, prompt: 'Найди поставщиков' });
+        await h.tasks.create({ userId, prompt: 'Plan a trip' });
+        await h.tasks.create({ userId: await h.seedUser(), prompt: 'suppliers of someone else' });
+        expect((await h.tasks.listForUser(userId, { search: 'suppliers' })).map(t => t.id)).toEqual([hit.id]);
+        expect((await h.tasks.listForUser(userId, { search: 'ПОСТАВЩИК' })).map(t => t.id)).toEqual([cyrillic.id]);
+        expect(await h.tasks.listForUser(userId, { search: 'nothing like it' })).toEqual([]);
+        expect(await h.tasks.listForUser(userId, { search: '' })).toHaveLength(3);
+      });
+
+      test('listForUser search takes %, _ and the backslash literally', async () => {
+        const userId = await h.seedUser();
+        const percent = await h.tasks.create({ userId, prompt: 'Grow 100% organically' });
+        const underscore = await h.tasks.create({ userId, prompt: 'rename snake_case' });
+        const backslash = await h.tasks.create({ userId, prompt: 'C:\\temp folder' });
+        await h.tasks.create({ userId, prompt: 'rename snakeXcase' });
+        expect((await h.tasks.listForUser(userId, { search: '100%' })).map(t => t.id)).toEqual([percent.id]);
+        expect((await h.tasks.listForUser(userId, { search: 'snake_case' })).map(t => t.id)).toEqual([underscore.id]);
+        expect((await h.tasks.listForUser(userId, { search: ':\\t' })).map(t => t.id)).toEqual([backslash.id]);
+        expect(await h.tasks.listForUser(userId, { search: '%' })).toHaveLength(1);
+      });
+
+      test('listForUser search pages with the cursor', async () => {
+        const userId = await h.seedUser();
+        const found: string[] = [];
+        for (const prompt of ['match 1', 'other', 'match 2', 'match 3']) {
+          const task = await h.tasks.create({ userId, prompt });
+          if (prompt.startsWith('match')) found.unshift(task.id);
+          await h.elapse(5);
+        }
+        const first = await h.tasks.listForUser(userId, { search: 'MATCH', limit: 2 });
+        expect(first.map(t => t.id)).toEqual(found.slice(0, 2));
+        const last = first.at(-1)!;
+        const rest = await h.tasks.listForUser(userId, {
+          search: 'MATCH',
+          limit: 2,
+          before: { createdAt: last.createdAt, id: last.id },
+        });
+        expect(rest.map(t => t.id)).toEqual(found.slice(2));
+      });
+
+      test('delete removes the task with its steps, subtasks and files; usage events stay without a task', async () => {
+        const userId = await h.seedUser({ millicredits: 1000 });
+        const task = await h.tasks.create({ userId, prompt: 'x' });
+        const other = await h.tasks.create({ userId, prompt: 'y' });
+        await h.steps.append({ taskId: task.id, agent: 'user', payload: msg('hi') });
+        await h.steps.append({ taskId: other.id, agent: 'user', payload: msg('kept') });
+        await h.subtasks.insertMany(task.id, [contract('a')]);
+        const file = await h.files.insert({ ...upload(userId, task.id), kind: 'output', path: 'outputs/r.csv' });
+        const kept = await h.files.insert(upload(userId, other.id));
+        await h.ledger.record({ userId, taskId: task.id, model: 'q', tokensIn: 1, tokensOut: 1, millicredits: 7 });
+
+        expect(await h.tasks.delete(task.id)).toBe(true);
+
+        expect(await h.tasks.get(task.id)).toBeUndefined();
+        expect(await h.steps.list(task.id)).toEqual([]);
+        expect(await h.subtasks.list(task.id)).toEqual([]);
+        expect(await h.files.get(file.id)).toBeUndefined();
+        expect((await h.files.get(kept.id))?.taskId).toBe(other.id);
+        expect(await h.steps.list(other.id)).toHaveLength(1);
+        expect(await h.countUsageEvents()).toBe(1);
+        expect(await h.ledger.spentOnTask(task.id)).toBe(0);
+        expect(await h.ledger.balance(userId)).toBe(993);
+      });
+
+      test('delete of an unknown or malformed id is false', async () => {
+        for (const id of [crypto.randomUUID(), MALFORMED_ID]) expect(await h.tasks.delete(id)).toBe(false);
+      });
+
       test('findStale returns tasks in the given statuses untouched for longer than staleForMs, oldest first', async () => {
         const userId = await h.seedUser();
         const oldest = await h.tasks.create({ userId, prompt: 'oldest' });
@@ -540,6 +611,38 @@ export function repositoryContract(
         expect(await h.ledger.spentOnTask(MALFORMED_ID)).toBe(0);
       });
 
+      test('usageByTask groups the events of a user by task, last activity first; deleted tasks form one row', async () => {
+        const userId = await h.seedUser({ millicredits: 100 });
+        const old = await h.tasks.create({ userId, prompt: 'Old' });
+        const recent = await h.tasks.create({ userId, prompt: 'Recent' });
+        const gone = await h.tasks.create({ userId, prompt: 'Gone' });
+        const gone2 = await h.tasks.create({ userId, prompt: 'Gone too' });
+        const other = await h.seedUser();
+        const charge = (taskId: string | null, millicredits: number, by = userId) =>
+          h.ledger.record({ userId: by, taskId, model: 'q', tokensIn: 10, tokensOut: 1, millicredits });
+        await charge(gone.id, 1);
+        await charge(gone2.id, 2);
+        await charge(old.id, 3);
+        await h.elapse(5);
+        await charge(old.id, 4);
+        await h.elapse(5);
+        await charge(recent.id, 5);
+        await charge(null, 1, other);
+        await h.tasks.delete(gone.id);
+        await h.tasks.delete(gone2.id);
+
+        const usage = await h.ledger.usageByTask(userId);
+        expect(usage.map(u => [u.taskId, u.prompt, u.millicredits, u.tokens])).toEqual([
+          [recent.id, 'Recent', 5, 11],
+          [old.id, 'Old', 7, 22],
+          [null, null, 3, 22],
+        ]);
+        for (const u of usage) expect(u.lastActivityAt).toBeInstanceOf(Date);
+        expect(usage[0]!.lastActivityAt.getTime()).toBeGreaterThan(usage[1]!.lastActivityAt.getTime());
+        expect(await h.ledger.usageByTask(userId, { limit: 1 })).toHaveLength(1);
+        expect(await h.ledger.usageByTask('no-such-user')).toEqual([]);
+      });
+
       test('balance may go negative; the caller decides what to do', async () => {
         const userId = await h.seedUser({ millicredits: 1 });
         expect(
@@ -666,6 +769,56 @@ export function repositoryContract(
         await h.files.insert(upload(otherId));
         expect((await h.files.listForUser(userId)).map(f => f.id)).toEqual([first.id, second.id]);
         expect(await h.files.listForUser(MALFORMED_ID)).toEqual([]);
+      });
+
+      test('listOutputs: only outputs of the user, newest first, filtered by type and path, paged by the cursor', async () => {
+        const userId = await h.seedUser();
+        const task = await h.tasks.create({ userId, prompt: 'x' });
+        const output = (path: string, mime: string) => ({
+          ...upload(userId, task.id),
+          kind: 'output' as const,
+          path,
+          mime,
+        });
+        await h.files.insert(upload(userId, task.id));
+        await h.files.insert({ ...output('outputs/theirs.csv', 'text/csv'), userId: await h.seedUser(), taskId: null });
+        const csv = await h.files.insert(output('outputs/Sales_Q3.csv', 'text/csv'));
+        await h.elapse(5);
+        const png = await h.files.insert(output('outputs/chart.png', 'image/png'));
+        await h.elapse(5);
+        const md = await h.files.insert(output('outputs/100% report.md', 'text/markdown'));
+
+        expect((await h.files.listOutputs(userId)).map(f => f.id)).toEqual([md.id, png.id, csv.id]);
+        const images = await h.files.listOutputs(userId, { mimes: ['image/png', 'image/jpeg'] });
+        expect(images.map(f => f.id)).toEqual([png.id]);
+        expect(await h.files.listOutputs(userId, { mimes: [] })).toEqual([]);
+        expect((await h.files.listOutputs(userId, { search: 'sales' })).map(f => f.id)).toEqual([csv.id]);
+        expect((await h.files.listOutputs(userId, { search: 's_q' })).map(f => f.id)).toEqual([csv.id]);
+        expect((await h.files.listOutputs(userId, { search: 'salesxq' })).map(f => f.id)).toEqual([]);
+        expect((await h.files.listOutputs(userId, { search: '100%' })).map(f => f.id)).toEqual([md.id]);
+
+        const first = await h.files.listOutputs(userId, { limit: 2 });
+        expect(first.map(f => f.id)).toEqual([md.id, png.id]);
+        const last = first.at(-1)!;
+        const rest = await h.files.listOutputs(userId, {
+          limit: 2,
+          before: { createdAt: last.createdAt, id: last.id },
+        });
+        expect(rest.map(f => f.id)).toEqual([csv.id]);
+        expect(await h.files.listOutputs(userId, { before: { createdAt: new Date(), id: MALFORMED_ID } })).toEqual([]);
+      });
+
+      test('deleteOutput removes only an output file', async () => {
+        const userId = await h.seedUser();
+        const task = await h.tasks.create({ userId, prompt: 'x' });
+        const input = await h.files.insert(upload(userId));
+        const output = await h.files.insert({ ...upload(userId, task.id), kind: 'output', path: 'outputs/r.csv' });
+        expect(await h.files.deleteOutput(output.id)).toBe(true);
+        expect(await h.files.get(output.id)).toBeUndefined();
+        expect(await h.files.deleteOutput(output.id)).toBe(false);
+        for (const id of [input.id, crypto.randomUUID(), MALFORMED_ID])
+          expect(await h.files.deleteOutput(id)).toBe(false);
+        expect(await h.files.get(input.id)).toBeDefined();
       });
 
       test('listUnattachedInputs: old inputs without a task, oldest first; attached, output and fresh files are not listed', async () => {

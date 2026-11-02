@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { effect } from '@preact/signals';
 import { createAppState } from '../src/state/app.ts';
-import { fakeFetch, json, me, taskSummary } from './fixtures.ts';
+import { fakeFetch, json, me, noContent, taskSummary } from './fixtures.ts';
 
 const t = (id: string) => taskSummary({ id, prompt: id });
 /** Задача, созданная в 10:<minute>. */
@@ -141,4 +141,177 @@ test('upsert of a task the sidebar does not know keeps the list in creation orde
   // Все страницы загружены: самая старая задача встаёт в конец.
   state.tasks.upsert(at('oldest', 5));
   expect(ids()).toEqual(['new', 'c', 'mid', 'b', 'a', 'oldest']);
+});
+
+test('search replaces the list; upsert of a task outside the search does not add it; an empty search restores the list', async () => {
+  const state = createAppState({
+    fetch: fakeFetch({
+      'GET /api/tasks?limit=20': json({ tasks: [t('alpha'), t('beta')], nextCursor: null }),
+      'GET /api/tasks?limit=20&q=alp': json({ tasks: [t('alpha')], nextCursor: 'c1' }),
+      'GET /api/tasks?limit=20&before=c1&q=alp': json({ tasks: [t('alpine')], nextCursor: null }),
+    }).fetch,
+  });
+  const ids = () => state.tasks.items.value.map(x => x.id);
+  await state.tasks.reload();
+  await state.tasks.search(' alp ');
+  expect(state.tasks.query.value).toBe('alp');
+  expect(ids()).toEqual(['alpha']);
+  await state.tasks.more();
+  expect(ids()).toEqual(['alpha', 'alpine']);
+  state.tasks.upsert({ ...t('beta'), createdAt: '2026-11-02T11:00:00.000Z' });
+  expect(ids()).toEqual(['alpha', 'alpine']);
+  state.tasks.upsert({ ...t('ALPS'), createdAt: '2026-11-02T11:00:00.000Z' });
+  expect(ids()).toEqual(['ALPS', 'alpha', 'alpine']);
+  state.tasks.upsert({ ...t('alpha'), status: 'done' });
+  expect(state.tasks.items.value.find(x => x.id === 'alpha')?.status).toBe('done');
+  await state.tasks.search('');
+  expect(ids()).toEqual(['alpha', 'beta']);
+});
+
+test('the answer to an outdated search is dropped', async () => {
+  const slowAnswer = Promise.withResolvers<Response>();
+  const state = createAppState({
+    fetch: fakeFetch({
+      'GET /api/tasks?limit=20&q=a': () => slowAnswer.promise,
+      'GET /api/tasks?limit=20&q=ab': json({ tasks: [t('ab')], nextCursor: null }),
+    }).fetch,
+  });
+  const slow = state.tasks.search('a');
+  await state.tasks.search('ab');
+  slowAnswer.resolve(json({ tasks: [t('a')], nextCursor: null }));
+  await slow;
+  expect(state.tasks.items.value.map(x => x.id)).toEqual(['ab']);
+  expect(state.tasks.loading.value).toBe(false);
+});
+
+test('clear forgets the search of the session that ended', async () => {
+  const state = createAppState({
+    fetch: fakeFetch({ 'GET /api/tasks': json({ tasks: [t('a')], nextCursor: null }) }).fetch,
+  });
+  await state.tasks.search('a');
+  state.tasks.clear();
+  expect(state.tasks.query.value).toBe('');
+});
+
+test('a failed search leaves no old rows or cursor; the same search runs again and fills the list, clearing the error', async () => {
+  let fail = true;
+  const state = createAppState({
+    fetch: fakeFetch({
+      'GET /api/tasks?limit=20': json({ tasks: [t('alpha'), t('beta')], nextCursor: 'c1' }),
+      'GET /api/tasks?limit=20&q=alp': () =>
+        fail
+          ? json({ error: { code: 'internal', message: 'boom' } }, 500)
+          : json({ tasks: [t('alpha')], nextCursor: null }),
+    }).fetch,
+  });
+  await state.tasks.reload();
+  await state.tasks.search('alp');
+  expect(state.tasks.items.value).toEqual([]);
+  expect(state.tasks.nextCursor.value).toBeNull();
+  expect(state.tasks.query.value).toBe('alp');
+  expect(state.tasks.error.value).not.toBeNull();
+  fail = false;
+  await state.tasks.search('alp');
+  expect(state.tasks.items.value.map(x => x.id)).toEqual(['alpha']);
+  expect(state.tasks.error.value).toBeNull();
+});
+
+test('clear() drops a response still in flight and resets loading', async () => {
+  const slow = Promise.withResolvers<Response>();
+  const state = createAppState({
+    fetch: fakeFetch({ 'GET /api/tasks?limit=20': () => slow.promise }).fetch,
+  });
+  const pending = state.tasks.reload();
+  expect(state.tasks.loading.value).toBe(true);
+  state.tasks.clear();
+  expect(state.tasks.loading.value).toBe(false);
+  slow.resolve(json({ tasks: [t('a')], nextCursor: null }));
+  await pending;
+  expect(state.tasks.items.value).toEqual([]);
+  expect(state.tasks.loaded.value).toBe(false);
+  expect(state.tasks.loading.value).toBe(false);
+});
+
+test('a more() still in flight is dropped when a search starts', async () => {
+  const slow = Promise.withResolvers<Response>();
+  const state = createAppState({
+    fetch: fakeFetch({
+      'GET /api/tasks?limit=20': json({ tasks: [t('alpha')], nextCursor: 'c1' }),
+      'GET /api/tasks?limit=20&before=c1': () => slow.promise,
+      'GET /api/tasks?limit=20&q=be': json({ tasks: [t('beta')], nextCursor: null }),
+    }).fetch,
+  });
+  await state.tasks.reload();
+  const more = state.tasks.more();
+  await state.tasks.search('be');
+  slow.resolve(json({ tasks: [t('gamma')], nextCursor: 'c2' }));
+  await more;
+  expect(state.tasks.items.value.map(x => x.id)).toEqual(['beta']);
+  expect(state.tasks.nextCursor.value).toBeNull();
+  expect(state.tasks.loading.value).toBe(false);
+});
+
+test('a task deleted while a list request is in flight stays deleted; the list is read again and loading is not stuck', async () => {
+  let reads = 0;
+  const slow = Promise.withResolvers<Response>();
+  const state = createAppState({
+    fetch: fakeFetch({
+      'GET /api/tasks?limit=20': () => {
+        reads++;
+        if (reads === 1) return json({ tasks: [t('a'), t('b')], nextCursor: null });
+        if (reads === 2) return slow.promise;
+        return json({ tasks: [t('b')], nextCursor: null });
+      },
+      'DELETE /api/tasks/a': noContent,
+    }).fetch,
+  });
+  await state.tasks.reload();
+  const pending = state.tasks.reload();
+  expect(state.tasks.loading.value).toBe(true);
+  await state.tasks.remove('a');
+  // Старый ответ приходит уже после удаления и снова содержит задачу: его не должно быть в списке.
+  slow.resolve(json({ tasks: [t('a'), t('b')], nextCursor: null }));
+  await pending;
+  expect(state.tasks.items.value.map(x => x.id)).toEqual(['b']);
+  expect(state.tasks.loading.value).toBe(false);
+  expect(reads).toBe(3);
+});
+
+test('a task that is already gone (404) is removed from the list without an error', async () => {
+  const state = createAppState({
+    fetch: fakeFetch({
+      'GET /api/tasks?limit=20': json({ tasks: [t('a'), t('b')], nextCursor: null }),
+      'DELETE /api/tasks/a': json({ error: { code: 'not_found', message: 'task not found' } }, 404),
+    }).fetch,
+  });
+  await state.tasks.reload();
+  const before = state.tasks.removals.value;
+  await state.tasks.remove('a');
+  expect(state.tasks.items.value.map(x => x.id)).toEqual(['b']);
+  expect(state.tasks.removals.value).toBe(before + 1);
+});
+
+test('a refused deletion throws and leaves the list and the removal counter alone', async () => {
+  const state = createAppState({
+    fetch: fakeFetch({
+      'GET /api/tasks?limit=20': json({ tasks: [t('a')], nextCursor: null }),
+      'DELETE /api/tasks/a': json({ error: { code: 'conflict', message: 'still running' } }, 409),
+    }).fetch,
+  });
+  await state.tasks.reload();
+  await expect(state.tasks.remove('a')).rejects.toThrow('still running');
+  expect(state.tasks.items.value.map(x => x.id)).toEqual(['a']);
+  expect(state.tasks.removals.value).toBe(0);
+});
+
+test('clear forgets the error of the session that ended', async () => {
+  const state = createAppState({
+    fetch: fakeFetch({
+      'GET /api/tasks?limit=20&q=zzz': json({ error: { code: 'internal', message: 'boom' } }, 500),
+    }).fetch,
+  });
+  await state.tasks.search('zzz');
+  expect(state.tasks.error.value).not.toBeNull();
+  state.tasks.clear();
+  expect(state.tasks.error.value).toBeNull();
 });

@@ -13,6 +13,7 @@ export const API_ERROR_CODES = [
   'upload_incomplete',
   'payload_too_large',
   'too_many_active_tasks',
+  'deletion_incomplete',
   'internal',
 ] as const;
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
@@ -23,6 +24,8 @@ export type ApiErrorBody = z.infer<typeof ApiErrorSchema>;
 export const MAX_PROMPT_CHARS = 20_000;
 export const MAX_FILES_PER_TASK = 20;
 export const MAX_TASKS_PAGE = 100;
+export const MAX_SEARCH_CHARS = 200;
+export const MAX_NAME_CHARS = 100;
 
 // ── Запросы ──
 /** Postgres `text` не хранит U+0000: такая строка дала бы 500 при записи, поэтому отсекается как 400 на входе. */
@@ -70,11 +73,59 @@ export const UploadBodySchema = z.object({
 export const PROFILE_THEMES = ['dark', 'light', 'auto'] as const;
 export type ProfileTheme = (typeof PROFILE_THEMES)[number];
 export const ProfileThemeSchema = z.enum(PROFILE_THEMES);
-export const UpdateMeBodySchema = z.object({ theme: ProfileThemeSchema });
+/** Хотя бы одно поле: пустой PATCH — ошибка клиента, а не молчаливый успех. */
+export const UpdateMeBodySchema = z
+  .object({
+    theme: ProfileThemeSchema.optional(),
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .max(MAX_NAME_CHARS)
+      .refine(noNul, NO_NUL_MESSAGE)
+      .refine(wellFormed, WELL_FORMED_MESSAGE)
+      .optional(),
+  })
+  .refine(body => body.theme !== undefined || body.name !== undefined, 'nothing to update');
+
+/** Удаление аккаунта: email вводит сам пользователь, сравнение без учёта регистра — в маршруте. */
+export const DeleteMeBodySchema = z.object({ email: z.string().min(1).max(320) });
+
+/** Строка поиска в запросе. Пустая — фильтра нет; символы, которые Postgres не примет, — 400. */
+const SearchQuerySchema = z
+  .string()
+  .trim()
+  .max(MAX_SEARCH_CHARS)
+  .refine(noNul, NO_NUL_MESSAGE)
+  .refine(wellFormed, WELL_FORMED_MESSAGE)
+  .optional();
 
 export const ListTasksQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(MAX_TASKS_PAGE).default(20),
   before: z.string().min(1).max(512).optional(),
+  q: SearchQuerySchema,
+});
+
+/** Категории Library (фильтр GET /api/files). Типы — те, что выдаёт mimeOf финализатора; остальные видны только в «All». */
+export const FILE_CATEGORY_NAMES = ['documents', 'images', 'spreadsheets'] as const;
+export type FileCategory = (typeof FILE_CATEGORY_NAMES)[number];
+export const FILE_CATEGORIES: Record<FileCategory, readonly string[]> = {
+  documents: [
+    'text/markdown',
+    'text/plain',
+    'text/html',
+    'application/pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  ],
+  images: ['image/png', 'image/jpeg', 'image/gif', 'image/svg+xml'],
+  spreadsheets: ['text/csv', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+};
+export const ListFilesQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(MAX_TASKS_PAGE).default(20),
+  before: z.string().min(1).max(512).optional(),
+  category: z.enum(FILE_CATEGORY_NAMES).optional(),
+  q: SearchQuerySchema,
 });
 
 // ── Ответы ──
@@ -118,6 +169,8 @@ export const SubtaskDtoSchema = z.object({
 });
 export const FileDtoSchema = z.object({
   id: z.string(),
+  /** Задача файла; null — входной файл, ещё не привязанный к задаче. */
+  taskId: z.string().nullable(),
   kind: z.enum(['input', 'output']),
   path: z.string(),
   size: z.number().int(),
@@ -146,6 +199,10 @@ export const TaskListResponseSchema = z.object({
   tasks: z.array(TaskSummarySchema),
   nextCursor: z.string().nullable(),
 });
+export const FileListResponseSchema = z.object({
+  files: z.array(FileDtoSchema),
+  nextCursor: z.string().nullable(),
+});
 export const MeResponseSchema = z.object({
   user: z.object({
     id: z.string(),
@@ -156,6 +213,16 @@ export const MeResponseSchema = z.object({
   }),
   balance: z.object({ millicredits: z.number().int(), credits: z.string() }),
 });
+/** Расход по задаче; taskId null — все события задач, которых больше нет, одной строкой. */
+export const UsageRowSchema = z.object({
+  taskId: z.string().nullable(),
+  prompt: z.string().nullable(),
+  millicredits: z.number().int(),
+  credits: z.string(),
+  tokens: z.number().int(),
+  lastActivityAt: IsoDate,
+});
+export const UsageResponseSchema = z.object({ usage: z.array(UsageRowSchema) });
 export const UploadResponseSchema = z.object({
   file: FileDtoSchema,
   upload: z.object({ url: z.string(), method: z.literal('PUT'), headers: z.record(z.string(), z.string()) }),
@@ -178,7 +245,10 @@ export type StepDto = z.infer<typeof StepDtoSchema>;
 export type TaskEnvelope = z.infer<typeof TaskEnvelopeSchema>;
 export type TaskResponse = z.infer<typeof TaskResponseSchema>;
 export type TaskListResponse = z.infer<typeof TaskListResponseSchema>;
+export type FileListResponse = z.infer<typeof FileListResponseSchema>;
 export type MeResponse = z.infer<typeof MeResponseSchema>;
+export type UsageRow = z.infer<typeof UsageRowSchema>;
+export type UsageResponse = z.infer<typeof UsageResponseSchema>;
 export type UploadResponse = z.infer<typeof UploadResponseSchema>;
 export type StreamEnd = z.infer<typeof StreamEndSchema>;
 export type StreamError = z.infer<typeof StreamErrorSchema>;

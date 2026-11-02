@@ -9,6 +9,7 @@ import type {
   SubtaskPatch,
   Task,
   TaskPatch,
+  TaskUsage,
   UsageInput,
 } from '../entities';
 
@@ -23,7 +24,7 @@ import type {
  *   обновлялась» не зависят от часов отдельных воркеров.
  */
 
-/** Позиция в списке задач пользователя: следующая страница начинается строго после этой задачи. */
+/** Позиция в списке задач или файлов пользователя: следующая страница начинается строго после этой записи. */
 export interface TaskCursor {
   createdAt: Date;
   id: string;
@@ -55,9 +56,15 @@ export interface TaskRepository {
   /**
    * Задачи пользователя, новые первыми: по createdAt с точностью до миллисекунды, при равенстве — по id по убыванию;
    * limit по умолчанию 50. before — курсор: только задачи строго после него в этом порядке. Кривой id курсора
-   * ведёт себя как неизвестный: пустой список.
+   * ведёт себя как неизвестный: пустой список. search — подстрока запроса без учёта регистра, % и _ в ней — обычные
+   * символы; пустая строка — без фильтра.
    */
-  listForUser(userId: string, opts?: { limit?: number; before?: TaskCursor }): Promise<Task[]>;
+  listForUser(userId: string, opts?: { limit?: number; before?: TaskCursor; search?: string }): Promise<Task[]>;
+  /**
+   * Удаляет задачу: шаги, подзадачи и файлы уходят вместе с ней, у событий расхода taskId становится null (история
+   * списаний остаётся). true — удалена; неизвестный или кривой id — false. Статус не проверяется: решает вызывающий.
+   */
+  delete(id: string): Promise<boolean>;
   /**
    * Задачи в статусах statuses, не обновлявшиеся дольше staleForMs по часам хранилища, старые первыми;
    * limit по умолчанию 100. Для сборщика зависших задач (спецификация 8). Запись шага тоже обновляет задачу.
@@ -111,6 +118,8 @@ export interface CreditLedger {
   balance(userId: string): Promise<number>;
   /** Сколько списано за задачу (сумма событий расхода с этим taskId); неизвестная или кривая задача — 0. */
   spentOnTask(taskId: string): Promise<number>;
+  /** Расход пользователя по задачам: последняя активность новее — раньше; limit по умолчанию 50. */
+  usageByTask(userId: string, opts?: { limit?: number }): Promise<TaskUsage[]>;
 }
 
 export interface FileRepository {
@@ -120,6 +129,17 @@ export interface FileRepository {
   listForTask(taskId: string, kind?: FileKind): Promise<FileRecord[]>;
   /** Все файлы пользователя (входные и результаты), старые первыми: для удаления его данных. */
   listForUser(userId: string): Promise<FileRecord[]>;
+  /**
+   * Результаты задач пользователя (kind = output), новые первыми: порядок и курсор — как у TaskRepository.listForUser;
+   * limit по умолчанию 50, кривой id курсора — пустой список. mimes — только эти типы (пустой список — ничего);
+   * search — подстрока пути без учёта регистра, % и _ в ней — обычные символы.
+   */
+  listOutputs(
+    userId: string,
+    opts?: { limit?: number; before?: TaskCursor; mimes?: readonly string[]; search?: string },
+  ): Promise<FileRecord[]>;
+  /** Удаляет запись выходного файла. true — удалена; входной, неизвестный или кривой id — false, ничего не меняется. */
+  deleteOutput(id: string): Promise<boolean>;
   /**
    * Привязывает только файлы этого пользователя, ещё не привязанные к задаче. Возвращает их число.
    * Кривые и чужие id файлов молча пропускаются; неизвестная задача — NotFoundError('task')

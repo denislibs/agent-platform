@@ -17,6 +17,7 @@ import {
   type TaskCursor,
   type TaskPatch,
   type TaskRepository,
+  type TaskUsage,
   type UsageInput,
 } from '@agent/core';
 import {
@@ -42,8 +43,10 @@ function guardedState(deps: Deps, txToken: symbol | undefined): InMemoryState {
 }
 const copy = <T>(v: T): T => structuredClone(v);
 const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const newestFirst = (a: Task, b: Task): number =>
+const newestFirst = <T extends { createdAt: Date; id: string }>(a: T, b: T): number =>
   b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
+/** Как ILIKE с экранированным шаблоном: подстрока без учёта регистра. */
+const contains = (text: string, search: string): boolean => text.toLowerCase().includes(search.toLowerCase());
 /** Как Drizzle .set(): ключи со значением undefined не трогают поле (null — очищает). */
 const definedOnly = <T extends object>(patch: T): Partial<T> =>
   Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) as Partial<T>;
@@ -112,15 +115,34 @@ export class InMemoryTaskRepository implements TaskRepository {
     return [...this.m.tasks.values()].filter(t => t.userId === userId && !isTerminalTask(t.status)).length;
   }
 
-  async listForUser(userId: string, opts: { limit?: number; before?: TaskCursor } = {}): Promise<Task[]> {
-    const { before } = opts;
+  async listForUser(
+    userId: string,
+    opts: { limit?: number; before?: TaskCursor; search?: string } = {},
+  ): Promise<Task[]> {
+    const { before, search } = opts;
     if (before && !CANONICAL_UUID.test(before.id)) return [];
     // newestFirst(t, курсор) > 0: задача t идёт после курсора в порядке выдачи.
     return [...this.m.tasks.values()]
-      .filter(t => t.userId === userId && (!before || newestFirst(t, { ...t, ...before }) > 0))
+      .filter(
+        t =>
+          t.userId === userId &&
+          (!before || newestFirst(t, { ...t, ...before }) > 0) &&
+          (!search || contains(t.prompt, search)),
+      )
       .toSorted(newestFirst)
       .slice(0, opts.limit ?? 50)
       .map(copy);
+  }
+
+  /** Каскады внешних ключей Postgres: шаги, подзадачи и файлы удаляются, события расхода остаются без задачи. */
+  async delete(id: string): Promise<boolean> {
+    const m = this.m;
+    if (!m.tasks.delete(id)) return false;
+    m.steps.splice(0, m.steps.length, ...m.steps.filter(s => s.taskId !== id));
+    for (const s of m.subtasks.values()) if (s.taskId === id) m.subtasks.delete(s.id);
+    for (const f of m.files.values()) if (f.taskId === id) m.files.delete(f.id);
+    for (const e of m.usage) if (e.taskId === id) e.taskId = null;
+    return true;
   }
 
   async findStale(opts: { statuses: readonly TaskStatus[]; staleForMs: number; limit?: number }): Promise<Task[]> {
@@ -299,6 +321,30 @@ export class InMemoryCreditLedger implements CreditLedger {
   async spentOnTask(taskId: string): Promise<number> {
     return this.m.usage.filter(e => e.taskId === taskId).reduce((n, e) => n + e.millicredits, 0);
   }
+
+  async usageByTask(userId: string, opts: { limit?: number } = {}): Promise<TaskUsage[]> {
+    const rows = new Map<string | null, TaskUsage>();
+    for (const e of this.m.usage.filter(u => u.userId === userId)) {
+      const row = rows.get(e.taskId);
+      if (row) {
+        row.millicredits += e.millicredits;
+        row.tokens += e.tokensIn + e.tokensOut;
+        if (e.createdAt > row.lastActivityAt) row.lastActivityAt = e.createdAt;
+      } else {
+        rows.set(e.taskId, {
+          taskId: e.taskId,
+          prompt: (e.taskId && this.m.tasks.get(e.taskId)?.prompt) ?? null,
+          millicredits: e.millicredits,
+          tokens: e.tokensIn + e.tokensOut,
+          lastActivityAt: e.createdAt,
+        });
+      }
+    }
+    return [...rows.values()]
+      .toSorted((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime())
+      .slice(0, opts.limit ?? 50)
+      .map(copy);
+  }
 }
 
 export class InMemoryFileRepository implements FileRepository {
@@ -350,6 +396,30 @@ export class InMemoryFileRepository implements FileRepository {
       .filter(f => f.userId === userId)
       .toSorted((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
       .map(copy);
+  }
+
+  async listOutputs(
+    userId: string,
+    opts: { limit?: number; before?: TaskCursor; mimes?: readonly string[]; search?: string } = {},
+  ): Promise<FileRecord[]> {
+    const { before, mimes, search } = opts;
+    if (before && !CANONICAL_UUID.test(before.id)) return [];
+    return [...this.m.files.values()]
+      .filter(
+        f =>
+          f.userId === userId &&
+          f.kind === 'output' &&
+          (!mimes || mimes.includes(f.mime)) &&
+          (!search || contains(f.path, search)) &&
+          (!before || newestFirst(f, { ...f, ...before }) > 0),
+      )
+      .toSorted(newestFirst)
+      .slice(0, opts.limit ?? 50)
+      .map(copy);
+  }
+
+  async deleteOutput(id: string): Promise<boolean> {
+    return this.m.files.get(id)?.kind === 'output' && this.m.files.delete(id);
   }
 
   async listUnattachedInputs(opts: { olderThanMs: number; limit?: number }): Promise<FileRecord[]> {

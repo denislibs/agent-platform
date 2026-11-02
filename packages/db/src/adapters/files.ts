@@ -1,8 +1,32 @@
-import { and, asc, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
-import { NotFoundError, type FileKind, type FileRecord, type FileRepository, type NewFile } from '@agent/core';
+import { and, asc, desc, eq, ilike, inArray, isNull, lt, sql } from 'drizzle-orm';
+import {
+  NotFoundError,
+  type FileKind,
+  type FileRecord,
+  type FileRepository,
+  type NewFile,
+  type TaskCursor,
+} from '@agent/core';
 import type { DbHandle } from '../client';
-import { files, tasks, user } from '../schema';
+import { containsPattern } from '../like';
+import { files, tasks } from '../schema';
 import { isUuid } from '../uuid';
+
+/** Postgres: нарушение внешнего ключа. */
+const FOREIGN_KEY_VIOLATION = '23503';
+
+/** Имя нарушенного внешнего ключа; drizzle заворачивает ошибку драйвера в `cause`. */
+function foreignKeyViolation(err: unknown): string | undefined {
+  for (
+    let e: unknown = err, depth = 0;
+    e && typeof e === 'object' && depth < 3;
+    e = (e as { cause?: unknown }).cause, depth++
+  ) {
+    const { code, constraint_name: constraint } = e as { code?: unknown; constraint_name?: unknown };
+    if (code === FOREIGN_KEY_VIOLATION && typeof constraint === 'string') return constraint;
+  }
+  return undefined;
+}
 
 export class DrizzleFileRepository implements FileRepository {
   constructor(private readonly deps: { database: DbHandle }) {}
@@ -16,14 +40,22 @@ export class DrizzleFileRepository implements FileRepository {
   }
 
   async insert(input: NewFile): Promise<FileRecord> {
-    const [owner] = await this.db.select({ id: user.id }).from(user).where(eq(user.id, input.userId));
-    if (!owner) throw new NotFoundError('user', input.userId);
-    if (input.taskId) await this.assertTaskExists(input.taskId);
-    const [row] = await this.db
-      .insert(files)
-      .values({ ...input, taskId: input.taskId ?? null })
-      .returning();
-    return row!;
+    // Кривой id задачи не дойдёт до Postgres как ошибка формата (22P02).
+    if (input.taskId && !isUuid(input.taskId)) throw new NotFoundError('task', input.taskId);
+    try {
+      const [row] = await this.db
+        .insert(files)
+        .values({ ...input, taskId: input.taskId ?? null })
+        .returning();
+      return row!;
+    } catch (err) {
+      // Без предварительной проверки: задачу или пользователя могли удалить между проверкой и вставкой.
+      // Нарушенный внешний ключ — контракт порта: NotFoundError с той сущностью, на которую он указывал.
+      const violation = foreignKeyViolation(err);
+      if (violation === 'files_task_id_tasks_id_fk') throw new NotFoundError('task', input.taskId ?? '');
+      if (violation === 'files_user_id_user_id_fk') throw new NotFoundError('user', input.userId);
+      throw err;
+    }
   }
 
   async get(id: string): Promise<FileRecord | undefined> {
@@ -54,6 +86,41 @@ export class DrizzleFileRepository implements FileRepository {
   /** Id пользователя — текст Better Auth, не UUID: проверка isUuid не нужна. */
   async listForUser(userId: string): Promise<FileRecord[]> {
     return this.db.select().from(files).where(eq(files.userId, userId)).orderBy(asc(files.createdAt));
+  }
+
+  async listOutputs(
+    userId: string,
+    opts: { limit?: number; before?: TaskCursor; mimes?: readonly string[]; search?: string } = {},
+  ): Promise<FileRecord[]> {
+    const { before, mimes, search } = opts;
+    if ((before && !isUuid(before.id)) || mimes?.length === 0) return [];
+    // Время усечено до мс по той же причине, что в DrizzleTaskRepository.listForUser: курсор хранит Date.
+    const createdMs = sql`date_trunc('milliseconds', ${files.createdAt})`;
+    return this.db
+      .select()
+      .from(files)
+      .where(
+        and(
+          eq(files.userId, userId),
+          eq(files.kind, 'output'),
+          mimes ? inArray(files.mime, [...mimes]) : undefined,
+          search ? ilike(files.path, containsPattern(search)) : undefined,
+          before
+            ? sql`(${createdMs}, ${files.id}) < (${before.createdAt.toISOString()}::timestamptz, ${before.id}::uuid)`
+            : undefined,
+        ),
+      )
+      .orderBy(desc(createdMs), desc(files.id))
+      .limit(opts.limit ?? 50);
+  }
+
+  async deleteOutput(id: string): Promise<boolean> {
+    if (!isUuid(id)) return false;
+    const rows = await this.db
+      .delete(files)
+      .where(and(eq(files.id, id), eq(files.kind, 'output')))
+      .returning({ id: files.id });
+    return rows.length > 0;
   }
 
   /**

@@ -6,6 +6,7 @@ import { Alert, Button, EmptyState, Spinner, ToastProvider } from '@agent/ui';
 import { APP_LINKS, MAIN_ID, usePage } from './layout/page.ts';
 import { Shell } from './layout/shell.tsx';
 import { Home } from './routes/home.tsx';
+import { LibraryPage } from './routes/library.tsx';
 import { SettingsPage } from './routes/settings.tsx';
 import { SignIn } from './routes/sign-in.tsx';
 import { TaskScreen } from './routes/task.tsx';
@@ -120,6 +121,7 @@ function Routes() {
       <Route path="/sign-in" component={SignIn} />
       <Route path="/" component={Home} />
       <Route path="/tasks/:id" component={TaskRoute} />
+      <Route path="/library" component={LibraryPage} />
       <Route path="/settings" component={SettingsPage} />
       <Route default component={NotFound} />
     </Router>

@@ -31,6 +31,9 @@ export function fakeFetch(routes: Record<string, Reply>) {
   return { fetch, calls };
 }
 
+/** Ответ 204: у него нет тела, поэтому не json(). */
+export const noContent = () => new Response(null, { status: 204 });
+
 const T0 = '2026-11-02T10:00:00.000Z';
 
 export function taskSummary(overrides: Partial<TaskSummary> = {}): TaskSummary {
@@ -70,6 +73,7 @@ export function fileDto(overrides: Partial<FileDto> = {}): FileDto {
   const id = overrides.id ?? 'file-1';
   return {
     id,
+    taskId: 'task-1',
     kind: 'output',
     path: 'outputs/report.csv',
     size: 2048,

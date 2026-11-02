@@ -1,10 +1,17 @@
 import type { Hono } from 'hono';
-import { UploadBodySchema, type UploadResponse } from '@agent/shared';
+import {
+  FILE_CATEGORIES,
+  ListFilesQuerySchema,
+  UploadBodySchema,
+  type FileListResponse,
+  type UploadResponse,
+} from '@agent/shared';
+import { decodeCursor, encodeCursor } from '../cursor';
 import type { ApiDeps, ApiEnv } from '../deps';
 import { toFileDto } from '../dto';
 import { ApiError } from '../errors';
 import { baseName, safeFileName } from '../file-names';
-import { parseJson } from '../http';
+import { parseJson, parseQuery } from '../http';
 
 export function fileRoutes(app: Hono<ApiEnv>, deps: ApiDeps): void {
   /**
@@ -33,6 +40,39 @@ export function fileRoutes(app: Hono<ApiEnv>, deps: ApiDeps): void {
       upload: { url, method: 'PUT', headers: { 'content-type': body.contentType } },
     };
     return c.json(response, 201);
+  });
+
+  /** Library: результаты задач пользователя, новые первыми; страницы по курсору, как у GET /api/tasks. */
+  app.get('/api/files', async c => {
+    const query = parseQuery(c, ListFilesQuerySchema);
+    const before = query.before === undefined ? undefined : decodeCursor(query.before);
+    // Один лишний ряд — признак следующей страницы.
+    const rows = await deps.files.listOutputs(c.get('user').id, {
+      limit: query.limit + 1,
+      ...(before ? { before } : {}),
+      ...(query.category ? { mimes: FILE_CATEGORIES[query.category] } : {}),
+      ...(query.q ? { search: query.q } : {}),
+    });
+    const page = rows.slice(0, query.limit);
+    const last = page.at(-1);
+    const response: FileListResponse = {
+      files: page.map(toFileDto),
+      nextCursor: rows.length > query.limit && last ? encodeCursor({ createdAt: last.createdAt, id: last.id }) : null,
+    };
+    return c.json(response);
+  });
+
+  /**
+   * Удаление результата из Library: только владелец и только выходной файл (входной принадлежит истории задачи).
+   * Сначала объект: удаление S3 идемпотентно, сбой — 500, запись на месте, повтор доделает.
+   */
+  app.delete('/api/files/:id', async c => {
+    const file = await deps.files.get(c.req.param('id'));
+    if (!file || file.userId !== c.get('user').id) throw new ApiError(404, 'not_found', 'file not found');
+    if (file.kind !== 'output') throw new ApiError(409, 'conflict', 'only task results can be deleted');
+    await deps.fileStore.delete(file.storageKey);
+    await deps.files.deleteOutput(file.id);
+    return c.body(null, 204);
   });
 
   /** Скачивание: только владелец; presigned GET отдаёт файл как вложение — html и svg не откроются в нашем домене. */

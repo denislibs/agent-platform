@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, lt, notInArray, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, ilike, inArray, lt, notInArray, sql } from 'drizzle-orm';
 import {
   InvalidTransitionError,
   NotFoundError,
@@ -16,6 +16,7 @@ import {
   type TaskStatus,
 } from '@agent/shared';
 import type { DbHandle } from '../client';
+import { containsPattern } from '../like';
 import { tasks, user } from '../schema';
 import { isUuid } from '../uuid';
 
@@ -81,24 +82,35 @@ export class DrizzleTaskRepository implements TaskRepository {
     return row?.n ?? 0;
   }
 
-  async listForUser(userId: string, opts: { limit?: number; before?: TaskCursor } = {}): Promise<Task[]> {
-    const { before } = opts;
+  async listForUser(
+    userId: string,
+    opts: { limit?: number; before?: TaskCursor; search?: string } = {},
+  ): Promise<Task[]> {
+    const { before, search } = opts;
     if (before && !isUuid(before.id)) return [];
     // JS Date хранит миллисекунды, Postgres — микросекунды: сравнение и порядок — по усечённому до мс времени,
     // иначе курсор из Date на границе страницы терял бы задачи из той же миллисекунды.
     const createdMs = sql`date_trunc('milliseconds', ${tasks.createdAt})`;
-    const where = before
-      ? and(
-          eq(tasks.userId, userId),
-          sql`(${createdMs}, ${tasks.id}) < (${before.createdAt.toISOString()}::timestamptz, ${before.id}::uuid)`,
-        )
-      : eq(tasks.userId, userId);
+    const where = and(
+      eq(tasks.userId, userId),
+      search ? ilike(tasks.prompt, containsPattern(search)) : undefined,
+      before
+        ? sql`(${createdMs}, ${tasks.id}) < (${before.createdAt.toISOString()}::timestamptz, ${before.id}::uuid)`
+        : undefined,
+    );
     return this.db
       .select()
       .from(tasks)
       .where(where)
       .orderBy(desc(createdMs), desc(tasks.id))
       .limit(opts.limit ?? 50);
+  }
+
+  /** Шаги, подзадачи и файлы — каскадом; usage_events.task_id становится null (schema.ts). */
+  async delete(id: string): Promise<boolean> {
+    if (!isUuid(id)) return false;
+    const rows = await this.db.delete(tasks).where(eq(tasks.id, id)).returning({ id: tasks.id });
+    return rows.length > 0;
   }
 
   async findStale(opts: { statuses: readonly TaskStatus[]; staleForMs: number; limit?: number }): Promise<Task[]> {

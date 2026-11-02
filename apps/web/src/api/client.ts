@@ -2,17 +2,22 @@ import { z } from 'zod';
 import {
   ApiErrorSchema,
   ClientConfigSchema,
+  FileListResponseSchema,
   MeResponseSchema,
   TaskEnvelopeSchema,
   TaskListResponseSchema,
   TaskResponseSchema,
   UploadResponseSchema,
+  UsageResponseSchema,
   type AuthProvider,
+  type FileCategory,
   type ProfileTheme,
 } from '@agent/shared';
 
 /** Сколько задач в странице сайдбара. */
 export const TASKS_PAGE = 20;
+/** Сколько файлов в странице Library. */
+export const FILES_PAGE = 20;
 
 /**
  * Ошибка запроса к API. code — код из конверта API (`not_found`, `too_many_active_tasks`…), код Better Auth
@@ -63,6 +68,16 @@ export interface ApiOptions {
 
 const task = (id: string) => `/api/tasks/${encodeURIComponent(id)}`;
 
+/** Строка запроса: пустые значения не передаются, значения закодированы. */
+const queryString = (params: Record<string, string | number | undefined>): string =>
+  Object.entries(params)
+    .filter(([, value]) => value !== undefined && value !== '')
+    .map(([key, value]) => `${key}=${encodeURIComponent(value!)}`)
+    .join('&');
+
+/** Ответ 204: тела нет, res.json() в send даёт undefined. */
+const NoContentSchema = z.undefined();
+
 /** Куда вернуть пользователя после входа по ссылке или через OAuth (по умолчанию на главную) и куда — при ошибке ссылки. */
 const authRedirects = (callbackURL: string) => ({ callbackURL, errorCallbackURL: '/sign-in' });
 
@@ -104,12 +119,11 @@ export function createApi(opts: ApiOptions = {}) {
     config: () => send('GET', '/api/config', ClientConfigSchema),
     me: () => send('GET', '/api/me', MeResponseSchema),
     setTheme: (theme: ProfileTheme) => send('PATCH', '/api/me', MeResponseSchema, { theme }),
-    listTasks: (before?: string) =>
-      send(
-        'GET',
-        `/api/tasks?limit=${TASKS_PAGE}${before === undefined ? '' : `&before=${encodeURIComponent(before)}`}`,
-        TaskListResponseSchema,
-      ),
+    setName: (name: string) => send('PATCH', '/api/me', MeResponseSchema, { name }),
+    usage: () => send('GET', '/api/usage', UsageResponseSchema),
+    deleteAccount: (email: string) => send('DELETE', '/api/me', NoContentSchema, { email }),
+    listTasks: (before?: string, q?: string) =>
+      send('GET', `/api/tasks?${queryString({ limit: TASKS_PAGE, before, q })}`, TaskListResponseSchema),
     getTask: (id: string) => send('GET', task(id), TaskResponseSchema),
     createTask: (prompt: string, fileIds: readonly string[]) =>
       send('POST', '/api/tasks', TaskEnvelopeSchema, { prompt, fileIds }),
@@ -122,6 +136,10 @@ export function createApi(opts: ApiOptions = {}) {
         questionSeq === undefined ? { text } : { text, questionSeq },
       ),
     cancel: (id: string) => send('POST', `${task(id)}/cancel`, TaskEnvelopeSchema),
+    deleteTask: (id: string) => send('DELETE', task(id), NoContentSchema),
+    listFiles: (filters: { category?: FileCategory | undefined; q?: string; before?: string | undefined }) =>
+      send('GET', `/api/files?${queryString({ limit: FILES_PAGE, ...filters })}`, FileListResponseSchema),
+    deleteFile: (id: string) => send('DELETE', `/api/files/${encodeURIComponent(id)}`, NoContentSchema),
     declareUpload: (body: { name: string; contentType: string; size: number }) =>
       send('POST', '/api/uploads', UploadResponseSchema, body),
     sendMagicLink: (email: string, returnTo = '/') =>

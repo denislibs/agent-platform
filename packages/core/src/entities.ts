@@ -89,6 +89,17 @@ export interface NewFile {
   mime: string;
 }
 
+/** Расход по задаче. taskId null — события задач, которых больше нет (и событий без задачи): одна строка. */
+export interface TaskUsage {
+  taskId: string | null;
+  /** Запрос задачи; null, если задачи нет. */
+  prompt: string | null;
+  millicredits: number;
+  /** Токены запроса и ответа вместе. */
+  tokens: number;
+  lastActivityAt: Date;
+}
+
 export interface UsageInput {
   userId: string;
   taskId: string | null;

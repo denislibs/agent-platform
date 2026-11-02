@@ -211,6 +211,48 @@ test('signing out ends the session', async () => {
   expect((await app.request(`${origin}/api/me`, { headers: { cookie } })).status).toBe(401);
 });
 
+test('PATCH /api/me writes the name to the profile: the next request reads it from the session', async () => {
+  const cookie = await signIn(newEmail());
+  const patched = await app.request(`${origin}/api/me`, {
+    method: 'PATCH',
+    headers: { cookie, origin, 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'Ada Lovelace' }),
+  });
+  expect(patched.status).toBe(200);
+  const me = MeResponseSchema.parse(await (await app.request(`${origin}/api/me`, { headers: { cookie } })).json());
+  expect(me.user.name).toBe('Ada Lovelace');
+});
+
+test('DELETE /api/me with the matching email removes the user and the objects; the cookie stops working', async () => {
+  const email = newEmail();
+  const cookie = await signIn(email);
+  const headers = { cookie, origin, 'content-type': 'application/json' };
+  const me = MeResponseSchema.parse(await (await app.request(`${origin}/api/me`, { headers: { cookie } })).json());
+  const { files, fileStore } = container.cradle;
+  const storageKey = `inputs/${me.user.id}/${crypto.randomUUID()}/a.csv`;
+  await files.insert({ userId: me.user.id, kind: 'input', path: 'a.csv', storageKey, size: 1, mime: 'text/csv' });
+  await fileStore.put(storageKey, 'x');
+
+  const wrong = await app.request(`${origin}/api/me`, {
+    method: 'DELETE',
+    headers,
+    body: JSON.stringify({ email: 'someone@else.dev' }),
+  });
+  expect(wrong.status).toBe(400);
+  expect(await fileStore.exists(storageKey)).toBe(true);
+
+  const res = await app.request(`${origin}/api/me`, {
+    method: 'DELETE',
+    headers,
+    body: JSON.stringify({ email: email.toUpperCase() }),
+  });
+  expect(res.status).toBe(204);
+  expect((await app.request(`${origin}/api/me`, { headers: { cookie } })).status).toBe(401);
+  expect(await db.select().from(user).where(eq(user.email, email))).toEqual([]);
+  expect(await db.select().from(session).where(eq(session.userId, me.user.id))).toEqual([]);
+  expect(await fileStore.exists(storageKey)).toBe(false);
+});
+
 test('the theme lives in the profile: PATCH /api/me writes it, the session reads it, update-user cannot', async () => {
   const cookie = await signIn(newEmail());
   const json = { cookie, origin, 'content-type': 'application/json' };

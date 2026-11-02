@@ -202,5 +202,6 @@ test('toFileDto hides the storage key and the owner and links to the API downloa
   expect(FileDtoSchema.parse(dto)).toEqual(dto);
   expect(dto.url).toBe('/api/files/f1');
   expect(JSON.stringify(dto)).not.toContain('secret-key');
-  expect('userId' in dto || 'taskId' in dto || 'storageKey' in dto).toBe(false);
+  expect(dto.taskId).toBe('task-1');
+  expect('userId' in dto || 'storageKey' in dto).toBe(false);
 });

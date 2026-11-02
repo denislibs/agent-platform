@@ -82,6 +82,16 @@ describe('Sweeper', () => {
     expect((await c.sandboxes.list()).map(s => s.taskId)).toEqual([live.id]);
   });
 
+  test('the sandbox of a deleted task is destroyed', async () => {
+    const c = setupAgent(env);
+    const task = await planned(c);
+    await c.sandboxes.create(task.id);
+    await c.tasks.transition(task.id, 'cancelled');
+    await c.tasks.delete(task.id);
+    expect((await c.sweeper.sweep()).destroyed).toBe(1);
+    expect(await c.sandboxes.list()).toEqual([]);
+  });
+
   test('a failing sandbox destroy does not abort the sweep: the other sandboxes are still removed', async () => {
     const c = setupAgent(env);
     const a = await planned(c);
