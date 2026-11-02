@@ -28,11 +28,14 @@ export function Tabs<V extends string>({ label, value, onChange, items, variant 
   const tabs = useRef<Array<HTMLButtonElement | null>>([]);
   const hasPanels = items.some(item => item.panel !== undefined);
   const selected = items.findIndex(item => item.value === value);
-  const focusable = selected >= 0 ? selected : items.findIndex(item => !item.disabled);
+  // Выбранная вкладка может быть недоступной: тогда в порядок табуляции попадает первая доступная.
+  const focusable = selected >= 0 && !items[selected]!.disabled ? selected : items.findIndex(item => !item.disabled);
   const tabId = (index: number) => `${base}-tab-${index}`;
   const panelId = (index: number) => `${base}-panel-${index}`;
 
   const onKeyDown = (event: KeyboardEvent, index: number) => {
+    // Alt+← и подобные — команды браузера, не навигация по вкладкам.
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
     const next = nextIndex(event.key, index, items.length, i => Boolean(items[i]!.disabled), 'horizontal');
     if (next === null) return;
     event.preventDefault();

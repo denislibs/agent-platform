@@ -77,9 +77,11 @@ export function OtpInput({ value, onChange, onComplete, length = 6, groupSize = 
   const fill = (index: number, digits: string) => {
     const start = Math.min(index, value.length);
     const next = (value.slice(0, start) + digits + value.slice(start + digits.length)).slice(0, length);
-    if (next !== value) onChange(next);
+    const changed = next !== value;
+    if (changed) onChange(next);
     focus(start + digits.length);
-    if (next.length === length && digits.length > 0) onComplete?.(next);
+    // Завершение — только когда полный код действительно изменился (повторная вставка того же кода не в счёт).
+    if (changed && next.length === length) onComplete?.(next);
     return next;
   };
 
@@ -142,6 +144,7 @@ export interface TagInputProps {
 /** Enter или запятая добавляют тег, Backspace в пустом поле удаляет последний. */
 export function TagInput({ values, onChange, label, placeholder, validate }: TagInputProps) {
   const field = useFieldControl({});
+  const input = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState('');
   const add = () => {
     const tag = draft.trim();
@@ -152,15 +155,26 @@ export function TagInput({ values, onChange, label, placeholder, validate }: Tag
   return (
     <div class="ui-tags">
       {values.map(tag => (
-        <Tag key={tag} label={tag} onRemove={() => onChange(values.filter(v => v !== tag))} />
+        <Tag
+          key={tag}
+          label={tag}
+          onRemove={() => {
+            onChange(values.filter(v => v !== tag));
+            // Кнопка удаляется вместе с тегом — фокус вернуть в поле, иначе он потеряется.
+            input.current?.focus();
+          }}
+        />
       ))}
       <input
         {...field}
+        ref={input}
         aria-label={label}
         value={draft}
         placeholder={placeholder}
         onInput={event => setDraft(event.currentTarget.value)}
         onKeyDown={event => {
+          // Enter, завершающий IME-композицию, не должен добавлять тег.
+          if (event.isComposing) return;
           if (event.key === 'Enter' || event.key === ',') {
             event.preventDefault();
             add();
@@ -182,30 +196,57 @@ export interface DropzoneProps {
   disabled?: boolean;
 }
 
+/** Подходит ли файл под атрибут `accept`: расширения (`.csv`), точные типы и маски (`image/*`). */
+function matchesAccept(file: File, accept: string | undefined): boolean {
+  const patterns = (accept ?? '')
+    .split(',')
+    .map(part => part.trim().toLowerCase())
+    .filter(Boolean);
+  if (patterns.length === 0) return true;
+  const name = file.name.toLowerCase();
+  const type = file.type.toLowerCase();
+  return patterns.some(pattern =>
+    pattern.startsWith('.')
+      ? name.endsWith(pattern)
+      : pattern.endsWith('/*')
+        ? type.startsWith(pattern.slice(0, -1))
+        : type === pattern,
+  );
+}
+
+/** Общий путь для броска и выбора через диалог: бросок обходит `accept` нативного input. */
+function acceptedFiles(list: Iterable<File> | null | undefined, accept: string | undefined, multiple: boolean): File[] {
+  const files = [...(list ?? [])].filter(file => matchesAccept(file, accept));
+  return multiple ? files : files.slice(0, 1);
+}
+
 /** Зона загрузки: перетаскивание и выбор через нативный `<input type="file">` внутри `<label>`. */
 export function Dropzone({ onFiles, accept, multiple = true, title, hint, disabled }: DropzoneProps) {
   const zone = useRef<HTMLLabelElement>(null);
   const [over, setOver] = useState(false);
-  const take = (list: FileList | null | undefined) => {
-    const files = [...(list ?? [])];
-    if (files.length > 0) onFiles(multiple ? files : files.slice(0, 1));
-  };
   useEffect(() => {
     const el = zone.current;
-    if (!el || disabled) return;
+    if (!el) return;
+    const pick = (list: FileList | undefined) => {
+      const files = acceptedFiles(list, accept, multiple);
+      if (files.length > 0) onFiles(files);
+    };
+    // Слушатели нужны и у отключённой зоны: иначе браузер откроет брошенный файл вместо страницы.
     const enter = (event: DragEvent) => {
       event.preventDefault();
-      setOver(true);
+      if (!disabled) setOver(true);
     };
     const leave = (event: DragEvent) => {
       event.preventDefault();
+      // dragleave приходит и при переходе на вложенный элемент — подсветку снимает только выход из зоны.
+      if (event.relatedTarget instanceof Node && el.contains(event.relatedTarget)) return;
       setOver(false);
     };
     const drop = (event: DragEvent) => {
-      leave(event);
-      take(event.dataTransfer?.files);
+      event.preventDefault();
+      setOver(false);
+      if (!disabled) pick(event.dataTransfer?.files);
     };
-    // Обработчики через addEventListener: у <label> нет роли для перетаскивания в JSX-правилах a11y.
     el.addEventListener('dragenter', enter);
     el.addEventListener('dragover', enter);
     el.addEventListener('dragleave', leave);
@@ -216,9 +257,10 @@ export function Dropzone({ onFiles, accept, multiple = true, title, hint, disabl
       el.removeEventListener('dragleave', leave);
       el.removeEventListener('drop', drop);
     };
-  });
+    // Переподписываемся при смене пропсов: запись в ref.current («последний onFiles») запрещена линтером.
+  }, [disabled, onFiles, accept, multiple]);
   return (
-    <label ref={zone} class={cx('ui-dropzone', over && 'is-dragover')}>
+    <label ref={zone} class={cx('ui-dropzone', over && !disabled && 'is-dragover')}>
       <span class="ui-dropzone__icon">
         <Upload aria-hidden="true" />
       </span>
@@ -237,7 +279,8 @@ export function Dropzone({ onFiles, accept, multiple = true, title, hint, disabl
         multiple={multiple}
         disabled={disabled}
         onChange={event => {
-          take(event.currentTarget.files);
+          const files = acceptedFiles(event.currentTarget.files, accept, multiple);
+          if (files.length > 0) onFiles(files);
           event.currentTarget.value = '';
         }}
       />
@@ -260,7 +303,9 @@ const MODIFIERS = new Set(['Meta', 'Control', 'Alt', 'Shift']);
 /** Комбинация из события клавиатуры: `['⌘', '⇧', 'O']`; `null` — нажат только модификатор. */
 export function shortcutFromEvent(event: KeyboardEvent): string[] | null {
   if (MODIFIERS.has(event.key)) return null;
-  const key = KEY_NAMES[event.key] ?? (event.key.length === 1 ? event.key.toUpperCase() : event.key);
+  // Буква и цифра — по физической клавише: ⌥O даёт key 'ø', Shift+1 даёт '!'.
+  const physical = /^Key([A-Z])$/.exec(event.code)?.[1] ?? /^Digit(\d)$/.exec(event.code)?.[1];
+  const key = physical ?? KEY_NAMES[event.key] ?? (event.key.length === 1 ? event.key.toUpperCase() : event.key);
   return [event.metaKey && '⌘', event.ctrlKey && '⌃', event.altKey && '⌥', event.shiftKey && '⇧', key].filter(
     (part): part is string => Boolean(part),
   );
@@ -276,18 +321,26 @@ export interface ShortcutInputProps {
 /** Запись шортката: клик — запись (`aria-pressed`), следующая комбинация сохраняется, Esc — отмена. */
 export function ShortcutInput({ value, onChange, label, placeholder = 'Not set' }: ShortcutInputProps) {
   const [recording, setRecording] = useState(false);
+  const button = useRef<HTMLButtonElement>(null);
   return (
     <div class="ui-shortcut">
       <button
+        ref={button}
         type="button"
         class="ui-shortcut__keys"
         aria-pressed={recording}
         aria-label={recording ? `${label}: press a new shortcut` : `${label}: ${value.join(' ') || placeholder}`}
-        onClick={() => setRecording(r => !r)}
+        onClick={event => {
+          // В Safari и Firefox клик не фокусирует кнопку, а без фокуса keydown не придёт.
+          event.currentTarget.focus();
+          setRecording(r => !r);
+        }}
         onBlur={() => setRecording(false)}
         onKeyDown={event => {
           if (!recording || event.key === 'Tab') return;
           event.preventDefault();
+          // Нажатое при записи не должно срабатывать снаружи (⌘K палитры, Esc диалога).
+          event.stopPropagation();
           if (event.key === 'Escape') return setRecording(false);
           const keys = shortcutFromEvent(event);
           if (!keys) return;
@@ -313,7 +366,10 @@ export function ShortcutInput({ value, onChange, label, placeholder = 'Not set' 
           label={`Clear ${label}`}
           size="xs"
           class="ui-shortcut__clear"
-          onClick={() => onChange([])}
+          onClick={() => {
+            onChange([]);
+            button.current?.focus();
+          }}
         />
       )}
     </div>

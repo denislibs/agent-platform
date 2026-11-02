@@ -2,7 +2,16 @@ import { expect, mock, test } from 'bun:test';
 import { act, fireEvent, render, screen } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'preact/hooks';
-import { Dropzone, nextIndex, OtpInput, ShortcutInput, Stepper, TagInput, Tabs } from '../src/index.ts';
+import {
+  Dropzone,
+  nextIndex,
+  OtpInput,
+  ShortcutInput,
+  shortcutFromEvent,
+  Stepper,
+  TagInput,
+  Tabs,
+} from '../src/index.ts';
 
 const none = () => false;
 
@@ -154,4 +163,167 @@ test('ShortcutInput records the next combination and can be cleared', async () =
   expect(keys.getAttribute('aria-label')).toBe('New task: ⌘ ⇧ K');
   await user.click(screen.getByRole('button', { name: 'Clear New task' }));
   expect(keys.getAttribute('aria-label')).toBe('New task: Not set');
+});
+
+test('nextIndex returns null for an empty list', () => {
+  expect(nextIndex('ArrowRight', 0, 0, none, 'horizontal')).toBeNull();
+  expect(nextIndex('Home', 0, 0, none, 'horizontal')).toBeNull();
+  expect(nextIndex('End', 0, 0, none, 'horizontal')).toBeNull();
+});
+
+test('Tabs wrap backwards with ArrowLeft and link every tab to its panel', async () => {
+  const user = userEvent.setup();
+  render(<TabsHarness />);
+  const tasks = screen.getByRole('tab', { name: 'Tasks' });
+  await user.tab();
+  await user.keyboard('{ArrowLeft}');
+  const computers = screen.getByRole('tab', { name: 'Computers 3' });
+  expect(document.activeElement).toBe(computers);
+  const panel = screen.getByRole('tabpanel');
+  expect(computers.getAttribute('aria-controls')).toBe(panel.id);
+  expect(panel.getAttribute('aria-labelledby')).toBe(computers.id);
+  expect(tasks.getAttribute('aria-selected')).toBe('false');
+});
+
+test('Tabs keep one tab in the tab order when the value points at a disabled tab', () => {
+  render(
+    <Tabs
+      label="Usage"
+      value="websites"
+      onChange={() => {}}
+      items={[
+        { value: 'tasks', label: 'Tasks' },
+        { value: 'websites', label: 'Websites', disabled: true },
+      ]}
+    />,
+  );
+  expect(screen.getByRole('tab', { name: 'Tasks' }).tabIndex).toBe(0);
+  expect(screen.getByRole('tab', { name: 'Websites' }).tabIndex).toBe(-1);
+});
+
+test('Tabs leave arrow keys with modifiers to the browser', () => {
+  const onChange = mock((_value: 'a' | 'b') => {});
+  render(
+    <Tabs
+      label="Usage"
+      value="a"
+      onChange={onChange}
+      items={[
+        { value: 'a', label: 'A' },
+        { value: 'b', label: 'B' },
+      ]}
+    />,
+  );
+  const notPrevented = fireEvent.keyDown(screen.getByRole('tab', { name: 'A' }), { key: 'ArrowRight', altKey: true });
+  expect(notPrevented).toBe(true);
+  expect(onChange).not.toHaveBeenCalled();
+});
+
+test('Stepper increases up to the max and then disables the button', () => {
+  const onChange = mock((_value: number) => {});
+  render(<Stepper label="Tasks" value={19} min={1} max={20} onChange={onChange} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Increase Tasks' }));
+  expect(onChange).toHaveBeenLastCalledWith(20);
+});
+
+test('OtpInput cells are numeric and only the first offers one-time-code autofill', () => {
+  render(<OtpHarness onComplete={() => {}} />);
+  const cells = screen.getAllByRole('textbox') as HTMLInputElement[];
+  expect(cells.every(c => c.getAttribute('inputmode') === 'numeric')).toBe(true);
+  expect(cells[0]!.getAttribute('autocomplete')).toBe('one-time-code');
+  expect(cells[1]!.getAttribute('autocomplete')).toBe('off');
+});
+
+test('OtpInput does not complete again when a paste leaves the code unchanged', async () => {
+  const user = userEvent.setup();
+  const onComplete = mock((_code: string) => {});
+  render(<OtpHarness onComplete={onComplete} />);
+  await user.click(screen.getByRole('textbox', { name: 'Digit 1 of 6' }));
+  await user.paste('123456');
+  expect(onComplete).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole('textbox', { name: 'Digit 1 of 6' }));
+  await user.paste('123456');
+  expect(onComplete).toHaveBeenCalledTimes(1);
+});
+
+test('TagInput adds on comma, ignores keys during IME composition and refocuses the input after removal', async () => {
+  const user = userEvent.setup();
+  render(<TagHarness />);
+  const input = screen.getByRole('textbox', { name: 'Approved senders' });
+  await user.type(input, 'a@acme.com,');
+  expect(screen.getByRole('button', { name: 'Remove a@acme.com' })).toBeTruthy();
+  await user.type(input, 'b@acme.com');
+  fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+  expect(screen.queryByRole('button', { name: 'Remove b@acme.com' })).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Remove a@acme.com' }));
+  expect(screen.queryByRole('button', { name: 'Remove a@acme.com' })).toBeNull();
+  expect(document.activeElement).toBe(input);
+});
+
+test('Dropzone filters dropped files by accept and keeps only the first when not multiple', () => {
+  const onFiles = mock((_files: File[]) => {});
+  const csv = new File(['a'], 'Data.CSV', { type: '' });
+  const png = new File(['b'], 'pic.png', { type: 'image/png' });
+  const jpg = new File(['c'], 'pic.jpg', { type: 'image/jpeg' });
+  const pdf = new File(['d'], 'doc.pdf', { type: 'application/pdf' });
+  const { unmount } = render(<Dropzone onFiles={onFiles} accept=".csv, image/*" />);
+  drag(screen.getByText('browse').closest('label')!, 'drop', [csv, png, jpg, pdf]);
+  expect(onFiles).toHaveBeenLastCalledWith([csv, png, jpg]);
+  unmount();
+  render(<Dropzone onFiles={onFiles} accept="application/pdf" multiple={false} />);
+  drag(screen.getByText('browse').closest('label')!, 'drop', [png, pdf, pdf]);
+  expect(onFiles).toHaveBeenLastCalledWith([pdf]);
+  onFiles.mockClear();
+  drag(screen.getByText('browse').closest('label')!, 'drop', [png]);
+  expect(onFiles).not.toHaveBeenCalled();
+});
+
+test('Dropzone ignores a leave into its own children and swallows drops while disabled', () => {
+  const onFiles = mock((_files: File[]) => {});
+  const { rerender } = render(<Dropzone onFiles={onFiles} />);
+  const zone = screen.getByText('browse').closest('label')!;
+  drag(zone, 'dragenter');
+  const leave = new Event('dragleave', { bubbles: true, cancelable: true });
+  Object.defineProperty(leave, 'relatedTarget', { value: screen.getByText('browse') });
+  act(() => {
+    zone.dispatchEvent(leave);
+  });
+  expect(zone.className).toBe('ui-dropzone is-dragover');
+  rerender(<Dropzone onFiles={onFiles} disabled />);
+  expect(zone.className).toBe('ui-dropzone');
+  const drop = new Event('drop', { bubbles: true, cancelable: true });
+  Object.defineProperty(drop, 'dataTransfer', { value: { files: [new File(['a'], 'a.txt')] } });
+  act(() => {
+    zone.dispatchEvent(drop);
+  });
+  expect(drop.defaultPrevented).toBe(true);
+  expect(onFiles).not.toHaveBeenCalled();
+});
+
+const press = (init: KeyboardEventInit) => shortcutFromEvent(new KeyboardEvent('keydown', init));
+
+test('shortcutFromEvent reads the physical key so Option and Shift do not change the letter', () => {
+  const key = press;
+  expect(key({ altKey: true, key: 'ø', code: 'KeyO' })).toEqual(['⌥', 'O']);
+  expect(key({ shiftKey: true, key: '!', code: 'Digit1' })).toEqual(['⇧', '1']);
+  expect(key({ key: 'Enter', code: 'Enter' })).toEqual(['↵']);
+  expect(key({ key: 'F5', code: 'F5' })).toEqual(['F5']);
+  expect(key({ key: 'Shift', code: 'ShiftLeft', shiftKey: true })).toBeNull();
+});
+
+test('ShortcutInput focuses its button when recording starts, keeps keys inside while recording and refocuses after clear', async () => {
+  const user = userEvent.setup();
+  const outside = mock((_key: string) => {});
+  render(<ShortcutHarness />);
+  document.body.addEventListener('keydown', event => outside(event.key));
+  const keys = screen.getByRole('button', { name: 'New task: ⌘ O' });
+  fireEvent.click(keys);
+  expect(keys.getAttribute('aria-pressed')).toBe('true');
+  expect(document.activeElement).toBe(keys);
+  await user.keyboard('{Escape}');
+  expect(outside).not.toHaveBeenCalled();
+  await user.keyboard('{Escape}');
+  expect(outside).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole('button', { name: 'Clear New task' }));
+  expect(document.activeElement).toBe(keys);
 });
