@@ -261,6 +261,49 @@ export function repositoryContract(
         expect(await h.tasks.listForUser(userId, { before: { createdAt: new Date(), id: MALFORMED_ID } })).toEqual([]);
       });
 
+      test('listForUser search: case-insensitive substring of the prompt, also in Cyrillic; other users are not searched', async () => {
+        const userId = await h.seedUser();
+        const hit = await h.tasks.create({ userId, prompt: 'Find three SUPPLIERS' });
+        const cyrillic = await h.tasks.create({ userId, prompt: 'Найди поставщиков' });
+        await h.tasks.create({ userId, prompt: 'Plan a trip' });
+        await h.tasks.create({ userId: await h.seedUser(), prompt: 'suppliers of someone else' });
+        expect((await h.tasks.listForUser(userId, { search: 'suppliers' })).map(t => t.id)).toEqual([hit.id]);
+        expect((await h.tasks.listForUser(userId, { search: 'ПОСТАВЩИК' })).map(t => t.id)).toEqual([cyrillic.id]);
+        expect(await h.tasks.listForUser(userId, { search: 'nothing like it' })).toEqual([]);
+        expect(await h.tasks.listForUser(userId, { search: '' })).toHaveLength(3);
+      });
+
+      test('listForUser search takes %, _ and the backslash literally', async () => {
+        const userId = await h.seedUser();
+        const percent = await h.tasks.create({ userId, prompt: 'Grow 100% organically' });
+        const underscore = await h.tasks.create({ userId, prompt: 'rename snake_case' });
+        const backslash = await h.tasks.create({ userId, prompt: 'C:\\temp folder' });
+        await h.tasks.create({ userId, prompt: 'rename snakeXcase' });
+        expect((await h.tasks.listForUser(userId, { search: '100%' })).map(t => t.id)).toEqual([percent.id]);
+        expect((await h.tasks.listForUser(userId, { search: 'snake_case' })).map(t => t.id)).toEqual([underscore.id]);
+        expect((await h.tasks.listForUser(userId, { search: ':\\t' })).map(t => t.id)).toEqual([backslash.id]);
+        expect(await h.tasks.listForUser(userId, { search: '%' })).toHaveLength(1);
+      });
+
+      test('listForUser search pages with the cursor', async () => {
+        const userId = await h.seedUser();
+        const found: string[] = [];
+        for (const prompt of ['match 1', 'other', 'match 2', 'match 3']) {
+          const task = await h.tasks.create({ userId, prompt });
+          if (prompt.startsWith('match')) found.unshift(task.id);
+          await h.elapse(5);
+        }
+        const first = await h.tasks.listForUser(userId, { search: 'MATCH', limit: 2 });
+        expect(first.map(t => t.id)).toEqual(found.slice(0, 2));
+        const last = first.at(-1)!;
+        const rest = await h.tasks.listForUser(userId, {
+          search: 'MATCH',
+          limit: 2,
+          before: { createdAt: last.createdAt, id: last.id },
+        });
+        expect(rest.map(t => t.id)).toEqual(found.slice(2));
+      });
+
       test('delete removes the task with its steps, subtasks and files; usage events stay without a task', async () => {
         const userId = await h.seedUser({ millicredits: 1000 });
         const task = await h.tasks.create({ userId, prompt: 'x' });

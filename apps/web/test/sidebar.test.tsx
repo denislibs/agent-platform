@@ -83,3 +83,45 @@ test('Cancel deletes nothing; a refusal of the API is shown and the task stays',
   expect(screen.getByRole('link', { name: /Running one/ })).toBeTruthy();
   expect(location.pathname).toBe('/tasks/t1');
 });
+
+test('the search field asks the API after typing, says when nothing matches, and clearing restores the list', async () => {
+  const { view, calls } = setup({
+    ...signedIn(),
+    'GET /api/tasks?limit=20': listed({ id: 't1', prompt: 'Find suppliers' }, { id: 't2', prompt: 'Plan a trip' }),
+    'GET /api/tasks?limit=20&q=sup': listed({ id: 't1', prompt: 'Find suppliers' }),
+    'GET /api/tasks?limit=20&q=zzz': json({ tasks: [], nextCursor: null }),
+  });
+  view(app);
+  await screen.findByRole('link', { name: /Plan a trip/ });
+  const field = screen.getByRole('searchbox', { name: 'Search tasks' });
+
+  await userEvent.type(field, 'sup');
+  await until(() => screen.queryByRole('link', { name: /Plan a trip/ }) === null);
+  screen.getByRole('link', { name: /Find suppliers/ });
+  expect(calls.filter(c => c.path.startsWith('/api/tasks')).map(c => c.path)).toEqual([
+    '/api/tasks?limit=20',
+    '/api/tasks?limit=20&q=sup',
+  ]);
+
+  await userEvent.clear(field);
+  await userEvent.type(field, 'zzz');
+  await screen.findByText('No tasks match your search.');
+
+  await userEvent.clear(field);
+  await screen.findByRole('link', { name: /Plan a trip/ });
+  expect(screen.queryByText('No tasks match your search.')).toBeNull();
+});
+
+test('the search stays when the Shell is mounted again on another screen', async () => {
+  const { view, state, calls } = setup({
+    ...signedIn(),
+    'GET /api/tasks?limit=20&q=sup': listed({ id: 't1', prompt: 'Find suppliers' }),
+  });
+  await state.tasks.search('sup');
+  view(app);
+  expect((screen.getByRole('searchbox', { name: 'Search tasks' }) as HTMLInputElement).value).toBe('sup');
+  await userEvent.click(await screen.findByRole('link', { name: /Find suppliers/ }));
+  await until(() => location.pathname === '/tasks/t1');
+  expect((screen.getByRole('searchbox', { name: 'Search tasks' }) as HTMLInputElement).value).toBe('sup');
+  expect(calls.filter(c => c.path.startsWith('/api/tasks'))).toHaveLength(1);
+});

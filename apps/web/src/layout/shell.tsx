@@ -1,10 +1,11 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { useLocation } from 'preact-iso';
-import { Settings, SquarePen, Trash2 } from 'lucide-preact';
-import { Button, ConfirmDialog, CreditBalance, IconButton, TaskItem, cx, useToast } from '@agent/ui';
-import type { TaskSummary } from '@agent/shared';
+import { Search, Settings, SquarePen, Trash2 } from 'lucide-preact';
+import { Button, ConfirmDialog, CreditBalance, IconButton, Input, TaskItem, cx, useToast } from '@agent/ui';
+import { MAX_SEARCH_CHARS, type TaskSummary } from '@agent/shared';
 import { useApp } from '../state/app.ts';
+import { SEARCH_DEBOUNCE_MS } from '../state/tasks.ts';
 import { errorText } from '../view/errors.ts';
 import { taskItemStatus } from '../view/status.ts';
 import { MAIN_ID } from './page.ts';
@@ -18,6 +19,13 @@ function TaskNav() {
   const toast = useToast();
   const [deleting, setDeleting] = useState<TaskSummary | null>(null);
   const [busy, setBusy] = useState(false);
+  // Текст поиска живёт дольше экрана: Shell монтируется заново на каждом маршруте, а поиск остаётся в состоянии списка.
+  const [searchText, setSearchText] = useState(tasks.query.peek());
+  useEffect(() => {
+    if (searchText.trim() === tasks.query.peek()) return;
+    const timer = setTimeout(() => void tasks.search(searchText), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchText, tasks]);
   // Первая страница — один раз на приложение: список живёт в состоянии приложения между экранами.
   useEffect(() => {
     if (tasks.items.peek().length === 0) void tasks.reload();
@@ -42,6 +50,16 @@ function TaskNav() {
   return (
     <nav class="ui-nav ui-shell__nav" aria-label="Tasks">
       <div class="ui-nav-label">Tasks</div>
+      <Input
+        type="search"
+        size="sm"
+        icon={Search}
+        aria-label="Search tasks"
+        placeholder="Search tasks"
+        maxLength={MAX_SEARCH_CHARS}
+        value={searchText}
+        onInput={event => setSearchText(event.currentTarget.value)}
+      />
       {items.map(task => (
         <TaskItem
           key={task.id}
@@ -59,7 +77,9 @@ function TaskNav() {
           }
         />
       ))}
-      {items.length === 0 && tasks.loaded.value && <p class="ui-hint">No tasks yet.</p>}
+      {items.length === 0 && tasks.loaded.value && (
+        <p class="ui-hint">{tasks.query.value ? 'No tasks match your search.' : 'No tasks yet.'}</p>
+      )}
       {tasks.nextCursor.value !== null && (
         <Button variant="ghost" size="sm" block loading={tasks.loading.value} onClick={() => void tasks.more()}>
           Load more

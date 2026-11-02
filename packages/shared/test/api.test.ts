@@ -5,6 +5,7 @@ import {
   formatCredits,
   ListTasksQuerySchema,
   MAX_FILES_PER_TASK,
+  MAX_SEARCH_CHARS,
   parseCredits,
   ReplyBodySchema,
   UploadBodySchema,
@@ -109,4 +110,13 @@ test('lone UTF-16 surrogates are rejected in the prompt, the reply text and the 
   expect(CreateTaskBodySchema.safeParse({ prompt: 'ok \ud83d\ude00' }).success).toBe(true);
   expect(wellFormed('plain')).toBe(true);
   expect(wellFormed('\ud800')).toBe(false);
+});
+
+describe('ListTasksQuerySchema', () => {
+  test('q is trimmed and optional; NUL, lone surrogates and an over-long string are refused', () => {
+    expect(ListTasksQuerySchema.parse({ q: '  suppliers ' }).q).toBe('suppliers');
+    expect(ListTasksQuerySchema.parse({}).q).toBeUndefined();
+    for (const q of ['a\u0000', 'a\ud800', 'x'.repeat(MAX_SEARCH_CHARS + 1)])
+      expect(ListTasksQuerySchema.safeParse({ q }).success).toBe(false);
+  });
 });

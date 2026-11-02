@@ -110,6 +110,38 @@ describe('POST /api/tasks', () => {
 });
 
 describe('GET /api/tasks', () => {
+  test('?q= filters own tasks by the prompt, pages with the cursor and treats % literally', async () => {
+    const t = setupApi({ MAX_ACTIVE_TASKS_PER_USER: '10' });
+    const { user, headers } = await t.signIn();
+    const other = await t.signIn();
+    await t.c.intake.create({ userId: other.user.id, prompt: 'suppliers, not mine' });
+    const ids: string[] = [];
+    for (const prompt of ['Suppliers one', 'Trip', 'suppliers two', '100% suppliers']) {
+      const task = await t.c.intake.create({ userId: user.id, prompt });
+      if (prompt !== 'Trip') ids.unshift(task.id);
+      t.c.clock.advance(1000);
+    }
+    const list = async (query: string) =>
+      TaskListResponseSchema.parse(await (await t.call('GET', `/api/tasks?${query}`, { headers })).json());
+    const first = await list('q=SUPPLIERS&limit=2');
+    expect(first.tasks.map(x => x.id)).toEqual(ids.slice(0, 2));
+    const second = await list(`q=SUPPLIERS&limit=2&before=${encodeURIComponent(first.nextCursor!)}`);
+    expect(second.tasks.map(x => x.id)).toEqual(ids.slice(2));
+    expect(second.nextCursor).toBeNull();
+    expect((await list('q=%25')).tasks.map(x => x.id)).toEqual([ids[0]!]);
+    expect((await list('q=')).tasks).toHaveLength(4);
+  });
+
+  test('an invalid ?q= is 400', async () => {
+    const t = setupApi();
+    const { headers } = await t.signIn();
+    for (const q of ['a%00', 'x'.repeat(201)]) {
+      const res = await t.call('GET', `/api/tasks?q=${q}`, { headers });
+      expect(res.status).toBe(400);
+      expect(await errorCode(res)).toBe('bad_request');
+    }
+  });
+
   test('lists own tasks newest first, page by page through nextCursor', async () => {
     const t = setupApi({ MAX_ACTIVE_TASKS_PER_USER: '10' });
     const { user, headers } = await t.signIn();

@@ -63,6 +63,13 @@ export interface ApiOptions {
 
 const task = (id: string) => `/api/tasks/${encodeURIComponent(id)}`;
 
+/** Строка запроса: пустые значения не передаются, значения закодированы. */
+const queryString = (params: Record<string, string | number | undefined>): string =>
+  Object.entries(params)
+    .filter(([, value]) => value !== undefined && value !== '')
+    .map(([key, value]) => `${key}=${encodeURIComponent(value!)}`)
+    .join('&');
+
 /** Ответ 204: тела нет, res.json() в send даёт undefined. */
 const NoContentSchema = z.undefined();
 
@@ -107,12 +114,8 @@ export function createApi(opts: ApiOptions = {}) {
     config: () => send('GET', '/api/config', ClientConfigSchema),
     me: () => send('GET', '/api/me', MeResponseSchema),
     setTheme: (theme: ProfileTheme) => send('PATCH', '/api/me', MeResponseSchema, { theme }),
-    listTasks: (before?: string) =>
-      send(
-        'GET',
-        `/api/tasks?limit=${TASKS_PAGE}${before === undefined ? '' : `&before=${encodeURIComponent(before)}`}`,
-        TaskListResponseSchema,
-      ),
+    listTasks: (before?: string, q?: string) =>
+      send('GET', `/api/tasks?${queryString({ limit: TASKS_PAGE, before, q })}`, TaskListResponseSchema),
     getTask: (id: string) => send('GET', task(id), TaskResponseSchema),
     createTask: (prompt: string, fileIds: readonly string[]) =>
       send('POST', '/api/tasks', TaskEnvelopeSchema, { prompt, fileIds }),

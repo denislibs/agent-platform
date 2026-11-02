@@ -23,6 +23,7 @@ export type ApiErrorBody = z.infer<typeof ApiErrorSchema>;
 export const MAX_PROMPT_CHARS = 20_000;
 export const MAX_FILES_PER_TASK = 20;
 export const MAX_TASKS_PAGE = 100;
+export const MAX_SEARCH_CHARS = 200;
 
 // ── Запросы ──
 /** Postgres `text` не хранит U+0000: такая строка дала бы 500 при записи, поэтому отсекается как 400 на входе. */
@@ -72,9 +73,19 @@ export type ProfileTheme = (typeof PROFILE_THEMES)[number];
 export const ProfileThemeSchema = z.enum(PROFILE_THEMES);
 export const UpdateMeBodySchema = z.object({ theme: ProfileThemeSchema });
 
+/** Строка поиска в запросе. Пустая — фильтра нет; символы, которые Postgres не примет, — 400. */
+const SearchQuerySchema = z
+  .string()
+  .trim()
+  .max(MAX_SEARCH_CHARS)
+  .refine(noNul, NO_NUL_MESSAGE)
+  .refine(wellFormed, WELL_FORMED_MESSAGE)
+  .optional();
+
 export const ListTasksQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(MAX_TASKS_PAGE).default(20),
   before: z.string().min(1).max(512).optional(),
+  q: SearchQuerySchema,
 });
 
 // ── Ответы ──
