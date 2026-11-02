@@ -48,6 +48,22 @@ test('OAuth buttons appear only for configured providers and send the browser to
   expect(assigned).toEqual(['https://github.com/login/oauth/authorize?state=s']);
 });
 
+test('each OAuth button carries its provider mark, hidden from the accessible name', async () => {
+  const { view, state } = setup(signedOut(['google', 'github']), '/sign-in');
+  await state.session.load();
+  view(<SignIn />);
+  for (const [name, mark] of [
+    ['Continue with Google', 'google'],
+    ['Continue with GitHub', 'github'],
+  ] as const) {
+    const svg = screen.getByRole('button', { name }).querySelector('svg');
+    expect(svg?.getAttribute('data-provider')).toBe(mark);
+    expect(svg?.getAttribute('aria-hidden')).toBe('true');
+    // Класс lucide даёт размер и отступ, как у остальных иконок кнопок ui-kit.
+    expect(svg?.getAttribute('class')).toContain('lucide');
+  }
+});
+
 test('without OAuth apps there are no provider buttons and no divider', async () => {
   const { view, state } = setup(signedOut([]), '/sign-in');
   await state.session.load();
