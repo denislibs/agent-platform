@@ -269,6 +269,8 @@ test('not found sets the title and moves focus to the page', async () => {
   });
   await screen.findByText('Page not found');
   expect(document.title).toBe('Not found · agent');
+  // Одна h1 страницы — сам «не найдено».
+  expect(screen.getAllByRole('heading', { level: 1 }).map(h => h.textContent)).toEqual(['Page not found']);
 });
 
 // --- Продление cookie сессии ---

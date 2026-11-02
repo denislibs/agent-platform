@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'preact-iso';
 import { Monitor, Moon, Sun } from 'lucide-preact';
 import { Alert, Button, DotField, Field, Input, SegmentedControl, useTheme } from '@agent/ui';
@@ -32,6 +32,11 @@ export function SignIn() {
     query.error ? (LINK_ERRORS[query.error] ?? 'Sign-in did not work. Try again.') : null,
   );
   const [emailError, setEmailError] = useState<string | null>(null);
+  // Форма с фокусом исчезает вместе с отправкой: фокус — на заголовок «Check your email» (статус по-прежнему озвучен).
+  const sentHeading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (sentTo) sentHeading.current?.focus();
+  }, [sentTo]);
   // Куда вернуть после входа: страница, с которой охрана увела сюда (только путь этого приложения).
   const returnTo = safeReturnPath(query[RETURN_PARAM]) ?? '/';
   const providers = session.config.value?.providers ?? [];
@@ -89,7 +94,7 @@ export function SignIn() {
       </div>
       {sentTo ? (
         <div class="ui-auth__card">
-          <h1 class="ui-display">
+          <h1 class="ui-display" ref={sentHeading} tabIndex={-1}>
             Check your <em>email.</em>
           </h1>
           <p class="ui-auth__lead" role="status">

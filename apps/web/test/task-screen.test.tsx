@@ -283,6 +283,7 @@ test('a task that failed to load offers a retry', async () => {
   );
   env.view(<TaskScreen id="task-1" />);
   expect(await screen.findByText('Could not load the task')).toBeTruthy();
+  expect(screen.getAllByRole('heading', { level: 1 }).map(h => h.textContent)).toEqual(['Task']);
   expect(screen.queryByText(/relation/)).toBeNull();
   expect(FakeEventSource.all).toHaveLength(0);
   await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
@@ -297,6 +298,7 @@ test('an unknown task says so instead of spinning', async () => {
   );
   env.view(<TaskScreen id="nope" />);
   expect(await screen.findByText('Task not found')).toBeTruthy();
+  expect(screen.getAllByRole('heading', { level: 1 }).map(h => h.textContent)).toEqual(['Task not found']);
   expect(FakeEventSource.all).toHaveLength(0);
 });
 
@@ -424,6 +426,7 @@ test('the status region exists while the task loads, so the first status is anno
   );
   env.view(<TaskScreen id="task-1" />);
   await screen.findByText('Loading the task');
+  expect(screen.getAllByRole('heading', { level: 1 }).map(h => h.textContent)).toEqual(['Task']);
   const region = document.getElementById('task-status');
   expect(region?.getAttribute('role')).toBe('status');
   expect(region?.textContent).toBe('');

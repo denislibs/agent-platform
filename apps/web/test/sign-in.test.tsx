@@ -23,6 +23,8 @@ test('magic link: the email is sent to Better Auth and the card says to check th
   expect((send as HTMLButtonElement).disabled).toBe(true);
   await userEvent.type(screen.getByRole('textbox', { name: 'Email address' }), 'ada@example.com{Enter}');
   expect((await screen.findByRole('status')).textContent).toContain('ada@example.com');
+  // Форма исчезла вместе с фокусом: он переходит на заголовок нового состояния.
+  expect(document.activeElement).toBe(screen.getByRole('heading', { level: 1, name: 'Check your email.' }));
   expect(calls.at(-1)?.body).toEqual({ email: 'ada@example.com', callbackURL: '/', errorCallbackURL: '/sign-in' });
   await userEvent.click(screen.getByRole('button', { name: 'Use a different email' }));
   expect(screen.getByRole('textbox', { name: 'Email address' })).toBeTruthy();

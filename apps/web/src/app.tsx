@@ -30,6 +30,7 @@ function NotFound() {
       <div class="ui-center">
         <EmptyState
           icon={Compass}
+          heading={1}
           title="Page not found"
           description="The address is wrong or the page was moved."
           actions={

@@ -132,20 +132,28 @@ export function TaskScreen({ id }: { id: string }) {
         {statusRegion}
         <div class="ui-center">
           {isMissing(error) ? (
-            <EmptyState icon={SearchX} title="Task not found" description="It may belong to another account." />
+            <EmptyState
+              icon={SearchX}
+              heading={1}
+              title="Task not found"
+              description="It may belong to another account."
+            />
           ) : (
-            <Alert
-              tone="danger"
-              title="Could not load the task"
-              live
-              actions={
-                <Button loading={retrying} onClick={() => void retry()}>
-                  Try again
-                </Button>
-              }
-            >
-              {errorText(error)}
-            </Alert>
+            <>
+              <h1 class="ui-sr-only">Task</h1>
+              <Alert
+                tone="danger"
+                title="Could not load the task"
+                live
+                actions={
+                  <Button loading={retrying} onClick={() => void retry()}>
+                    Try again
+                  </Button>
+                }
+              >
+                {errorText(error)}
+              </Alert>
+            </>
           )}
         </div>
       </Shell>
@@ -155,6 +163,8 @@ export function TaskScreen({ id }: { id: string }) {
     return (
       <Shell>
         {statusRegion}
+        {/* У каждого состояния экрана своя h1: пока карточки нет, заголовок — просто «Task». */}
+        <h1 class="ui-sr-only">Task</h1>
         <div class="ui-center">
           <Spinner label="Loading the task" />
         </div>
