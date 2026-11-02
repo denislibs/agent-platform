@@ -22,7 +22,7 @@ export interface InputProps extends Omit<JSX.InputHTMLAttributes<HTMLInputElemen
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
-  { size = 'md', filled = false, icon: Icon, prefix, suffix, kbd, action, class: className, ...rest },
+  { size = 'md', filled = false, icon: Icon, prefix, suffix, kbd, action, class: classProp, className, ...rest },
   ref,
 ) {
   const field = useFieldControl(rest);
@@ -31,7 +31,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
       {...rest}
       {...field}
       ref={ref}
-      class={cx('ui-input', size !== 'md' && `ui-input--${size}`, filled && 'ui-input--filled', className)}
+      class={cx('ui-input', size !== 'md' && `ui-input--${size}`, filled && 'ui-input--filled', className, classProp)}
     />
   );
   if (!Icon && !prefix && !suffix && !kbd && !action) return input;
@@ -61,7 +61,7 @@ export interface TextareaProps extends JSX.TextareaHTMLAttributes<HTMLTextAreaEl
 }
 
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function Textarea(
-  { autosize = false, class: className, value, onInput, ...rest },
+  { autosize = false, class: classProp, className, value, onInput, ...rest },
   ref,
 ) {
   const own = useRef<HTMLTextAreaElement>(null);
@@ -74,7 +74,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
       {...field}
       value={value}
       ref={merged}
-      class={cx('ui-textarea', className)}
+      class={cx('ui-textarea', className, classProp)}
       onInput={event => {
         // Неуправляемое поле: значение не приходит пропсом, подгоняем высоту по вводу.
         if (autosize) fitToContent(event.currentTarget);
@@ -97,13 +97,20 @@ export interface NativeSelectProps extends Omit<JSX.SelectHTMLAttributes<HTMLSel
 }
 
 /** Нативный `<select>`: для простых списков без описаний опций. */
-export function NativeSelect({ options, size = 'md', filled = false, class: className, ...rest }: NativeSelectProps) {
+export function NativeSelect({
+  options,
+  size = 'md',
+  filled = false,
+  class: classProp,
+  className,
+  ...rest
+}: NativeSelectProps) {
   const field = useFieldControl(rest);
   return (
     <select
       {...rest}
       {...field}
-      class={cx('ui-select', size === 'sm' && 'ui-select--sm', filled && 'ui-select--filled', className)}
+      class={cx('ui-select', size === 'sm' && 'ui-select--sm', filled && 'ui-select--filled', className, classProp)}
     >
       {options.map(option => (
         <option key={option.value} value={option.value} disabled={option.disabled}>

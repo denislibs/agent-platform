@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'bun:test';
 import { fireEvent, render, screen } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
-import { createRef } from 'preact';
+import { createRef, type JSX } from 'preact';
 import { Moon, Search, Sun } from 'lucide-preact';
 import {
   Checkbox,
@@ -326,4 +326,33 @@ test('SegmentedControl marks non-selected segments aria-pressed false', () => {
   );
   expect(screen.getByRole('button', { name: 'A' }).getAttribute('aria-pressed')).toBe('true');
   expect(screen.getByRole('button', { name: 'B' }).getAttribute('aria-pressed')).toBe('false');
+});
+
+const classCases: Array<[string, string, (extra: { class: string; className: string }) => JSX.Element]> = [
+  ['Input', 'input.ui-input', extra => <Input aria-label="Name" {...extra} />],
+  ['Textarea', 'textarea.ui-textarea', extra => <Textarea aria-label="Notes" {...extra} />],
+  [
+    'NativeSelect',
+    'select.ui-select',
+    extra => <NativeSelect aria-label="Region" options={[{ value: 'eu', label: 'EU' }]} {...extra} />,
+  ],
+  ['Checkbox', 'label.ui-check', extra => <Checkbox label="Agree" {...extra} />],
+  [
+    'Switch',
+    'label.ui-check',
+    extra => <Switch label="Sounds" checked={false} onCheckedChange={() => {}} {...extra} />,
+  ],
+  [
+    'Switch with a hidden label',
+    'input.ui-switch',
+    extra => <Switch label="Sounds" hideLabel checked={false} onCheckedChange={() => {}} {...extra} />,
+  ],
+  ['Slider', 'input.ui-range', extra => <Slider aria-label="Volume" value={5} onValueChange={() => {}} {...extra} />],
+];
+
+test.each(classCases)('%s merges class and className into its base class', (_name, selector, renderControl) => {
+  const { container } = render(renderControl({ class: 'extra-a', className: 'extra-b' }));
+  const element = container.querySelector(selector);
+  expect(element).not.toBeNull();
+  expect([...element!.classList]).toEqual(expect.arrayContaining([selector.split('.')[1]!, 'extra-a', 'extra-b']));
 });

@@ -12,7 +12,14 @@ export interface CheckboxProps extends NativeInputProps {
   indeterminate?: boolean;
 }
 
-export function Checkbox({ label, description, indeterminate = false, class: className, ...rest }: CheckboxProps) {
+export function Checkbox({
+  label,
+  description,
+  indeterminate = false,
+  class: classProp,
+  className,
+  ...rest
+}: CheckboxProps) {
   const ref = useRef<HTMLInputElement>(null);
   const field = useFieldControl(rest);
   // Без массива зависимостей: свойство DOM сбрасывается кликом, пропс должен его возвращать.
@@ -20,7 +27,7 @@ export function Checkbox({ label, description, indeterminate = false, class: cla
     if (ref.current) ref.current.indeterminate = indeterminate;
   });
   return (
-    <label class={cx('ui-check', className)}>
+    <label class={cx('ui-check', className, classProp)}>
       <input {...rest} {...field} ref={ref} type="checkbox" class="ui-checkbox" />
       <span>
         {label}
@@ -46,7 +53,8 @@ export function Switch({
   label,
   hideLabel = false,
   size = 'md',
-  class: className,
+  class: classProp,
+  className,
   ...rest
 }: SwitchProps) {
   const field = useFieldControl(rest);
@@ -59,13 +67,13 @@ export function Switch({
       checked={checked}
       aria-checked={checked}
       onChange={event => onCheckedChange(event.currentTarget.checked)}
-      class={cx('ui-switch', size === 'sm' && 'ui-switch--sm', hideLabel && className)}
+      class={cx('ui-switch', size === 'sm' && 'ui-switch--sm', hideLabel && className, hideLabel && classProp)}
       aria-label={hideLabel ? label : undefined}
     />
   );
   if (hideLabel) return input;
   return (
-    <label class={cx('ui-check', className)}>
+    <label class={cx('ui-check', className, classProp)}>
       {input}
       <span>{label}</span>
     </label>
@@ -130,7 +138,8 @@ export function Slider({
   step = 1,
   onValueChange,
   formatValue,
-  class: className,
+  class: classProp,
+  className,
   style,
   ...rest
 }: SliderProps) {
@@ -141,7 +150,7 @@ export function Slider({
       {...rest}
       {...field}
       type="range"
-      class={cx('ui-range', className)}
+      class={cx('ui-range', className, classProp)}
       min={min}
       max={max}
       step={step}
