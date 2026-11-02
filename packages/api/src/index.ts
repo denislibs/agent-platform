@@ -15,3 +15,4 @@ export * from './step-stream';
 export * from './open-streams';
 export * from './timing';
 export * from './admin/grant';
+export * from './admin/delete-user';

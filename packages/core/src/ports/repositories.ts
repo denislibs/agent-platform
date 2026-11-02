@@ -116,10 +116,22 @@ export interface FileRepository {
   insert(input: NewFile): Promise<FileRecord>;
   get(id: string): Promise<FileRecord | undefined>;
   listForTask(taskId: string, kind?: FileKind): Promise<FileRecord[]>;
+  /** Все файлы пользователя (входные и результаты), старые первыми: для удаления его данных. */
+  listForUser(userId: string): Promise<FileRecord[]>;
   /**
    * Привязывает только файлы этого пользователя, ещё не привязанные к задаче. Возвращает их число.
    * Кривые и чужие id файлов молча пропускаются; неизвестная задача — NotFoundError('task')
    * (пустой список возвращает 0 без проверок).
    */
   attachToTask(fileIds: string[], userId: string, taskId: string): Promise<number>;
+  /**
+   * Входные файлы, которые так и не привязали к задаче, объявленные раньше чем olderThanMs назад по часам хранилища,
+   * старые первыми; limit по умолчанию 100. Для уборки сборщиком.
+   */
+  listUnattachedInputs(opts: { olderThanMs: number; limit?: number }): Promise<FileRecord[]>;
+  /**
+   * Удаляет запись входного файла, только если он всё ещё не привязан к задаче: привязка и удаление не гоняются
+   * друг с другом. true — удалена. Привязанный, выходной, неизвестный или кривой id — false, ничего не меняется.
+   */
+  deleteUnattached(id: string): Promise<boolean>;
 }

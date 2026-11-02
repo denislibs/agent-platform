@@ -57,6 +57,8 @@ const EnvSchema = z.object({
   WORKER_CONCURRENCY: positiveInt(4),
   SWEEP_EVERY_MS: positiveInt(60_000),
   STALE_TASK_MS: positiveInt(120_000),
+  /** Входной файл, объявленный, но не привязанный к задаче дольше этого, сборщик удаляет вместе с объектом S3. */
+  UPLOAD_TTL_MS: positiveInt(86_400_000),
   DB_LOCK_TIMEOUT_MS: positiveInt(10_000),
   SANDBOX_IMAGE: z.string().min(1).default('agent-sandbox:dev'),
   SANDBOX_NETWORK: z.string().min(1).default('agent-sandbox'),
@@ -141,6 +143,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       concurrency: e.WORKER_CONCURRENCY,
       sweepEveryMs: e.SWEEP_EVERY_MS,
       staleTaskMs: e.STALE_TASK_MS,
+      uploadTtlMs: e.UPLOAD_TTL_MS,
     },
     db: { lockTimeoutMs: e.DB_LOCK_TIMEOUT_MS },
     sandbox: {

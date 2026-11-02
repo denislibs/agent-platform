@@ -341,4 +341,25 @@ export class InMemoryFileRepository implements FileRepository {
     }
     return n;
   }
+  async listForUser(userId: string): Promise<FileRecord[]> {
+    return [...this.m.files.values()]
+      .filter(f => f.userId === userId)
+      .toSorted((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      .map(copy);
+  }
+
+  async listUnattachedInputs(opts: { olderThanMs: number; limit?: number }): Promise<FileRecord[]> {
+    const cutoff = this.m.clock.now().getTime() - opts.olderThanMs;
+    return [...this.m.files.values()]
+      .filter(f => f.kind === 'input' && f.taskId === null && f.createdAt.getTime() < cutoff)
+      .toSorted((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      .slice(0, opts.limit ?? 100)
+      .map(copy);
+  }
+
+  async deleteUnattached(id: string): Promise<boolean> {
+    const f = this.m.files.get(id);
+    if (!f || f.kind !== 'input' || f.taskId !== null) return false;
+    return this.m.files.delete(id);
+  }
 }

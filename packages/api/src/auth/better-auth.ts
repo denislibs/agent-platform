@@ -149,6 +149,18 @@ export class BetterAuthGateway implements AuthGateway {
     const ctx = await this.auth.$context;
     await ctx.internalAdapter.updateUser(userId, { theme });
   }
+
+  /** Better Auth хранит адреса в нижнем регистре. */
+  async findUserId(email: string): Promise<string | undefined> {
+    const ctx = await this.auth.$context;
+    return (await ctx.internalAdapter.findUserByEmail(email.toLowerCase()))?.user.id;
+  }
+
+  /** Строка user; сессии, аккаунты и таблицы приложения (задачи, файлы, расход) — каскадом в Postgres. */
+  async deleteUser(userId: string): Promise<void> {
+    const ctx = await this.auth.$context;
+    await ctx.internalAdapter.deleteUser(userId);
+  }
 }
 
 /** Регистрирует auth (BetterAuthGateway) в контейнере с database, config, mailer и logger: main.ts, интеграционные тесты. */

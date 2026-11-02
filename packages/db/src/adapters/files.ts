@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { NotFoundError, type FileKind, type FileRecord, type FileRepository, type NewFile } from '@agent/core';
 import type { DbHandle } from '../client';
 import { files, tasks, user } from '../schema';
@@ -49,5 +49,38 @@ export class DrizzleFileRepository implements FileRepository {
       .where(and(inArray(files.id, ids), eq(files.userId, userId), isNull(files.taskId)))
       .returning({ id: files.id });
     return rows.length;
+  }
+
+  /** Id пользователя — текст Better Auth, не UUID: проверка isUuid не нужна. */
+  async listForUser(userId: string): Promise<FileRecord[]> {
+    return this.db.select().from(files).where(eq(files.userId, userId)).orderBy(asc(files.createdAt));
+  }
+
+  /**
+   * Индекс не нужен: выборка раз в минуту по таблице files беты; при росте — частичный индекс
+   * (created_at) WHERE task_id IS NULL AND kind = 'input'.
+   */
+  async listUnattachedInputs(opts: { olderThanMs: number; limit?: number }): Promise<FileRecord[]> {
+    return this.db
+      .select()
+      .from(files)
+      .where(
+        and(
+          eq(files.kind, 'input'),
+          isNull(files.taskId),
+          lt(files.createdAt, sql`now() - make_interval(secs => ${opts.olderThanMs / 1000}::double precision)`),
+        ),
+      )
+      .orderBy(asc(files.createdAt))
+      .limit(opts.limit ?? 100);
+  }
+
+  async deleteUnattached(id: string): Promise<boolean> {
+    if (!isUuid(id)) return false;
+    const rows = await this.db
+      .delete(files)
+      .where(and(eq(files.id, id), eq(files.kind, 'input'), isNull(files.taskId)))
+      .returning({ id: files.id });
+    return rows.length > 0;
   }
 }

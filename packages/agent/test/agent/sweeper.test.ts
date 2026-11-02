@@ -210,3 +210,104 @@ describe('Sweeper', () => {
     expect(c.logger.entries).toMatchObject([{ level: 'warn', fields: { taskId: a.id, error: 'valkey is gone' } }]);
   });
 });
+
+/** Входной файл, объявленный через POST /api/uploads. */
+const upload = (userId: string) => ({
+  userId,
+  kind: 'input' as const,
+  path: 'data.csv',
+  storageKey: `inputs/${userId}/${crypto.randomUUID()}/data.csv`,
+  size: 4,
+  mime: 'text/csv',
+});
+
+describe('Sweeper: stale uploads', () => {
+  test('an upload never attached to a task is removed after UPLOAD_TTL_MS: the record and the S3 object', async () => {
+    const c = setupAgent({ ...env, UPLOAD_TTL_MS: '3600000' });
+    const userId = c.memory.seedUser();
+    const stale = await c.files.insert(upload(userId));
+    await c.fileStore.put(stale.storageKey, 'a\n1\n');
+    const task = await c.tasks.create({ userId, prompt: 'x' });
+    const used = await c.files.insert(upload(userId));
+    await c.fileStore.put(used.storageKey, 'b\n2\n');
+    await c.files.attachToTask([used.id], userId, task.id);
+    c.clock.advance(3_600_001);
+    const fresh = await c.files.insert(upload(userId));
+    await c.fileStore.put(fresh.storageKey, 'c\n3\n');
+
+    const r = await c.sweeper.sweep();
+    expect(r).toMatchObject({ uploads: 1, failed: 0 });
+    expect(await c.files.get(stale.id)).toBeUndefined();
+    expect(await c.fileStore.exists(stale.storageKey)).toBe(false);
+    for (const kept of [used, fresh]) {
+      expect(await c.files.get(kept.id)).toBeDefined();
+      expect(await c.fileStore.exists(kept.storageKey)).toBe(true);
+    }
+  });
+
+  test('an old output file of a task is never removed', async () => {
+    const c = setupAgent({ ...env, UPLOAD_TTL_MS: '3600000' });
+    const userId = c.memory.seedUser();
+    const task = await c.tasks.create({ userId, prompt: 'x' });
+    await c.tasks.transition(task.id, 'cancelled');
+    const output = await c.files.insert({
+      ...upload(userId),
+      taskId: task.id,
+      kind: 'output',
+      path: 'outputs/r.csv',
+      storageKey: `tasks/${task.id}/outputs/r.csv`,
+    });
+    await c.fileStore.put(output.storageKey, 'r\n');
+    c.clock.advance(10 * 3_600_000);
+
+    const r = await c.sweeper.sweep();
+    expect(r.uploads).toBe(0);
+    expect(await c.files.get(output.id)).toBeDefined();
+    expect(await c.fileStore.exists(output.storageKey)).toBe(true);
+  });
+
+  test('an upload attached between the listing and the delete keeps its record and object', async () => {
+    const c = setupAgent({ ...env, UPLOAD_TTL_MS: '3600000' });
+    const userId = c.memory.seedUser();
+    const file = await c.files.insert(upload(userId));
+    await c.fileStore.put(file.storageKey, 'a\n1\n');
+    const task = await c.tasks.create({ userId, prompt: 'x' });
+    c.clock.advance(3_600_001);
+    // Пользователь создал задачу с этим файлом, пока сборщик держал выборку.
+    const list = c.files.listUnattachedInputs.bind(c.files);
+    c.files.listUnattachedInputs = async opts => {
+      const found = await list(opts);
+      await c.files.attachToTask([file.id], userId, task.id);
+      return found;
+    };
+    const r = await c.sweeper.sweep();
+    expect(r.uploads).toBe(0);
+    expect((await c.files.get(file.id))?.taskId).toBe(task.id);
+    expect(await c.fileStore.exists(file.storageKey)).toBe(true);
+  });
+
+  test('a stale upload whose S3 object is already gone is removed without a failure', async () => {
+    const c = setupAgent({ ...env, UPLOAD_TTL_MS: '3600000' });
+    const userId = c.memory.seedUser();
+    const file = await c.files.insert(upload(userId));
+    c.clock.advance(3_600_001);
+    const r = await c.sweeper.sweep();
+    expect(r).toMatchObject({ uploads: 1, failed: 0 });
+    expect(await c.files.get(file.id)).toBeUndefined();
+    expect(c.logger.entries).toEqual([]);
+  });
+
+  test('a failing S3 delete is counted and logged; the record is gone either way', async () => {
+    const c = setupAgent({ ...env, UPLOAD_TTL_MS: '3600000' });
+    const userId = c.memory.seedUser();
+    const file = await c.files.insert(upload(userId));
+    c.clock.advance(3_600_001);
+    c.fileStore.delete = () => Promise.reject(new Error('s3 is down'));
+    const r = await c.sweeper.sweep();
+    expect(r).toMatchObject({ uploads: 1, failed: 1 });
+    expect(await c.files.get(file.id)).toBeUndefined();
+    expect(c.logger.entries).toMatchObject([
+      { level: 'warn', fields: { fileId: file.id, storageKey: file.storageKey, error: 's3 is down' } },
+    ]);
+  });
+});

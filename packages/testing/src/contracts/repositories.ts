@@ -612,6 +612,54 @@ export function repositoryContract(
         expect(await h.files.attachToTask([mine.id], userId, task.id)).toBe(1);
       });
 
+      test('listForUser: every file of the user, oldest first; other users and unknown ids give nothing', async () => {
+        const userId = await h.seedUser();
+        const otherId = await h.seedUser();
+        const task = await h.tasks.create({ userId, prompt: 'x' });
+        const first = await h.files.insert(upload(userId));
+        await h.elapse(5);
+        const second = await h.files.insert({ ...upload(userId, task.id), kind: 'output', path: 'outputs/r.csv' });
+        await h.files.insert(upload(otherId));
+        expect((await h.files.listForUser(userId)).map(f => f.id)).toEqual([first.id, second.id]);
+        expect(await h.files.listForUser(MALFORMED_ID)).toEqual([]);
+      });
+
+      test('listUnattachedInputs: old inputs without a task, oldest first; attached, output and fresh files are not listed', async () => {
+        const userId = await h.seedUser();
+        const task = await h.tasks.create({ userId, prompt: 'x' });
+        const oldest = await h.files.insert(upload(userId));
+        await h.elapse(5);
+        const old = await h.files.insert(upload(userId));
+        const attached = await h.files.insert(upload(userId));
+        await h.files.attachToTask([attached.id], userId, task.id);
+        await h.files.insert({ ...upload(userId, task.id), kind: 'output', path: 'outputs/r.csv' });
+        await h.elapse(STALE_GAP_MS);
+        await h.files.insert(upload(userId));
+
+        const found = await h.files.listUnattachedInputs({ olderThanMs: STALE_MS });
+        expect(found.map(f => f.id)).toEqual([oldest.id, old.id]);
+        expect(await h.files.listUnattachedInputs({ olderThanMs: STALE_MS, limit: 1 })).toHaveLength(1);
+      });
+
+      test('deleteUnattached removes only an input that is still unattached', async () => {
+        const userId = await h.seedUser();
+        const task = await h.tasks.create({ userId, prompt: 'x' });
+        const loose = await h.files.insert(upload(userId));
+        const attached = await h.files.insert(upload(userId));
+        await h.files.attachToTask([attached.id], userId, task.id);
+        const output = await h.files.insert({ ...upload(userId, task.id), kind: 'output', path: 'outputs/r.csv' });
+
+        expect(await h.files.deleteUnattached(loose.id)).toBe(true);
+        expect(await h.files.get(loose.id)).toBeUndefined();
+        expect(await h.files.deleteUnattached(loose.id)).toBe(false);
+        expect(await h.files.attachToTask([loose.id], userId, task.id)).toBe(0);
+        for (const id of [attached.id, output.id, crypto.randomUUID(), MALFORMED_ID])
+          expect(await h.files.deleteUnattached(id)).toBe(false);
+        expect((await h.files.listForTask(task.id)).map(f => f.id).toSorted()).toEqual(
+          [attached.id, output.id].toSorted(),
+        );
+      });
+
       test('get returns a file by id; unknown and malformed ids give undefined', async () => {
         const userId = await h.seedUser();
         const f = await h.files.insert(upload(userId));

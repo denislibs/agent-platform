@@ -17,6 +17,10 @@ describe('sanitizeReason', () => {
     expect(sanitizeReason('open /Users/денис/проект/x.json failed')).toBe('open <path> failed');
   });
 
+  test('format characters (bidi overrides, zero-width) and line separators become spaces', () => {
+    expect(sanitizeReason('evil\u202Etxt.exe\u200B end\u2028next\u2029last\uFEFF')).toBe('evil txt.exe end next last');
+  });
+
   test('keeps short codes, relative paths and single segments', () => {
     expect(sanitizeReason('wait_timeout')).toBe('wait_timeout');
     expect(sanitizeReason('missing outputs/report.csv in /tmp')).toBe('missing outputs/report.csv in /tmp');
