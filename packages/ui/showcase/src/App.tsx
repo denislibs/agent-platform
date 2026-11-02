@@ -154,7 +154,7 @@ function Showcase() {
   );
 }
 
-/** Витрина ui-kit — живой эталон вместо design/preview.html. */
+/** Витрина ui-kit — живой эталон (заменил прототип design/preview.html). */
 export function App() {
   return (
     <ToastProvider>

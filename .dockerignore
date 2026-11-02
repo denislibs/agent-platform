@@ -4,5 +4,4 @@ node_modules
 .superpowers
 .env
 .env.*
-design
 docs

@@ -26,7 +26,6 @@
   "ignorePatterns": [
     "packages/db/drizzle/**",
     "node_modules/**",
-    "design/**",
     "packages/ui/showcase/dist/**",
     ".superpowers/**",
     "docker/sandbox/browserd/node_modules/**"

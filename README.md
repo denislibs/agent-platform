@@ -21,6 +21,17 @@ bun test                    # all tests (needs infra)
 bun run test:unit           # fast tests, no Docker needed
 ```
 
+## UI kit
+
+```bash
+bun run ui:dev              # component showcase on http://localhost:5174
+bun run ui:build            # static showcase build in packages/ui/showcase/dist
+bun run test:ui             # ui-kit tests (happy-dom in its own process; part of test:unit)
+```
+
+`packages/ui` (`@agent/ui`) is the design system: tokens, `ui-*` styles, Preact components and agent patterns.
+Usage, themes and the component list: `packages/ui/README.md`.
+
 ## Docker stack
 
 ```bash
