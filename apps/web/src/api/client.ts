@@ -34,7 +34,8 @@ export class ApiRequestError extends Error {
 const BetterAuthErrorSchema = z.object({ message: z.string(), code: z.string().optional() });
 const BetterAuthOkSchema = z.object({ status: z.boolean() }).loose();
 const SignOutSchema = z.object({ success: z.boolean() });
-const SocialRedirectSchema = z.object({ url: z.url(), redirect: z.boolean() });
+/** Адрес провайдера — только http(s): `javascript:` и подобное браузеру отдавать нельзя. */
+const SocialRedirectSchema = z.object({ url: z.url({ protocol: /^https?$/ }), redirect: z.boolean() });
 /** get-session: null без сессии; поля сессии приложению не нужны — только факт входа. */
 const SessionSchema = z
   .object({ user: z.object({ id: z.string() }).loose() })
@@ -50,6 +51,7 @@ function toRequestError(status: number, body: unknown): ApiRequestError {
   if (ours.success) return new ApiRequestError(status, ours.data.error.code, ours.data.error.message);
   const auth = BetterAuthErrorSchema.safeParse(body);
   if (auth.success) return new ApiRequestError(status, auth.data.code ?? 'auth_error', auth.data.message);
+  if (status === 429) return new ApiRequestError(status, 'rate_limited', 'Too many attempts. Try again later.');
   return new ApiRequestError(status, status >= 500 ? 'internal' : 'bad_request', `The server answered ${status}.`);
 }
 

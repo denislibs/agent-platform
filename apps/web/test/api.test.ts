@@ -112,6 +112,20 @@ describe('createApi', () => {
     expect(calls[0]!.body).toEqual({ email: 'ada@example.com', callbackURL: '/', errorCallbackURL: '/sign-in' });
     expect(calls[1]!.body).toEqual({ provider: 'github', callbackURL: '/', errorCallbackURL: '/sign-in' });
   });
+
+  test('socialSignIn accepts only an http(s) provider address', async () => {
+    for (const url of ['javascript:alert(1)', 'data:text/html,x', 'ftp://example.com/x']) {
+      const { fetch } = fakeFetch({ 'POST /api/auth/sign-in/social': json({ url, redirect: true }) });
+      const err = await rejection(createApi({ fetch }).socialSignIn('github'));
+      expect(err.code).toBe('invalid_response');
+    }
+  });
+
+  test('the rate limit without a readable body is named as such', async () => {
+    const { fetch } = fakeFetch({ 'POST /api/auth/sign-in/magic-link': json({}, 429) });
+    const err = await rejection(createApi({ fetch }).sendMagicLink('ada@example.com'));
+    expect([err.status, err.code, err.message]).toEqual([429, 'rate_limited', 'Too many attempts. Try again later.']);
+  });
 });
 
 const declared = (contentType: string) =>
