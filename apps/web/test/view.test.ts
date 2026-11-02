@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { SUBTASK_STATUSES, TASK_STATUSES } from '@agent/shared';
 import {
+  filesLost,
   isWorking,
   planItems,
   planStatus,
@@ -64,6 +65,12 @@ describe('status mapping (roadmap notes of plan 5)', () => {
     expect(stopReasonText('credits')).toBe('your credits ran out');
     expect(stopReasonText('something_new')).toBe('it hit a limit');
     expect(stopReasonText(null)).toBe('it hit a limit');
+  });
+
+  test('filesLost is only about undelivered files', () => {
+    expect(filesLost({ partial: true, stopReason: 'missing_files' })).toBe(true);
+    expect(filesLost({ partial: true, stopReason: 'credits' })).toBe(false);
+    expect(filesLost({ partial: false, stopReason: null })).toBe(false);
   });
 
   test('an unknown status from a newer API degrades instead of throwing', () => {

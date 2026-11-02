@@ -77,6 +77,10 @@ export function stopReasonText(reason: string | null): string {
   return (reason && STOP_REASONS.get(reason)) || 'it hit a limit';
 }
 
+/** Агент закончил, но часть файлов выдать не удалось (tasks.stop_reason). */
+export const filesLost = (task: Pick<TaskDetail, 'partial' | 'stopReason'>): boolean =>
+  task.partial && task.stopReason === 'missing_files';
+
 /** Живой регион: статусы, кроме done (там зависит от partial). Record — чтобы новый статус не прошёл мимо. */
 const ANNOUNCEMENTS: Record<Exclude<TaskStatus, 'done'>, string> = {
   queued: 'The task is queued.',

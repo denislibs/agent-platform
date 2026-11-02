@@ -206,6 +206,19 @@ test('a partial result names the limit it hit', async () => {
   expect(await screen.findByText('The agent stopped early because your credits ran out.')).toBeTruthy();
 });
 
+test('undelivered files replace the success badge with a warning', async () => {
+  await open([
+    taskResponse({
+      task: taskDetail({ status: 'done', partial: true, stopReason: 'missing_files', result: 'Built the app' }),
+    }),
+  ]);
+  expect(await screen.findByText('Some files were not saved')).toBeTruthy();
+  expect(screen.getByText('Finished without all files')).toBeTruthy();
+  expect(screen.queryByText('Task completed')).toBeNull();
+  expect(screen.queryByText(/stopped early/)).toBeNull();
+  expect(screen.getByText('Built the app')).toBeTruthy();
+});
+
 test('Stop asks for confirmation, then cancels the task', async () => {
   const { calls } = await open(
     [
