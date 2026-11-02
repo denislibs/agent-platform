@@ -154,7 +154,8 @@ counts), streams SSE unbuffered with a 1 h read timeout, rejects bodies over 1 M
 on `/api/` (the app's CSP comes from Vite).
 `api`, `web` and `nginx` run as non-root users with a read-only root filesystem, no capabilities and `no-new-privileges`.
 The sandbox isolation test (`packages/sandbox/test/docker-security.test.ts`) also probes port 8080 through every host
-name and the `api` / `nginx` containers by IP; run it after `bun run stack:up` for the full check.
+name and the `api` / `nginx` containers by IP; run it after `bun run stack:up` for the full check, with
+`REQUIRE_APP_STACK=1` to fail when the stack is not up instead of skipping those targets.
 
 The worker needs the sandbox image (`bun run sandbox:build`) and `LITELLM_BASE_URL`, `LITELLM_API_KEY`,
 `PLANNER_MODEL`, `EXECUTOR_MODEL` in `.env`: they are optional in the config schema (the API does without them),

@@ -4,6 +4,7 @@ import { loadConfig } from '@agent/shared';
 import { DockerCli, DockerError, DockerSandboxProvider, type CliResult, type RunOptions } from '../src';
 import { requireSandboxImage } from './helpers';
 import {
+  APP_PAYLOAD,
   APP_PORT,
   EXPECTED_HOST_ALIASES,
   HTTP_PAYLOAD,
@@ -134,14 +135,19 @@ describe('network isolation', () => {
     ]);
     expect(gateway).toMatch(/^\d+\.\d+\.\d+\.\d+$/);
     // Порт приложения проверяется, когда стек поднят (bun run stack:up): с одним infra:up он закрыт и на хосте.
-    const appUp = (await hostReply('127.0.0.1', APP_PORT, HTTP_PAYLOAD)).length > 0;
-    const hostPorts = [...Object.values(INFRA_PORTS), ...(appUp ? [APP_PORT] : [])];
+    // Host: localhost (APP_PAYLOAD) — на чужой Host nginx не отвечает (444), и проба порта ничего бы не проверяла.
+    const appUp = (await hostReply('127.0.0.1', APP_PORT, APP_PAYLOAD)).length > 0;
+    // REQUIRE_APP_STACK=1 — стек обязан быть поднят: без этого «стек лежит» неотличим от «порт проверен».
+    const requireApp = process.env.REQUIRE_APP_STACK === '1';
+    if (requireApp) expect({ appUp }).toEqual({ appUp: true });
     for (const host of [...EXPECTED_HOST_ALIASES, ORBSTACK_HOST_IP, gateway]) {
-      for (const port of hostPorts) targets.push({ host, port });
+      for (const port of Object.values(INFRA_PORTS)) targets.push({ host, port });
+      if (appUp) targets.push({ host, port: APP_PORT, payload: APP_PAYLOAD });
     }
     // Сами контейнеры инфраструктуры по их IP в соседней сети Docker (на OrbStack сети друг друга видят).
     const infra = await infraContainers();
     expect(infra.length).toBeGreaterThanOrEqual(3);
+    if (requireApp) expect(infra.map(c => c.port)).toEqual(expect.arrayContaining([3000, 8080, 2375]));
     for (const c of infra) targets.push({ host: c.ip, port: c.port, payload: c.payload });
     targets.push({ host: '169.254.169.254', port: 80, payload: HTTP_PAYLOAD });
     // Позитивный контроль внутри той же пробы: browserd внутри песочницы отвечает по HTTP.
@@ -326,7 +332,7 @@ const INFRA_SERVICES: Record<string, { port: number; payload: string }> = {
   valkey: { port: 6379, payload: PAYLOAD_BY_PORT[INFRA_PORTS.valkey] ?? '' },
   garage: { port: 3900, payload: HTTP_PAYLOAD },
   api: { port: 3000, payload: HTTP_PAYLOAD },
-  nginx: { port: 8080, payload: HTTP_PAYLOAD },
+  nginx: { port: 8080, payload: APP_PAYLOAD },
   'docker-proxy': { port: 2375, payload: HTTP_PAYLOAD },
 };
 
