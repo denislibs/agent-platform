@@ -39,6 +39,10 @@ test('every ui-* class used by the components and the showcase exists in the sty
   expect([...missing]).toEqual([]);
 });
 
+test('a page taller than the window scrolls inside the main column of the shell', () => {
+  expect(styles).toMatch(/\.ui-shell__main\s*\{[^}]*overflow-y:\s*auto/);
+});
+
 test('elements that only receive focus from the app on navigation draw no ring', () => {
   expect(styles).toMatch(
     /\.ui-root main:focus-visible,\s*\.ui-root h1\[tabindex='-1'\]:focus-visible\s*\{[^}]*box-shadow:\s*none/,
