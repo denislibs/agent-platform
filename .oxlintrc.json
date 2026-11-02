@@ -1,13 +1,27 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["typescript", "unicorn", "import", "oxc"],
+  "plugins": ["typescript", "unicorn", "import", "oxc", "react", "jsx-a11y"],
   "categories": {
     "correctness": "error",
     "suspicious": "warn"
   },
   "rules": {
     "no-console": "off",
-    "typescript/no-explicit-any": "warn"
+    "typescript/no-explicit-any": "warn",
+    "import/no-unassigned-import": [
+      "warn",
+      {
+        "allow": ["**/*.css"]
+      }
+    ],
+    "react/react-in-jsx-scope": "off",
+    "jsx-a11y/prefer-tag-over-role": "off",
+    "react/no-unstable-nested-components": [
+      "warn",
+      {
+        "allowAsProps": true
+      }
+    ]
   },
   "ignorePatterns": [
     "packages/db/drizzle/**",
@@ -615,6 +629,71 @@
               {
                 "group": ["hono/**", "better-auth/**"],
                 "message": "hono and better-auth live only in @agent/api (spec 3.1)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/ui/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "bun",
+                "message": "@agent/ui is pure UI: no backend packages or server libraries (spec 13, design system layers)."
+              },
+              {
+                "name": "hono",
+                "message": "@agent/ui is pure UI: no backend packages or server libraries (spec 13, design system layers)."
+              },
+              {
+                "name": "better-auth",
+                "message": "@agent/ui is pure UI: no backend packages or server libraries (spec 13, design system layers)."
+              },
+              {
+                "name": "drizzle-orm",
+                "message": "@agent/ui is pure UI: no backend packages or server libraries (spec 13, design system layers)."
+              },
+              {
+                "name": "postgres",
+                "message": "@agent/ui is pure UI: no backend packages or server libraries (spec 13, design system layers)."
+              },
+              {
+                "name": "bullmq",
+                "message": "@agent/ui is pure UI: no backend packages or server libraries (spec 13, design system layers)."
+              },
+              {
+                "name": "ioredis",
+                "message": "@agent/ui is pure UI: no backend packages or server libraries (spec 13, design system layers)."
+              },
+              {
+                "name": "openai",
+                "message": "@agent/ui is pure UI: no backend packages or server libraries (spec 13, design system layers)."
+              },
+              {
+                "name": "awilix",
+                "message": "@agent/ui is pure UI: no backend packages or server libraries (spec 13, design system layers)."
+              }
+            ],
+            "patterns": [
+              {
+                "group": [
+                  "@agent/*",
+                  "@agent/*/**",
+                  "hono/**",
+                  "better-auth/**",
+                  "drizzle-orm/**",
+                  "bullmq/**",
+                  "ioredis/**",
+                  "openai/**",
+                  "awilix/**",
+                  "@aws-sdk/**"
+                ],
+                "message": "@agent/ui is pure UI: no backend packages or server libraries (spec 13, design system layers)."
               }
             ]
           }

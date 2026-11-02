@@ -6,8 +6,9 @@
     "packages/*"
   ],
   "scripts": {
-    "test": "bun test",
-    "test:unit": "bun test packages/shared packages/core packages/testing packages/llm packages/search packages/agent packages/api/test/unit",
+    "test": "bun test && bun run test:ui",
+    "test:unit": "bun test packages/shared packages/core packages/testing packages/llm packages/search packages/agent packages/api/test/unit && bun run test:ui",
+    "test:ui": "bun test --preload ./packages/ui/test/dom.ts --path-ignore-patterns '**/node_modules/**' packages/ui",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "oxlint",
     "format": "prettier --write .",
