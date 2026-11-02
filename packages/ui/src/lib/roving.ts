@@ -26,3 +26,8 @@ export function nextIndex(
   }
   return null;
 }
+
+/** Alt, Ctrl или Meta зажаты: стрелки и Home/End тогда принадлежат браузеру и ОС, их не перехватываем. */
+export function hasModifier(event: KeyboardEvent): boolean {
+  return event.altKey || event.ctrlKey || event.metaKey;
+}
