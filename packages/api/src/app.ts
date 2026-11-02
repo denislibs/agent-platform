@@ -19,7 +19,8 @@ export const API_BODY_LIMIT_BYTES = 256 * 1024;
 
 /** Исключения из охраны: проверка живости, публичные настройки клиента и обработчик авторизации. */
 const isPublic = (method: string, path: string): boolean =>
-  (method === 'GET' && (path === '/api/health' || path === '/api/config')) || path.startsWith('/api/auth/');
+  ((method === 'GET' || method === 'HEAD') && (path === '/api/health' || path === '/api/config')) ||
+  path.startsWith('/api/auth/');
 
 /**
  * HTTP API (спецификация 10). Зависимости — одним объектом, обычно cradle контейнера.

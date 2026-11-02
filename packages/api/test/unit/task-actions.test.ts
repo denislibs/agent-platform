@@ -3,7 +3,7 @@ import { jobKey } from '@agent/agent';
 import { InvalidTransitionError, type TxRepositories } from '@agent/core';
 import { ApiErrorSchema, TaskEnvelopeSchema } from '@agent/shared';
 import { toolCall } from '@agent/testing';
-import { cancelTask } from '../../src';
+import { cancelTask, replyToTask } from '../../src';
 import { pausedTask, setupApi, type ApiTest } from './helpers';
 
 const errorCode = async (res: Response) => ApiErrorSchema.parse(await res.json()).error.code;
@@ -214,13 +214,44 @@ describe('POST /api/tasks/:id/messages with questionSeq', () => {
     const t = setupApi();
     const { user, headers } = await t.signIn();
     const task = await pausedTask(t, user.id);
-    for (const questionSeq of [0, 1.5, '2']) {
+    for (const questionSeq of [0, 1.5, '2', 2_147_483_648]) {
       const res = await t.call('POST', `/api/tasks/${task.id}/messages`, {
         headers,
         body: { text: 'EU only', questionSeq },
       });
       expect(res.status).toBe(400);
     }
+  });
+});
+
+describe('replyToTask with questionSeq under a race', () => {
+  test('a pause written by the worker between the early check and the append is 409; nothing is kept or queued', async () => {
+    const t = setupApi();
+    const { user } = await t.signIn();
+    const task = await pausedTask(t, user.id);
+    // Воркер успевает поставить новую паузу после раннего чтения API, но до записи ответа.
+    const racingUow: typeof t.c.uow = {
+      run: fn =>
+        t.c.uow.run(async tx => {
+          const steps = {
+            ...tx.steps,
+            append: async (input: Parameters<typeof tx.steps.append>[0]) => {
+              await tx.steps.append({
+                taskId: task.id,
+                agent: 'executor',
+                payload: { type: 'status', from: 'running', to: 'waiting_user' },
+              });
+              return tx.steps.append(input);
+            },
+          };
+          return fn({ ...tx, steps } as typeof tx);
+        }),
+    };
+    const deps = { uow: racingUow, queue: t.c.queue, logger: t.c.logger };
+    await expect(replyToTask(deps, task.id, 'late answer', task.lastSeq)).rejects.toMatchObject({ status: 409 });
+    expect((await t.c.tasks.get(task.id))!.lastSeq).toBe(task.lastSeq);
+    expect(await t.c.steps.list(task.id, { afterSeq: task.lastSeq })).toEqual([]);
+    expect(t.c.queue.jobs).toEqual([]);
   });
 });
 

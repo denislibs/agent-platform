@@ -20,3 +20,8 @@ test('POST /api/config is still guarded: the exception is for GET only', async (
   const t = setupApi();
   expect((await t.call('POST', '/api/config', { body: {} })).status).toBe(401);
 });
+
+test('HEAD /api/config is public like GET', async () => {
+  const t = setupApi();
+  expect((await t.call('HEAD', '/api/config')).status).toBe(200);
+});

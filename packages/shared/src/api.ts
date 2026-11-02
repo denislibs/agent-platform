@@ -54,7 +54,8 @@ export const ReplyBodySchema = z.object({
    * seq шага паузы (status → waiting_user), на которую отвечает клиент. Задан и не равен последней паузе — 409:
    * агент успел задать новый вопрос, а клиент отвечал на старый. Без него ответ уходит на текущую паузу.
    */
-  questionSeq: z.number().int().positive().optional(),
+  // Предел int4: steps.seq в Postgres — integer, большее значение дало бы 500 вместо 400.
+  questionSeq: z.number().int().positive().max(2_147_483_647).optional(),
 });
 /** contentType — без параметров (`text/csv`, не `text/csv; charset=utf-8`); неизвестный тип — application/octet-stream. */
 export const UploadBodySchema = z.object({

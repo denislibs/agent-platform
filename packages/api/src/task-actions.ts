@@ -43,13 +43,16 @@ export async function replyToTask(
   questionSeq?: number,
 ): Promise<Task> {
   const { task, kind } = await deps.uow.run(async tx => {
-    // Ранний отказ без записи; решающая проверка — после append.
+    // Ранний отказ без записи (и без блокировки: чтение может отстать); решающие проверки — после append.
     const before = await tx.tasks.get(taskId);
     if (before?.status !== 'waiting_user' || !before.currentKind) throw notWaiting();
     if (questionSeq !== undefined && !(await isLastPause(tx, taskId, questionSeq))) throw staleQuestion();
     await tx.steps.append({ taskId, agent: 'user', payload: { type: 'message', role: 'user', text } });
     const after = await reread(tx, taskId);
     if (after.status !== 'waiting_user' || !after.currentKind) throw notWaiting();
+    // Блокировка строки задачи уже взята append'ом: пауза, записанная воркером после раннего чтения, видна здесь.
+    // Бросок откатывает и сам ответ.
+    if (questionSeq !== undefined && !(await isLastPause(tx, taskId, questionSeq))) throw staleQuestion();
     return { task: after, kind: after.currentKind };
   });
   try {
