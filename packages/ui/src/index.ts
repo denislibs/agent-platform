@@ -29,3 +29,5 @@ export * from './agent/composer.tsx';
 export * from './agent/message.tsx';
 export * from './agent/run.tsx';
 export * from './agent/computer.tsx';
+export { mountDotField, type DotFieldHandle, type DotFieldOptions } from './effects/dot-field.ts';
+export { DotField, type DotFieldProps } from './effects/DotField.tsx';
