@@ -608,6 +608,34 @@ test('Shift+Tab out of a popover returns focus to its trigger even when the trig
   expect(range.getAttribute('aria-expanded')).toBe('false');
 });
 
+function BusyConfirm({ onOpenChange }: { onOpenChange(open: boolean): void }) {
+  return (
+    <ConfirmDialog
+      open
+      onOpenChange={onOpenChange}
+      title="Delete this task?"
+      confirmLabel="Delete task"
+      onConfirm={() => {}}
+      busy
+    />
+  );
+}
+
+test('ConfirmDialog busy ignores Escape and disables Cancel', async () => {
+  const user = userEvent.setup();
+  const onOpenChange = mock((_open: boolean) => {});
+  render(<BusyConfirm onOpenChange={onOpenChange} />);
+  const cancel = (await screen.findByRole('button', { name: 'Cancel' })) as HTMLButtonElement;
+  expect(cancel.disabled).toBe(true);
+  const confirm = screen.getByRole('button', { name: 'Delete task' });
+  await waitFor(() => {
+    if (document.activeElement !== confirm) throw new Error('focus is not on the confirm button');
+  });
+  await user.keyboard('{Escape}');
+  expect(onOpenChange).not.toHaveBeenCalled();
+  expect(screen.getByRole('alertdialog')).toBeTruthy();
+});
+
 function PaletteOverDialog({ dialog, palette }: { dialog: boolean; palette: boolean }) {
   return (
     <>

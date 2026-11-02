@@ -107,7 +107,7 @@ export interface ConfirmDialogProps {
   /** Необратимое действие: красная кнопка и иконка (по умолчанию). */
   danger?: boolean;
   icon?: LucideIcon;
-  /** Действие выполняется: кнопка подтверждения со спиннером. */
+  /** Действие выполняется: кнопка подтверждения со спиннером, «Cancel» и Esc не работают. */
   busy?: boolean;
 }
 
@@ -127,7 +127,8 @@ export function ConfirmDialog({
   return (
     <Dialog
       open={open}
-      onOpenChange={onOpenChange}
+      // Пока действие выполняется, Esc не закрывает: результат некуда было бы показать.
+      onOpenChange={next => busy || onOpenChange(next)}
       role="alertdialog"
       size="sm"
       title={title}
@@ -141,7 +142,13 @@ export function ConfirmDialog({
       }
       footer={
         <>
-          <Button variant="secondary" data-autofocus onClick={() => onOpenChange(false)}>
+          {/* Отменить начатое нельзя; без data-autofocus открытый сразу занятым диалог фокусирует подтверждение. */}
+          <Button
+            variant="secondary"
+            data-autofocus={busy ? undefined : true}
+            disabled={busy}
+            onClick={() => onOpenChange(false)}
+          >
             {cancelLabel}
           </Button>
           <Button variant={danger ? 'danger' : 'primary'} loading={busy} onClick={onConfirm}>
