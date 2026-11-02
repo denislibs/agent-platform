@@ -52,15 +52,18 @@ export interface EmptyStateProps {
   title: string;
   description?: ComponentChildren;
   actions?: ComponentChildren;
+  /** Заголовок этого уровня вместо текста — когда пустое состояние и есть страница (вид тот же). */
+  heading?: 1 | 2 | 3 | 4 | 5 | 6;
 }
 
-export function EmptyState({ icon: Icon, title, description, actions }: EmptyStateProps) {
+export function EmptyState({ icon: Icon, title, description, actions, heading }: EmptyStateProps) {
+  const Title = heading ? (`h${heading}` as const) : 'span';
   return (
     <div class="ui-empty">
       <span class="ui-empty__icon">
         <Icon aria-hidden="true" class="ui-icon-xl" />
       </span>
-      <span class="ui-empty__title">{title}</span>
+      <Title class="ui-empty__title">{title}</Title>
       {description && <span class="ui-empty__desc">{description}</span>}
       {actions && <div class="ui-empty__actions">{actions}</div>}
     </div>
