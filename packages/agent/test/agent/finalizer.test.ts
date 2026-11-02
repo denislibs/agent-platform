@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { mimeOf, safeOutputPath } from '../../src';
-import { planned, setupAgent } from './fixtures';
+import { SandboxError } from '@agent/core';
+import { MAX_DELIVERED_FILES, mimeOf, safeOutputPath } from '../../src';
+import { calls, planned, say, setupAgent } from './fixtures';
 
 type C = ReturnType<typeof setupAgent>;
 const text = (b: Uint8Array) => new TextDecoder().decode(b);
@@ -107,7 +108,7 @@ describe('Finalizer', () => {
     });
     await c.finalizer.finalize(task.id);
     expect((await c.files.listForTask(task.id, 'output')).map(f => f.path)).toEqual(['notes.md']);
-    expect((await c.tasks.get(task.id))?.status).toBe('done');
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'done', partial: true, stopReason: 'missing_files' });
   });
 
   test('a task that is not finalizing is left alone', async () => {
@@ -181,5 +182,146 @@ describe('Finalizer', () => {
     await c.tasks.update(task.id, { partial: true, stopReason: 'credits' });
     await c.finalizer.finalize(task.id);
     expect(await c.tasks.get(task.id)).toMatchObject({ partial: true, stopReason: 'credits' });
+  });
+});
+
+/** Задача в finalizing без finish; подзадача принята с отчётом, где files = reportFiles. */
+async function reported(c: C, reportFiles: string[], expectedOutputs: string[] = []) {
+  const task = await planned(c, ['collect']);
+  const [sub] = await c.subtasks.list(task.id);
+  if (expectedOutputs.length) await c.subtasks.updatePending(sub!.id, { expectedOutputs });
+  await c.subtasks.transition(sub!.id, 'running');
+  await c.subtasks.transition(sub!.id, 'reviewing', {
+    report: { summary: 'collected', files: reportFiles, issues: [] },
+  });
+  await c.subtasks.transition(sub!.id, 'accepted');
+  await c.tasks.transition(task.id, 'finalizing', { currentKind: 'finalize' });
+  await c.steps.append({
+    taskId: task.id,
+    agent: 'system',
+    payload: { type: 'status', from: 'running', to: 'finalizing' },
+  });
+  return { task, sandbox: await c.sandboxes.create(task.id) };
+}
+const delivered = async (c: C, taskId: string) =>
+  (await c.files.listForTask(taskId, 'output')).map(f => f.path).toSorted();
+
+describe('Finalizer — folders in reports', () => {
+  test('a project folder named only in the report is delivered and the sandbox is destroyed after', async () => {
+    const c = setupAgent();
+    const { task, sandbox } = await reported(c, ['/workspace/todo-app/']);
+    await sandbox.writeFile('todo-app/src/App.jsx', 'a');
+    await sandbox.writeFile('todo-app/package.json', '{}');
+    c.llm.push(calls(['finish', { answer: 'Built', files: [] }]));
+    await c.finalizer.finalize(task.id);
+    expect(await delivered(c, task.id)).toEqual(['todo-app/package.json', 'todo-app/src/App.jsx']);
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'done', partial: false, stopReason: null });
+  });
+
+  test('a report naming outputs/ with a silent model gives no false warning', async () => {
+    const c = setupAgent();
+    const { task, sandbox } = await reported(c, ['outputs/']);
+    await sandbox.writeFile('outputs/table.md', 't');
+    c.llm.push(say('no finish'));
+    await c.finalizer.finalize(task.id);
+    expect(await delivered(c, task.id)).toEqual(['outputs/table.md']);
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'done', partial: false, stopReason: null });
+  });
+});
+
+describe('Finalizer — unreadable folders', () => {
+  test('an unreadable folder in outputs/ does not fail the job: good files go out, the task is partial', async () => {
+    const c = setupAgent();
+    const { task, sandbox } = await reported(c, []);
+    await sandbox.writeFile('outputs/table.md', 't');
+    await sandbox.writeFile('outputs/locked/a.js', 'a');
+    const real = sandbox.list.bind(sandbox);
+    sandbox.list = async (path, depth) => {
+      if (path === 'outputs/locked')
+        throw new SandboxError('fs_error', 'list outputs/locked failed: Permission denied');
+      return real(path, depth);
+    };
+    c.llm.push(calls(['finish', { answer: 'Done', files: [] }]));
+    await c.finalizer.finalize(task.id);
+    expect(await delivered(c, task.id)).toEqual(['outputs/table.md']);
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'done', partial: true, stopReason: 'missing_files' });
+  });
+
+  test('an unreadable folder outside outputs/ does not stop finalization', async () => {
+    const c = setupAgent();
+    const { task, sandbox } = await reported(c, []);
+    await sandbox.writeFile('outputs/table.md', 't');
+    await sandbox.writeFile('locked/x', 'x');
+    const real = sandbox.list.bind(sandbox);
+    sandbox.list = async (path, depth) => {
+      if (path === 'locked') throw new SandboxError('fs_error', 'list locked failed: Permission denied');
+      return real(path, depth);
+    };
+    c.llm.push(calls(['finish', { answer: 'Done', files: [] }]));
+    await c.finalizer.finalize(task.id);
+    expect(await delivered(c, task.id)).toEqual(['outputs/table.md']);
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'done', partial: false });
+  });
+});
+
+describe('Finalizer — promised files', () => {
+  test('vague expected outputs on an answer-only task raise no warning', async () => {
+    const c = setupAgent();
+    const { task } = await reported(c, [], ['A summary in the final answer']);
+    c.llm.push(calls(['finish', { answer: 'Paris', files: [] }]));
+    await c.finalizer.finalize(task.id);
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'done', partial: false, stopReason: null });
+  });
+
+  test('expected outputs that look like paths still count', async () => {
+    for (const expected of ['report.pdf', 'outputs/']) {
+      const c = setupAgent();
+      const { task } = await reported(c, [], [expected]);
+      c.llm.push(calls(['finish', { answer: 'Done', files: [] }]));
+      await c.finalizer.finalize(task.id);
+      expect(await c.tasks.get(task.id)).toMatchObject({ partial: true, stopReason: 'missing_files' });
+    }
+  });
+});
+
+describe('Finalizer — limits and logging', () => {
+  test('delivery stops at the cap and the task is partial', async () => {
+    const c = setupAgent();
+    const { task, sandbox } = await reported(c, []);
+    for (let i = 0; i < MAX_DELIVERED_FILES + 3; i++)
+      await sandbox.writeFile(`outputs/f${String(i).padStart(4, '0')}.txt`, 'x');
+    c.llm.push(calls(['finish', { answer: 'Done', files: [] }]));
+    await c.finalizer.finalize(task.id);
+    expect(await delivered(c, task.id)).toHaveLength(MAX_DELIVERED_FILES);
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'done', partial: true, stopReason: 'missing_files' });
+  });
+
+  test('exactly the cap is delivered without a warning', async () => {
+    const c = setupAgent();
+    const { task, sandbox } = await reported(c, []);
+    for (let i = 0; i < MAX_DELIVERED_FILES; i++)
+      await sandbox.writeFile(`outputs/f${String(i).padStart(4, '0')}.txt`, 'x');
+    c.llm.push(calls(['finish', { answer: 'Done', files: [] }]));
+    await c.finalizer.finalize(task.id);
+    expect(await delivered(c, task.id)).toHaveLength(MAX_DELIVERED_FILES);
+    expect(await c.tasks.get(task.id)).toMatchObject({ partial: false });
+  });
+
+  test('lost paths are logged once with the task id', async () => {
+    const c = setupAgent();
+    const { task, sandbox } = await reported(c, ['missing.md', '../etc/passwd', 'notes.md']);
+    await sandbox.writeFile('notes.md', 'n');
+    c.llm.push(calls(['finish', { answer: 'Done', files: [] }]));
+    await c.finalizer.finalize(task.id);
+    const warns = c.logger.entries.filter(e => e.level === 'warn' && e.message.includes('files'));
+    expect(warns).toHaveLength(1);
+    expect(warns[0]!.fields).toMatchObject({ taskId: task.id, paths: ['missing.md', '../etc/passwd'] });
+  });
+
+  test('nothing lost, nothing logged', async () => {
+    const c = setupAgent();
+    const task = await ready(c, ['notes.md'], { 'notes.md': 'n' });
+    await c.finalizer.finalize(task.id);
+    expect(c.logger.entries.filter(e => e.level === 'warn')).toEqual([]);
   });
 });

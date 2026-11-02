@@ -31,7 +31,7 @@ import {
   type ToolControl,
 } from '../tools';
 import { finishFilesProblem } from './deliverables';
-import { questionsAnswered, trailingSilent, unappliedControl } from './turns';
+import { CALL_ERROR_LIMIT, questionsAnswered, trailingCallErrors, trailingSilent, unappliedControl } from './turns';
 import type { ModelGateway } from './gateway';
 import type { TaskGuard } from './guard';
 import type { StageOutcome } from './outcome';
@@ -451,7 +451,15 @@ export class PlannerStage {
       },
     });
     const control = exec.control;
-    if (!control || control.kind === 'report' || control.kind === 'create_plan') return { sandbox: exec.sandbox };
+    if (!control || control.kind === 'report' || control.kind === 'create_plan') {
+      // Отклонённые вызовы (finish с несуществующим файлом, неверный replan) тоже тратят токены: как у исполнителя,
+      // подряд их можно столько же, дальше — как после молчания.
+      const own = (await this.reviewSteps(task, sub)).history.filter(s => s.agent === 'planner');
+      if (trailingCallErrors(own) >= CALL_ERROR_LIMIT) {
+        return { outcome: await this.noDecision(task, sub), sandbox: exec.sandbox };
+      }
+      return { sandbox: exec.sandbox };
+    }
     return { outcome: await this.applyDecision(task, sub, control), sandbox: exec.sandbox };
   }
 
@@ -473,7 +481,7 @@ export class PlannerStage {
     }
   }
 
-  /** Третий ответ без решения подряд: подзадачу на проверке принимаем, после упавшей — финализация. */
+  /** Третий ответ без решения (или третий неверный вызов) подряд: подзадачу на проверке принимаем, после упавшей — финализация. */
   private async noDecision(task: Task, sub: Subtask): Promise<StageOutcome> {
     if (sub.status === 'reviewing') return this.accept(task, sub);
     const { guard } = this.deps;

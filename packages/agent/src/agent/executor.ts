@@ -22,25 +22,16 @@ import type { StageOutcome } from './outcome';
 import { PROMPTS } from './prompts';
 import type { ToolExecutor } from './tool-executor';
 import { toMessages, type Compactor } from './transcript';
-import { isCompaction, isNote, questionsAnswered, trailingSilent, unappliedControl } from './turns';
+import {
+  CALL_ERROR_LIMIT,
+  isCompaction,
+  questionsAnswered,
+  trailingCallErrors,
+  trailingSilent,
+  unappliedControl,
+} from './turns';
 
 const SILENT_LIMIT = 3;
-const CALL_ERROR_LIMIT = 3;
-
-/** Неверные вызовы (error = call) подряд в конце ленты; вызовы модели, заметки и конспекты между ними не считаются. */
-export function trailingCallErrors(steps: readonly Step[]): number {
-  let n = 0;
-  for (let i = steps.length - 1; i >= 0; i--) {
-    const s = steps[i]!;
-    if (s.payload.type === 'llm_call' || isNote(s) || isCompaction(s)) continue;
-    if (s.payload.type === 'tool_result' && s.payload.error === 'call') {
-      n++;
-      continue;
-    }
-    break;
-  }
-  return n;
-}
 
 /** Вызовы модели исполнителем в текущей попытке (после последнего attempt_start); вызовы-конспекты не считаются. */
 export function attemptCalls(steps: readonly Step[]): number {

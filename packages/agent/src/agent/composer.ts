@@ -10,7 +10,14 @@ import {
   type TaskRepository,
 } from '@agent/core';
 import { finishTool } from '../tools';
-import { finishFilesProblem, walkFiles, WORKSPACE_HINT_FILES } from './deliverables';
+import {
+  finishFilesProblem,
+  isSkippedPath,
+  safeOutputPath,
+  walkFiles,
+  workspaceFileHint,
+  WORKSPACE_HINT_FILES,
+} from './deliverables';
 import type { ModelGateway } from './gateway';
 import { PROMPTS } from './prompts';
 import type { ToolExecutor } from './tool-executor';
@@ -36,6 +43,40 @@ function lastFinish(steps: readonly Step[]): { answer: string; files: string[] }
 
 const normalise = (p: string) => p.replace(/^\/workspace\//, '').replace(/^\.\//, '');
 
+/** Записи report.files, которые значат «весь /workspace». */
+const WORKSPACE_ROOTS = new Set(['/workspace', '.']);
+
+/**
+ * Записи из report.files в пути файлов. report.files — свободный текст, и модель часто называет папки.
+ * Папка раскрывается в файлы под ней (без пропускаемых папок); вся рабочая папка — без inputs/ (входные файлы
+ * пользователя не результат). Путь в пропускаемой папке отбрасывается. Всё прочее, в том числе файл, которого нет,
+ * остаётся как есть: Finalizer посчитает его потерянным и пометит задачу.
+ */
+async function expandReported(sandbox: Sandbox, entries: readonly string[]): Promise<string[]> {
+  const out: string[] = [];
+  for (const raw of entries) {
+    const trimmed = raw.trim().replace(/\/+$/, '');
+    const isRoot = WORKSPACE_ROOTS.has(trimmed);
+    const path = isRoot ? '.' : safeOutputPath(trimmed);
+    if (!path) {
+      if (!isSkippedPath(trimmed)) out.push(raw);
+      continue;
+    }
+    const unreadable: string[] = [];
+    let found: string[] = [];
+    try {
+      found = await walkFiles(sandbox, path, Number.POSITIVE_INFINITY, dir => unreadable.push(dir));
+    } catch (err) {
+      // Нет такого пути: оставляем запись, дальше она станет потерянной.
+      if (!(err instanceof NotFoundError && err.entity === 'file')) throw err;
+    }
+    if (isRoot) found = found.filter(file => file !== 'inputs' && !file.startsWith('inputs/'));
+    const expanded = [...found, ...unreadable];
+    out.push(...(expanded.length > 0 ? expanded : [raw]));
+  }
+  return out;
+}
+
 /** Модельная часть финализации (спецификация 4.1, 4.4); выгрузка файлов и done — план 3d. */
 export class ResultComposer {
   constructor(
@@ -51,6 +92,7 @@ export class ResultComposer {
 
   /**
    * Лимиты бюджета не проверяются: под эту попытку зарезервированы 5 %, а TaskGuard на finalizing вернул бы limit.
+   * Модель вызывается один раз, плюс ещё один после отклонённого вызова finish (его текст виден второй попытке).
    * Повторный вызов после сбоя подхватывает записанный finish и не обращается к модели;
    * так же, если модель уже отвечала без finish (см. attempted).
    */
@@ -75,7 +117,7 @@ export class ResultComposer {
         );
 
     if (!result && !attempted) {
-      const real = await walkFiles(sandbox, '.', WORKSPACE_HINT_FILES);
+      const hint = await workspaceFileHint(sandbox);
       const context = [
         `Task: ${task.prompt}`,
         task.partial ? `The task stopped early (${task.stopReason ?? 'limit'}); answer with what was done.` : '',
@@ -84,7 +126,8 @@ export class ResultComposer {
         ...(accepted.length ? accepted.map(s => `- ${s.goal}: ${s.report!.summary}`) : ['none']),
         '',
         'Files in the workspace:',
-        ...(real.length ? real.map(path => `- ${path}`) : ['none']),
+        ...(hint.files.length ? hint.files.map(path => `- ${path}`) : ['none']),
+        ...(hint.truncated ? [`(the list is cut at ${WORKSPACE_HINT_FILES} files; more exist)`] : []),
       ].join('\n');
       const first = await this.attempt(task, sandbox, context);
       result = first.result;
@@ -95,20 +138,29 @@ export class ResultComposer {
       }
     }
 
+    // Раскрытие записей отчётов нужно в обоих запасных путях ниже; считаем его не больше одного раза.
+    let fromReports: Promise<string[]> | undefined;
+    const reportedFiles = () =>
+      (fromReports ??= expandReported(
+        sandbox,
+        accepted.flatMap(s => s.report!.files),
+      ));
     result ??= {
       answer: accepted.length ? accepted.map(s => `## ${s.goal}\n${s.report!.summary}`).join('\n\n') : NOTHING_DONE,
-      files: accepted.flatMap(s => s.report!.files),
+      files: await reportedFiles(),
     };
 
+    // Нечитаемая папка в outputs/ не роняет job, а уходит в список как путь: Finalizer не прочитает её и посчитает потерянной.
+    const unreadable: string[] = [];
     let outputs: string[] = [];
     try {
-      outputs = await walkFiles(sandbox, 'outputs');
+      outputs = await walkFiles(sandbox, 'outputs', Number.POSITIVE_INFINITY, dir => unreadable.push(dir));
     } catch (err) {
       if (!(err instanceof NotFoundError && err.entity === 'file')) throw err;
     }
-    const named = [...new Set([...result.files, ...outputs].map(normalise))];
+    const named = [...new Set([...result.files, ...outputs, ...unreadable].map(normalise))];
     // Никто не назвал файлов и outputs/ пуста: проект мог быть собран вне неё, отчёты подзадач знают настоящие пути.
-    const files = named.length > 0 ? named : [...new Set(accepted.flatMap(s => s.report!.files).map(normalise))];
+    const files = named.length > 0 ? named : [...new Set((await reportedFiles()).map(normalise))];
     await this.deps.tasks.update(task.id, { result: result.answer });
     return { answer: result.answer, files, partial: task.partial };
   }
