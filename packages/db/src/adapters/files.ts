@@ -1,6 +1,14 @@
-import { and, asc, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
-import { NotFoundError, type FileKind, type FileRecord, type FileRepository, type NewFile } from '@agent/core';
+import { and, asc, desc, eq, ilike, inArray, isNull, lt, sql } from 'drizzle-orm';
+import {
+  NotFoundError,
+  type FileKind,
+  type FileRecord,
+  type FileRepository,
+  type NewFile,
+  type TaskCursor,
+} from '@agent/core';
 import type { DbHandle } from '../client';
+import { containsPattern } from '../like';
 import { files, tasks, user } from '../schema';
 import { isUuid } from '../uuid';
 
@@ -54,6 +62,41 @@ export class DrizzleFileRepository implements FileRepository {
   /** Id пользователя — текст Better Auth, не UUID: проверка isUuid не нужна. */
   async listForUser(userId: string): Promise<FileRecord[]> {
     return this.db.select().from(files).where(eq(files.userId, userId)).orderBy(asc(files.createdAt));
+  }
+
+  async listOutputs(
+    userId: string,
+    opts: { limit?: number; before?: TaskCursor; mimes?: readonly string[]; search?: string } = {},
+  ): Promise<FileRecord[]> {
+    const { before, mimes, search } = opts;
+    if ((before && !isUuid(before.id)) || mimes?.length === 0) return [];
+    // Время усечено до мс по той же причине, что в DrizzleTaskRepository.listForUser: курсор хранит Date.
+    const createdMs = sql`date_trunc('milliseconds', ${files.createdAt})`;
+    return this.db
+      .select()
+      .from(files)
+      .where(
+        and(
+          eq(files.userId, userId),
+          eq(files.kind, 'output'),
+          mimes ? inArray(files.mime, [...mimes]) : undefined,
+          search ? ilike(files.path, containsPattern(search)) : undefined,
+          before
+            ? sql`(${createdMs}, ${files.id}) < (${before.createdAt.toISOString()}::timestamptz, ${before.id}::uuid)`
+            : undefined,
+        ),
+      )
+      .orderBy(desc(createdMs), desc(files.id))
+      .limit(opts.limit ?? 50);
+  }
+
+  async deleteOutput(id: string): Promise<boolean> {
+    if (!isUuid(id)) return false;
+    const rows = await this.db
+      .delete(files)
+      .where(and(eq(files.id, id), eq(files.kind, 'output')))
+      .returning({ id: files.id });
+    return rows.length > 0;
   }
 
   /**

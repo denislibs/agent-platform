@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { SandboxError } from '@agent/core';
+import { FILE_CATEGORIES, FILE_CATEGORY_NAMES } from '@agent/shared';
 import { MAX_DELIVERED_FILES, mimeOf, safeOutputPath } from '../../src';
 import { calls, planned, say, setupAgent } from './fixtures';
 
@@ -54,6 +55,12 @@ describe('safeOutputPath', () => {
     expect(mimeOf('a.md')).toBe('text/markdown');
     expect(mimeOf('a.CSV')).toBe('text/csv');
     expect(mimeOf('a.unknown')).toBe('application/octet-stream');
+  });
+  test('every Library category lists only types the finalizer produces', () => {
+    const extensions = 'md txt csv json html xml pdf png jpg gif svg zip xlsx docx pptx'.split(' ');
+    const produced = new Set(extensions.map(ext => mimeOf(`a.${ext}`)));
+    for (const name of FILE_CATEGORY_NAMES)
+      for (const mime of FILE_CATEGORIES[name]) expect(produced.has(mime)).toBe(true);
   });
 });
 

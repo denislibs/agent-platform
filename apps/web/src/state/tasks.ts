@@ -15,6 +15,8 @@ export function createTaskList(api: Api) {
   const error = signal<ApiRequestError | null>(null);
   /** Текущий поиск (без пробелов по краям); пустая строка — весь список. */
   const query = signal('');
+  /** Счётчик удалений: Library перечитывает файлы, у которых могла пропасть задача. */
+  const removals = signal(0);
   /** Номер последнего запроса: ответ на устаревший (другой поиск, выход) отбрасывается. */
   let latest = 0;
 
@@ -51,6 +53,7 @@ export function createTaskList(api: Api) {
     loaded,
     error,
     query,
+    removals,
     /** Новый поиск: список заменяется первой страницей совпадений; пустая строка возвращает весь список. */
     search(text: string): Promise<void> {
       query.value = text.trim();
@@ -97,7 +100,10 @@ export function createTaskList(api: Api) {
     /** Удаляет задачу на сервере и из списка; ошибка запроса пробрасывается, список не меняется. */
     async remove(id: string): Promise<void> {
       await api.deleteTask(id);
-      items.value = items.value.filter(t => t.id !== id);
+      batch(() => {
+        items.value = items.value.filter(t => t.id !== id);
+        removals.value += 1;
+      });
     },
     clear(): void {
       latest++;

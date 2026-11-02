@@ -73,6 +73,7 @@ export function fileDto(overrides: Partial<FileDto> = {}): FileDto {
   const id = overrides.id ?? 'file-1';
   return {
     id,
+    taskId: 'task-1',
     kind: 'output',
     path: 'outputs/report.csv',
     size: 2048,

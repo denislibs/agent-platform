@@ -739,6 +739,56 @@ export function repositoryContract(
         expect(await h.files.listForUser(MALFORMED_ID)).toEqual([]);
       });
 
+      test('listOutputs: only outputs of the user, newest first, filtered by type and path, paged by the cursor', async () => {
+        const userId = await h.seedUser();
+        const task = await h.tasks.create({ userId, prompt: 'x' });
+        const output = (path: string, mime: string) => ({
+          ...upload(userId, task.id),
+          kind: 'output' as const,
+          path,
+          mime,
+        });
+        await h.files.insert(upload(userId, task.id));
+        await h.files.insert({ ...output('outputs/theirs.csv', 'text/csv'), userId: await h.seedUser(), taskId: null });
+        const csv = await h.files.insert(output('outputs/Sales_Q3.csv', 'text/csv'));
+        await h.elapse(5);
+        const png = await h.files.insert(output('outputs/chart.png', 'image/png'));
+        await h.elapse(5);
+        const md = await h.files.insert(output('outputs/100% report.md', 'text/markdown'));
+
+        expect((await h.files.listOutputs(userId)).map(f => f.id)).toEqual([md.id, png.id, csv.id]);
+        const images = await h.files.listOutputs(userId, { mimes: ['image/png', 'image/jpeg'] });
+        expect(images.map(f => f.id)).toEqual([png.id]);
+        expect(await h.files.listOutputs(userId, { mimes: [] })).toEqual([]);
+        expect((await h.files.listOutputs(userId, { search: 'sales' })).map(f => f.id)).toEqual([csv.id]);
+        expect((await h.files.listOutputs(userId, { search: 's_q' })).map(f => f.id)).toEqual([csv.id]);
+        expect((await h.files.listOutputs(userId, { search: 'salesxq' })).map(f => f.id)).toEqual([]);
+        expect((await h.files.listOutputs(userId, { search: '100%' })).map(f => f.id)).toEqual([md.id]);
+
+        const first = await h.files.listOutputs(userId, { limit: 2 });
+        expect(first.map(f => f.id)).toEqual([md.id, png.id]);
+        const last = first.at(-1)!;
+        const rest = await h.files.listOutputs(userId, {
+          limit: 2,
+          before: { createdAt: last.createdAt, id: last.id },
+        });
+        expect(rest.map(f => f.id)).toEqual([csv.id]);
+        expect(await h.files.listOutputs(userId, { before: { createdAt: new Date(), id: MALFORMED_ID } })).toEqual([]);
+      });
+
+      test('deleteOutput removes only an output file', async () => {
+        const userId = await h.seedUser();
+        const task = await h.tasks.create({ userId, prompt: 'x' });
+        const input = await h.files.insert(upload(userId));
+        const output = await h.files.insert({ ...upload(userId, task.id), kind: 'output', path: 'outputs/r.csv' });
+        expect(await h.files.deleteOutput(output.id)).toBe(true);
+        expect(await h.files.get(output.id)).toBeUndefined();
+        expect(await h.files.deleteOutput(output.id)).toBe(false);
+        for (const id of [input.id, crypto.randomUUID(), MALFORMED_ID])
+          expect(await h.files.deleteOutput(id)).toBe(false);
+        expect(await h.files.get(input.id)).toBeDefined();
+      });
+
       test('listUnattachedInputs: old inputs without a task, oldest first; attached, output and fresh files are not listed', async () => {
         const userId = await h.seedUser();
         const task = await h.tasks.create({ userId, prompt: 'x' });

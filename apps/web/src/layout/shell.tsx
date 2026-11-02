@@ -1,7 +1,7 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { useLocation } from 'preact-iso';
-import { Search, Settings, SquarePen, Trash2 } from 'lucide-preact';
+import { Library, Search, Settings, SquarePen, Trash2 } from 'lucide-preact';
 import { Button, ConfirmDialog, CreditBalance, IconButton, Input, TaskItem, cx, useToast } from '@agent/ui';
 import { MAX_SEARCH_CHARS, type TaskSummary } from '@agent/shared';
 import { useApp } from '../state/app.ts';
@@ -144,7 +144,7 @@ export interface ShellProps {
   computer?: ComponentChildren;
 }
 
-/** Оболочка экранов после входа: сайдбар (новая задача, задачи, баланс, настройки), <main>, панель компьютера. */
+/** Оболочка экранов после входа: сайдбар (новая задача, Library, задачи, баланс, настройки), <main>, панель компьютера. */
 export function Shell({ children, computer }: ShellProps) {
   const { path } = useLocation();
   return (
@@ -160,6 +160,10 @@ export function Shell({ children, computer }: ShellProps) {
         <a class="ui-nav-item" href="/" aria-current={path === '/' ? 'page' : undefined}>
           <SquarePen aria-hidden="true" />
           New task
+        </a>
+        <a class="ui-nav-item" href="/library" aria-current={path === '/library' ? 'page' : undefined}>
+          <Library aria-hidden="true" />
+          Library
         </a>
         <TaskNav />
         <Account />

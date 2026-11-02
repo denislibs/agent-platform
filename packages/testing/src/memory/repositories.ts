@@ -42,7 +42,7 @@ function guardedState(deps: Deps, txToken: symbol | undefined): InMemoryState {
 }
 const copy = <T>(v: T): T => structuredClone(v);
 const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const newestFirst = (a: Task, b: Task): number =>
+const newestFirst = <T extends { createdAt: Date; id: string }>(a: T, b: T): number =>
   b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
 /** Как ILIKE с экранированным шаблоном: подстрока без учёта регистра. */
 const contains = (text: string, search: string): boolean => text.toLowerCase().includes(search.toLowerCase());
@@ -371,6 +371,30 @@ export class InMemoryFileRepository implements FileRepository {
       .filter(f => f.userId === userId)
       .toSorted((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
       .map(copy);
+  }
+
+  async listOutputs(
+    userId: string,
+    opts: { limit?: number; before?: TaskCursor; mimes?: readonly string[]; search?: string } = {},
+  ): Promise<FileRecord[]> {
+    const { before, mimes, search } = opts;
+    if (before && !CANONICAL_UUID.test(before.id)) return [];
+    return [...this.m.files.values()]
+      .filter(
+        f =>
+          f.userId === userId &&
+          f.kind === 'output' &&
+          (!mimes || mimes.includes(f.mime)) &&
+          (!search || contains(f.path, search)) &&
+          (!before || newestFirst(f, { ...f, ...before }) > 0),
+      )
+      .toSorted(newestFirst)
+      .slice(0, opts.limit ?? 50)
+      .map(copy);
+  }
+
+  async deleteOutput(id: string): Promise<boolean> {
+    return this.m.files.get(id)?.kind === 'output' && this.m.files.delete(id);
   }
 
   async listUnattachedInputs(opts: { olderThanMs: number; limit?: number }): Promise<FileRecord[]> {

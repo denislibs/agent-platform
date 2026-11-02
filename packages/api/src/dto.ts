@@ -75,6 +75,7 @@ export const toSubtaskDto = (s: Subtask): SubtaskDto => ({
 /** Ключ в хранилище и владелец наружу не уходят: скачивание — через API с проверкой владельца. */
 export const toFileDto = (f: FileRecord): FileDto => ({
   id: f.id,
+  taskId: f.taskId,
   kind: f.kind,
   path: f.path,
   size: f.size,

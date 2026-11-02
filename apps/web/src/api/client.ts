@@ -2,17 +2,21 @@ import { z } from 'zod';
 import {
   ApiErrorSchema,
   ClientConfigSchema,
+  FileListResponseSchema,
   MeResponseSchema,
   TaskEnvelopeSchema,
   TaskListResponseSchema,
   TaskResponseSchema,
   UploadResponseSchema,
   type AuthProvider,
+  type FileCategory,
   type ProfileTheme,
 } from '@agent/shared';
 
 /** Сколько задач в странице сайдбара. */
 export const TASKS_PAGE = 20;
+/** Сколько файлов в странице Library. */
+export const FILES_PAGE = 20;
 
 /**
  * Ошибка запроса к API. code — код из конверта API (`not_found`, `too_many_active_tasks`…), код Better Auth
@@ -129,6 +133,9 @@ export function createApi(opts: ApiOptions = {}) {
       ),
     cancel: (id: string) => send('POST', `${task(id)}/cancel`, TaskEnvelopeSchema),
     deleteTask: (id: string) => send('DELETE', task(id), NoContentSchema),
+    listFiles: (filters: { category?: FileCategory | undefined; q?: string; before?: string | undefined }) =>
+      send('GET', `/api/files?${queryString({ limit: FILES_PAGE, ...filters })}`, FileListResponseSchema),
+    deleteFile: (id: string) => send('DELETE', `/api/files/${encodeURIComponent(id)}`, NoContentSchema),
     declareUpload: (body: { name: string; contentType: string; size: number }) =>
       send('POST', '/api/uploads', UploadResponseSchema, body),
     sendMagicLink: (email: string, returnTo = '/') =>

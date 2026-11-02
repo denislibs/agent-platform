@@ -88,6 +88,28 @@ export const ListTasksQuerySchema = z.object({
   q: SearchQuerySchema,
 });
 
+/** Категории Library (фильтр GET /api/files). Типы — те, что выдаёт mimeOf финализатора; остальные видны только в «All». */
+export const FILE_CATEGORY_NAMES = ['documents', 'images', 'spreadsheets'] as const;
+export type FileCategory = (typeof FILE_CATEGORY_NAMES)[number];
+export const FILE_CATEGORIES: Record<FileCategory, readonly string[]> = {
+  documents: [
+    'text/markdown',
+    'text/plain',
+    'text/html',
+    'application/pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  ],
+  images: ['image/png', 'image/jpeg', 'image/gif', 'image/svg+xml'],
+  spreadsheets: ['text/csv', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+};
+export const ListFilesQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(MAX_TASKS_PAGE).default(20),
+  before: z.string().min(1).max(512).optional(),
+  category: z.enum(FILE_CATEGORY_NAMES).optional(),
+  q: SearchQuerySchema,
+});
+
 // ── Ответы ──
 export const AUTH_PROVIDERS = ['google', 'github'] as const;
 export type AuthProvider = (typeof AUTH_PROVIDERS)[number];
@@ -129,6 +151,8 @@ export const SubtaskDtoSchema = z.object({
 });
 export const FileDtoSchema = z.object({
   id: z.string(),
+  /** Задача файла; null — входной файл, ещё не привязанный к задаче. */
+  taskId: z.string().nullable(),
   kind: z.enum(['input', 'output']),
   path: z.string(),
   size: z.number().int(),
@@ -155,6 +179,10 @@ export const TaskResponseSchema = z.object({
 });
 export const TaskListResponseSchema = z.object({
   tasks: z.array(TaskSummarySchema),
+  nextCursor: z.string().nullable(),
+});
+export const FileListResponseSchema = z.object({
+  files: z.array(FileDtoSchema),
   nextCursor: z.string().nullable(),
 });
 export const MeResponseSchema = z.object({
@@ -189,6 +217,7 @@ export type StepDto = z.infer<typeof StepDtoSchema>;
 export type TaskEnvelope = z.infer<typeof TaskEnvelopeSchema>;
 export type TaskResponse = z.infer<typeof TaskResponseSchema>;
 export type TaskListResponse = z.infer<typeof TaskListResponseSchema>;
+export type FileListResponse = z.infer<typeof FileListResponseSchema>;
 export type MeResponse = z.infer<typeof MeResponseSchema>;
 export type UploadResponse = z.infer<typeof UploadResponseSchema>;
 export type StreamEnd = z.infer<typeof StreamEndSchema>;

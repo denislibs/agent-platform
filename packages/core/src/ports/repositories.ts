@@ -23,7 +23,7 @@ import type {
  *   обновлялась» не зависят от часов отдельных воркеров.
  */
 
-/** Позиция в списке задач пользователя: следующая страница начинается строго после этой задачи. */
+/** Позиция в списке задач или файлов пользователя: следующая страница начинается строго после этой записи. */
 export interface TaskCursor {
   createdAt: Date;
   id: string;
@@ -126,6 +126,17 @@ export interface FileRepository {
   listForTask(taskId: string, kind?: FileKind): Promise<FileRecord[]>;
   /** Все файлы пользователя (входные и результаты), старые первыми: для удаления его данных. */
   listForUser(userId: string): Promise<FileRecord[]>;
+  /**
+   * Результаты задач пользователя (kind = output), новые первыми: порядок и курсор — как у TaskRepository.listForUser;
+   * limit по умолчанию 50, кривой id курсора — пустой список. mimes — только эти типы (пустой список — ничего);
+   * search — подстрока пути без учёта регистра, % и _ в ней — обычные символы.
+   */
+  listOutputs(
+    userId: string,
+    opts?: { limit?: number; before?: TaskCursor; mimes?: readonly string[]; search?: string },
+  ): Promise<FileRecord[]>;
+  /** Удаляет запись выходного файла. true — удалена; входной, неизвестный или кривой id — false, ничего не меняется. */
+  deleteOutput(id: string): Promise<boolean>;
   /**
    * Привязывает только файлы этого пользователя, ещё не привязанные к задаче. Возвращает их число.
    * Кривые и чужие id файлов молча пропускаются; неизвестная задача — NotFoundError('task')
