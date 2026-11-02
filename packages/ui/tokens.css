@@ -1,0 +1,326 @@
+/*
+ * Слой 1 — дизайн-токены.
+ * Темы: тёмная по умолчанию, светлая — data-theme="light", системная — data-theme="auto".
+ * Компоненты (слой 2, styles/*.css) используют только семантические токены отсюда.
+ * Значения для JS — src/tokens.ts (тест сверяет их с этим файлом).
+ * Описание: docs/design/design-system.md
+ */
+
+/* ───────── Тема-независимые токены ───────── */
+:root {
+  /* Типографика */
+  --font-sans: 'Geist Variable', 'Geist', -apple-system, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
+  --font-display: 'Instrument Serif', 'Iowan Old Style', Georgia, serif;
+  --font-mono: 'Geist Mono Variable', 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --text-xs: 12px;
+  --leading-xs: 16px;
+  --text-sm: 13px;
+  --leading-sm: 18px;
+  --text-base: 14px;
+  --leading-base: 20px;
+  --text-md: 16px;
+  --leading-md: 24px;
+  --text-lg: 18px;
+  --leading-lg: 26px;
+  --text-xl: 22px;
+  --leading-xl: 28px;
+  --text-2xl: 28px;
+  --leading-2xl: 34px;
+  --text-3xl: 36px;
+  --leading-3xl: 40px;
+  --text-display: 44px;
+  --leading-display: 48px;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --tracking-tight: -0.01em;
+  --tracking-tighter: -0.02em;
+
+  /* Отступы, шаг 4 */
+  --space-0: 0;
+  --space-px: 1px;
+  --space-0-5: 2px;
+  --space-1: 4px;
+  --space-1-5: 6px;
+  --space-2: 8px;
+  --space-2-5: 10px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+
+  /* Размеры контролов */
+  --control-xs: 24px;
+  --control-sm: 32px;
+  --control-md: 40px;
+  --control-lg: 48px;
+  --icon-xs: 12px;
+  --icon-sm: 14px;
+  --icon-md: 16px;
+  --icon-lg: 18px;
+  --icon-xl: 20px;
+
+  /* Раскладка */
+  --sidebar-width: 280px;
+  --sidebar-width-collapsed: 56px;
+  --settings-nav-width: 220px;
+  --content-width: 760px;
+  --content-width-wide: 1040px;
+  --auth-width: 360px;
+  --header-height: 52px;
+
+  /* Брейкпоинты (для справки, в CSS — литералы): sm 640, md 900, lg 1200, xl 1440 */
+
+  /* Радиусы */
+  --radius-2xs: 4px; /* чекбокс, мелкие плашки */
+  --radius-xs: 6px; /* бейджи, клавиши */
+  --radius-sm: 8px; /* поля, строки меню, маленькие кнопки */
+  --radius-md: 10px; /* кнопки */
+  --radius-lg: 14px; /* карточки, меню, таблицы */
+  --radius-xl: 20px; /* модалки, шиты */
+  --radius-composer: 24px;
+  --radius-full: 9999px;
+
+  /* Движение */
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1); /* переключатели, чекбоксы */
+  --dur-instant: 100ms;
+  --dur-fast: 150ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+  --dur-slower: 480ms;
+  --dur-ambient: 2400ms;
+
+  /* Слои */
+  --z-base: 0;
+  --z-sticky: 5;
+  --z-sidebar: 10;
+  --z-header: 20;
+  --z-dropdown: 40;
+  --z-overlay: 50;
+  --z-modal: 51;
+  --z-toast: 60;
+  --z-tooltip: 70;
+}
+
+/* ───────── Тёмная тема (по умолчанию) ───────── */
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* Поверхности, от глубины к пользователю */
+  --bg-void: #050506;
+  --bg-panel: #111113;
+  --bg-sidebar: #141416;
+  --bg-app: #19191b;
+  --bg-surface: #222225;
+  --bg-surface-raised: #2b2b2f;
+  --bg-inset: #121214; /* поля внутри карточек, код */
+  --bg-overlay: rgb(0 0 0 / 0.6);
+  --bg-tooltip: #f4f4f5;
+
+  /* Прозрачные заливки */
+  --fill-subtle: rgb(255 255 255 / 0.04);
+  --fill-muted: rgb(255 255 255 / 0.06);
+  --fill-hover: rgb(255 255 255 / 0.08);
+  --fill-active: rgb(255 255 255 / 0.12);
+  --fill-strong: rgb(255 255 255 / 0.2);
+
+  /* Текст */
+  --text-primary: #ececee;
+  --text-secondary: #b4b4ba;
+  --text-tertiary: #8b8b93;
+  --text-quaternary: #6c6c74;
+  --text-disabled: #55555c;
+  --text-on-accent: #ffffff;
+  --text-on-inverted: rgb(0 0 0 / 0.9);
+  --text-tooltip: #18181b;
+
+  /* Иконки */
+  --icon-primary: var(--text-primary);
+  --icon-secondary: var(--text-secondary);
+  --icon-tertiary: var(--text-tertiary);
+  --icon-disabled: var(--text-disabled);
+
+  /* Границы */
+  --border-subtle: rgb(255 255 255 / 0.05);
+  --border-default: rgb(255 255 255 / 0.08);
+  --border-strong: rgb(255 255 255 / 0.14);
+  --border-focus: rgb(255 255 255 / 0.32);
+
+  /* Инвертированная поверхность (белые CTA на тёмном) */
+  --inverted: #f4f4f5;
+  --inverted-hover: #ffffff;
+
+  /* Акцент «ирис». Заливка — с контрастом ≥ 4.5:1 к белому тексту */
+  --accent: #6b5bf0;
+  --accent-hover: #5f4fe6;
+  --accent-pressed: #5546d6;
+  --accent-disabled: #34305e;
+  --accent-soft: rgb(123 108 255 / 0.16);
+  --accent-border: rgb(123 108 255 / 0.5);
+  --accent-text: #a79dff;
+  --focus-ring: rgb(123 108 255 / 0.45);
+
+  /* Статусы */
+  --success: #3ccf7a;
+  --success-soft: rgb(60 207 122 / 0.14);
+  --warning: #f5b33d;
+  --warning-soft: rgb(245 179 61 / 0.14);
+  --danger: #f05d5d;
+  --danger-soft: rgb(240 93 93 / 0.14);
+  --danger-border: rgb(240 93 93 / 0.45);
+  --info: #4cc3ff;
+  --info-soft: rgb(76 195 255 / 0.14);
+
+  /* Фон входа */
+  --field-dot: rgb(255 255 255 / 0.13);
+  --field-glow: 255 255 255; /* RGB-тройка подсветки у курсора */
+  --field-1: #7b6cff;
+  --field-2: #3fd0ff;
+  --field-3: #ff5fa8;
+  --field-4: #ffb547;
+  --field-5: #45e0a0;
+
+  /* Тени: светлое кольцо-грань + тёмное кольцо + мягкая тень */
+  --shadow-ring: 0 0 0 1px rgb(255 255 255 / 0.1), 0 0 0 1px rgb(0 0 0 / 0.3);
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-sm: var(--shadow-ring), 0 4px 12px -4px rgb(0 0 0 / 0.35);
+  --shadow-md: var(--shadow-ring), 0 16px 32px -12px rgb(0 0 0 / 0.5);
+  --shadow-lg: var(--shadow-ring), 0 32px 64px -16px rgb(0 0 0 / 0.6);
+  --shadow-focus: 0 0 0 3px var(--focus-ring);
+}
+
+/* ───────── Светлая тема ───────── */
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg-void: #f4f4f2;
+  --bg-panel: #f6f6f4;
+  --bg-sidebar: #f1f1ef;
+  --bg-app: #fafaf9;
+  --bg-surface: #ffffff;
+  --bg-surface-raised: #f3f3f1;
+  --bg-inset: #f4f4f2;
+  --bg-overlay: rgb(20 20 24 / 0.32);
+  --bg-tooltip: #1c1c1f;
+  --fill-subtle: rgb(24 24 32 / 0.03);
+  --fill-muted: rgb(24 24 32 / 0.05);
+  --fill-hover: rgb(24 24 32 / 0.06);
+  --fill-active: rgb(24 24 32 / 0.1);
+  --fill-strong: rgb(24 24 32 / 0.18);
+  --text-primary: #18181b;
+  --text-secondary: #48484f;
+  --text-tertiary: #6b6b74;
+  --text-quaternary: #8e8e96;
+  --text-disabled: #b0b0b6;
+  --text-on-accent: #ffffff;
+  --text-on-inverted: #ffffff;
+  --text-tooltip: #f4f4f5;
+  --border-subtle: rgb(0 0 0 / 0.05);
+  --border-default: rgb(0 0 0 / 0.09);
+  --border-strong: rgb(0 0 0 / 0.16);
+  --border-focus: rgb(0 0 0 / 0.36);
+  --inverted: #18181b;
+  --inverted-hover: #2a2a2e;
+  --accent: #5b4be0;
+  --accent-hover: #5040d3;
+  --accent-pressed: #4636c2;
+  --accent-disabled: #c9c3f5;
+  --accent-soft: rgb(91 75 224 / 0.1);
+  --accent-border: rgb(91 75 224 / 0.45);
+  --accent-text: #4f3fd4;
+  --focus-ring: rgb(91 75 224 / 0.3);
+  --success: #1c9a52;
+  --success-soft: rgb(28 154 82 / 0.1);
+  --warning: #b8740a;
+  --warning-soft: rgb(230 150 20 / 0.12);
+  --danger: #d63c3c;
+  --danger-soft: rgb(214 60 60 / 0.08);
+  --danger-border: rgb(214 60 60 / 0.4);
+  --info: #0b8bd3;
+  --info-soft: rgb(11 139 211 / 0.1);
+  --field-dot: rgb(0 0 0 / 0.16);
+  --field-glow: 91 75 224;
+  --shadow-ring: 0 0 0 1px rgb(0 0 0 / 0.07);
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.06);
+  --shadow-sm: var(--shadow-ring), 0 4px 12px -4px rgb(0 0 0 / 0.08);
+  --shadow-md: var(--shadow-ring), 0 16px 32px -12px rgb(0 0 0 / 0.16);
+  --shadow-lg: var(--shadow-ring), 0 32px 64px -16px rgb(0 0 0 / 0.22);
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme='auto'] {
+    color-scheme: light;
+    --bg-void: #f4f4f2;
+    --bg-panel: #f6f6f4;
+    --bg-sidebar: #f1f1ef;
+    --bg-app: #fafaf9;
+    --bg-surface: #ffffff;
+    --bg-surface-raised: #f3f3f1;
+    --bg-inset: #f4f4f2;
+    --bg-overlay: rgb(20 20 24 / 0.32);
+    --bg-tooltip: #1c1c1f;
+    --fill-subtle: rgb(24 24 32 / 0.03);
+    --fill-muted: rgb(24 24 32 / 0.05);
+    --fill-hover: rgb(24 24 32 / 0.06);
+    --fill-active: rgb(24 24 32 / 0.1);
+    --fill-strong: rgb(24 24 32 / 0.18);
+    --text-primary: #18181b;
+    --text-secondary: #48484f;
+    --text-tertiary: #6b6b74;
+    --text-quaternary: #8e8e96;
+    --text-disabled: #b0b0b6;
+    --text-on-accent: #ffffff;
+    --text-on-inverted: #ffffff;
+    --text-tooltip: #f4f4f5;
+    --border-subtle: rgb(0 0 0 / 0.05);
+    --border-default: rgb(0 0 0 / 0.09);
+    --border-strong: rgb(0 0 0 / 0.16);
+    --border-focus: rgb(0 0 0 / 0.36);
+    --inverted: #18181b;
+    --inverted-hover: #2a2a2e;
+    --accent: #5b4be0;
+    --accent-hover: #5040d3;
+    --accent-pressed: #4636c2;
+    --accent-disabled: #c9c3f5;
+    --accent-soft: rgb(91 75 224 / 0.1);
+    --accent-border: rgb(91 75 224 / 0.45);
+    --accent-text: #4f3fd4;
+    --focus-ring: rgb(91 75 224 / 0.3);
+    --success: #1c9a52;
+    --success-soft: rgb(28 154 82 / 0.1);
+    --warning: #b8740a;
+    --warning-soft: rgb(230 150 20 / 0.12);
+    --danger: #d63c3c;
+    --danger-soft: rgb(214 60 60 / 0.08);
+    --danger-border: rgb(214 60 60 / 0.4);
+    --info: #0b8bd3;
+    --info-soft: rgb(11 139 211 / 0.1);
+    --field-dot: rgb(0 0 0 / 0.16);
+    --field-glow: 91 75 224;
+    --shadow-ring: 0 0 0 1px rgb(0 0 0 / 0.07);
+    --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.06);
+    --shadow-sm: var(--shadow-ring), 0 4px 12px -4px rgb(0 0 0 / 0.08);
+    --shadow-md: var(--shadow-ring), 0 16px 32px -12px rgb(0 0 0 / 0.16);
+    --shadow-lg: var(--shadow-ring), 0 32px 64px -16px rgb(0 0 0 / 0.22);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-instant: 0ms;
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+    --dur-slow: 0ms;
+    --dur-slower: 0ms;
+  }
+}
