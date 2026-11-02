@@ -1,0 +1,188 @@
+/* ═════════ Навигация ═════════ */
+.ui-tabs {
+  display: flex;
+  gap: var(--space-5);
+  border-bottom: 1px solid var(--border-default);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.ui-tab {
+  position: relative;
+  height: 40px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-tertiary);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  white-space: nowrap;
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+.ui-tab:hover {
+  color: var(--text-secondary);
+}
+.ui-tab[aria-selected='true'] {
+  color: var(--text-primary);
+}
+.ui-tab::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--text-primary);
+  transform: scaleX(0);
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.ui-tab[aria-selected='true']::after {
+  transform: scaleX(1);
+}
+.ui-tab .ui-badge {
+  height: 18px;
+}
+
+.ui-tabs--pills {
+  border-bottom: none;
+  gap: var(--space-1);
+}
+.ui-tabs--pills .ui-tab {
+  height: 30px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+}
+.ui-tabs--pills .ui-tab::after {
+  display: none;
+}
+.ui-tabs--pills .ui-tab:hover {
+  background: var(--fill-hover);
+}
+.ui-tabs--pills .ui-tab[aria-selected='true'] {
+  background: var(--fill-active);
+}
+
+.ui-breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+  flex-wrap: wrap;
+}
+.ui-breadcrumbs a {
+  color: inherit;
+  text-decoration: none;
+  padding: 2px 4px;
+  border-radius: var(--radius-xs);
+}
+.ui-breadcrumbs a:hover {
+  color: var(--text-primary);
+  background: var(--fill-hover);
+}
+.ui-breadcrumbs [aria-current='page'] {
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+  padding: 2px 4px;
+}
+.ui-breadcrumbs svg.lucide {
+  color: var(--text-quaternary);
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+}
+
+.ui-pagination {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.ui-pagination button {
+  min-width: 32px;
+  height: 32px;
+  padding: 0 var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  display: grid;
+  place-items: center;
+  transition: background-color var(--dur-fast) var(--ease-standard);
+}
+.ui-pagination button:hover:not(:disabled) {
+  background: var(--fill-hover);
+  color: var(--text-primary);
+}
+.ui-pagination button[aria-current='page'] {
+  background: var(--fill-active);
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+}
+.ui-pagination button:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+.ui-pagination__gap {
+  width: 24px;
+  text-align: center;
+  color: var(--text-quaternary);
+}
+
+.ui-nav {
+  display: grid;
+  gap: 2px;
+}
+.ui-nav-label {
+  padding: var(--space-4) var(--space-3) var(--space-1);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.ui-nav-label:first-child {
+  padding-top: 0;
+}
+.ui-nav-item {
+  height: 34px;
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2-5, 10px);
+  color: var(--text-primary);
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  transition: background-color var(--dur-fast) var(--ease-standard);
+}
+.ui-nav-item svg.lucide {
+  color: var(--icon-secondary);
+}
+.ui-nav-item:hover {
+  background: var(--fill-hover);
+}
+.ui-nav-item[aria-current='page'] {
+  background: var(--fill-active);
+  font-weight: var(--weight-medium);
+}
+.ui-nav-item[aria-current='page'] svg.lucide {
+  color: var(--icon-primary);
+}
+.ui-nav-item__trail {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}

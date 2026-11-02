@@ -1,0 +1,279 @@
+/* ═════════ Выбор ═════════ */
+.ui-check {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  cursor: pointer;
+  line-height: var(--leading-base);
+}
+.ui-check > span {
+  display: grid;
+  gap: 2px;
+}
+.ui-check small {
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+.ui-checkbox,
+.ui-radio {
+  appearance: none;
+  margin: 2px 0 0;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  border: 1.5px solid var(--border-strong);
+  background: var(--bg-surface);
+  display: grid;
+  place-items: center;
+  transition:
+    background-color var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard);
+}
+.ui-checkbox {
+  border-radius: var(--radius-2xs);
+}
+.ui-radio {
+  border-radius: 50%;
+}
+.ui-checkbox:hover:not(:disabled),
+.ui-radio:hover:not(:disabled) {
+  border-color: var(--border-focus);
+}
+.ui-checkbox:checked,
+.ui-checkbox:indeterminate,
+.ui-radio:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.ui-checkbox::after {
+  content: '';
+  width: 9px;
+  height: 5px;
+  border: 2px solid #fff;
+  border-top: none;
+  border-right: none;
+  transform: translateY(-1px) rotate(-45deg) scale(0);
+  transition: transform var(--dur-fast) var(--ease-spring);
+}
+.ui-checkbox:checked::after {
+  transform: translateY(-1px) rotate(-45deg) scale(1);
+}
+.ui-checkbox:indeterminate::after {
+  width: 8px;
+  height: 0;
+  border-left: none;
+  border-bottom: 2px solid #fff;
+  transform: none;
+}
+.ui-radio::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #fff;
+  transform: scale(0);
+  transition: transform var(--dur-fast) var(--ease-spring);
+}
+.ui-radio:checked::after {
+  transform: scale(1);
+}
+.ui-checkbox:disabled,
+.ui-radio:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ui-switch {
+  --sw-w: 34px;
+  --sw-h: 20px;
+  --sw-pad: 2px;
+  appearance: none;
+  margin: 0;
+  flex: none;
+  cursor: pointer;
+  position: relative;
+  width: var(--sw-w);
+  height: var(--sw-h);
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+  transition: background-color var(--dur-fast) var(--ease-standard);
+}
+.ui-switch::before {
+  content: '';
+  position: absolute;
+  top: var(--sw-pad);
+  left: var(--sw-pad);
+  width: calc(var(--sw-h) - 2 * var(--sw-pad));
+  height: calc(var(--sw-h) - 2 * var(--sw-pad));
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--shadow-xs);
+  transition: transform var(--dur-base) var(--ease-spring);
+}
+.ui-switch:checked {
+  background: var(--accent);
+}
+.ui-switch:checked::before {
+  transform: translateX(calc(var(--sw-w) - var(--sw-h)));
+}
+.ui-switch:active:not(:disabled)::before {
+  width: calc(var(--sw-h) - 2 * var(--sw-pad) + 3px);
+}
+.ui-switch:checked:active:not(:disabled)::before {
+  transform: translateX(calc(var(--sw-w) - var(--sw-h) - 3px));
+}
+.ui-switch:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.ui-switch--sm {
+  --sw-w: 26px;
+  --sw-h: 16px;
+}
+
+.ui-range {
+  --val: 50%;
+  appearance: none;
+  width: 100%;
+  height: 20px;
+  background: transparent;
+  cursor: pointer;
+  margin: 0;
+}
+.ui-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: linear-gradient(to right, var(--accent) var(--val), var(--fill-active) var(--val));
+}
+.ui-range::-moz-range-track {
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--fill-active);
+}
+.ui-range::-moz-range-progress {
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+.ui-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--dur-fast) var(--ease-spring);
+}
+.ui-range::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+}
+.ui-range:active::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+
+.ui-segmented {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  border-radius: var(--radius-md);
+  background: var(--fill-muted);
+}
+.ui-segmented button {
+  height: 28px;
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  transition:
+    background-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard),
+    box-shadow var(--dur-fast) var(--ease-standard);
+}
+.ui-segmented button:hover {
+  color: var(--text-primary);
+}
+.ui-segmented button[aria-pressed='true'] {
+  background: var(--bg-surface-raised);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+.ui-segmented--block {
+  display: flex;
+}
+.ui-segmented--block button {
+  flex: 1;
+  justify-content: center;
+}
+
+/* Карточки выбора (тема, тариф, режим) */
+.ui-choice-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.ui-choice {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: var(--space-1-5);
+  min-width: 108px;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease-standard),
+    background-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+.ui-choice:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+.ui-choice:has(input:checked) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  color: var(--text-primary);
+}
+.ui-choice:has(input:focus-visible) {
+  box-shadow: var(--shadow-focus);
+}
+.ui-choice input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.ui-choice--row {
+  justify-items: start;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  text-align: left;
+  min-width: 0;
+}
+
+/* ═════════ Добавлено в ui-kit ═════════ */
+/* Группа радиокнопок и переключатель с подписью (в прототипе — inline-стили витрины) */
+.ui-radio-group {
+  display: grid;
+  gap: var(--space-3);
+}
+.ui-check:has(> .ui-switch) {
+  align-items: center;
+}
