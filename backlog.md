@@ -145,6 +145,18 @@
 - [ ] `TaskGuard.toFinalizing` возвращает `false` и для «задачи нет», и для отказа предиката; через `unlessStopped` это `{ value: false }` — истинное значение. Задокументировать или развести результаты, прежде чем кто-то передаст `unless` через `unlessStopped`.
 - [ ] nginx за TLS-балансировщиком: `set_real_ip_from` в `docker/nginx/prod/nginx.conf` — закомментированный образец, адрес
       балансировщика вписывается при деплое (docs/beta-checklist.md). Без него лимиты считаются по IP балансировщика.
+      Сделать адрес переменной окружения образа (`REAL_IP_FROM` через envsubst, как `APP_HOST`; пусто — без
+      `real_ip`) вместо правки отслеживаемого конфига на хосте: правка мешает `git pull` и теряется при `git checkout`
+      тега.
+- [ ] Ключи очередей evals: каждый прогон берёт свою очередь `evals-<uuid>` и удаляет её в `close()`; после SIGKILL
+      (или падения процесса) ключи `evals-<uuid>:*` остаются в Valkey навсегда. Чистить чужие `evals-*` в `openStack`
+      до старта воркера (прогоны evals не идут параллельно) или брать постоянный префикс и `obliterate` в начале.
+- [ ] Воспроизводимые образы: базовые образы (`oven/bun`, `nginxinc/nginx-unprivileged`, `postgres`, `valkey`,
+      `alpine` в runbook) закрепить по digest (`@sha256:…`), как `socket-proxy`; версию `docker-ce-cli` в образе
+      воркера — явно (`docker-ce-cli=5:<версия>`), иначе каждая сборка берёт последнюю из репозитория Docker.
+- [ ] Продакшен-образы без тестов: `docker/backend/Dockerfile` копирует `packages/` целиком — каталоги `test/` и
+      `packages/testing` (фикстуры, фейки) попадают в образы API и воркера. Исключить их (`.dockerignore` по шаблону
+      `packages/*/test` и `packages/testing`, если workspace это переживёт, или копирование по списку).
 - [ ] Трассировка LLM-вызовов (Langfuse или аналог) поверх таблицы `steps`.
 - [ ] Автоматический прогон evals по расписанию и сравнение версий промптов.
 - [ ] Свой Firecracker или self-hosted E2B на bare-metal Linux, если облачный E2B станет дорогим.
