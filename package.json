@@ -34,6 +34,7 @@
     "api": "bun packages/api/src/main.ts",
     "admin:grant": "bun packages/api/src/admin-grant.ts",
     "admin:delete-user": "bun packages/api/src/admin-delete-user.ts",
+    "evals": "bun evals/src/main.ts",
     "backend:build": "docker compose -f docker/compose.yml --profile app build worker",
     "stack:up": "docker compose -f docker/compose.yml --profile app up -d --build",
     "stack:down": "docker compose -f docker/compose.yml --profile app down",

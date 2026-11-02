@@ -50,6 +50,34 @@ Sign in with your email, open the link from the logs (API log without Docker), t
 after the first sign-in, and a new account has none. `NODE_ENV=development` is for local runs only: it turns off
 Better Auth rate limiting and the production warning; the Docker stack leaves it unset.
 
+## Evals
+
+Reference tasks on real models (spec 14): `evals/tasks/<id>/task.json` (prompt, checks, budget) with input files in
+`inputs/`. The runner puts each task through `TaskIntake` and an in-process worker (LiteLLM, Docker sandbox, S3) and
+checks the result: files present and in their format, key facts in files and in the answer.
+
+```bash
+bun run evals --list                         # the task set
+bun run evals                                # every task once (needs infra:up, sandbox:build and LiteLLM in .env)
+bun run evals --only csv-revenue-by-region --repeat 3
+bun run evals --planner qwen-max --executor qwen-turbo --tool-choice auto   # other model roles for this run
+bun run evals --compare evals/results/A/report.json evals/results/B/report.json
+```
+
+- Needs `LITELLM_BASE_URL`, `LITELLM_API_KEY`, `PLANNER_MODEL`, `EXECUTOR_MODEL` in `.env`; research tasks also need
+  `BRAVE_API_KEY` and are `skipped` without it. Not part of `test` or `test:unit`: no automated test calls a real model.
+- Runs use their own database (`agent_evals`, created on first run; `EVALS_DATABASE_URL` to override), queue prefix and
+  sandbox namespace, so the dev worker and the evals never pick up each other's tasks. Outputs land in the dev bucket
+  under `tasks/<taskId>/`.
+- Results: `evals/results/<time>/report.md` (status, checks, model calls, tool calls and errors, tokens, credits, time),
+  `report.json`, and per task `steps.json`, `answer.md`, `outputs/`. The report records the models, `tool_choice`,
+  the commit and a hash of the agent prompts (`packages/agent/src/agent/prompts.ts`) — tune prompts and model roles
+  by comparing reports.
+- A task: `title`, `category` (`research`, `csv`, `scraping`, `document`, `code`), `prompt`, optional `requires: ["search"]`,
+  `reply` (the answer to `ask_user`), `budget` (`modelCalls`, `tokens`, `minutes`; over budget the task is cancelled)
+  and `checks`: `file` (path or glob, `format`, `minBytes`, CSV `columns`, `rows`, `contains`) and `answer` (`contains`).
+  A fact is a substring (case-insensitive), `{ "regex", "flags" }`, `{ "anyOf": [...] }` or `{ "number", "tolerance" }`.
+
 ## UI kit
 
 ```bash
