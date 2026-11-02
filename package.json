@@ -38,7 +38,12 @@
     "backend:build": "docker compose -f docker/compose.yml --profile app build worker",
     "stack:up": "docker compose -f docker/compose.yml --profile app up -d --build",
     "stack:down": "docker compose -f docker/compose.yml --profile app down",
-    "stack:logs": "docker compose -f docker/compose.yml --profile app logs -f api worker web nginx"
+    "stack:logs": "docker compose -f docker/compose.yml --profile app logs -f api worker web nginx",
+    "prod:build": "docker compose --env-file .env.prod -f docker/compose.prod.yml build",
+    "prod:up": "docker compose --env-file .env.prod -f docker/compose.prod.yml up -d --build --wait nginx worker",
+    "prod:down": "docker compose --env-file .env.prod -f docker/compose.prod.yml down",
+    "prod:logs": "docker compose --env-file .env.prod -f docker/compose.prod.yml logs -f api worker nginx docker-proxy",
+    "prod:smoke": "bun scripts/prod-smoke.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.4.4",

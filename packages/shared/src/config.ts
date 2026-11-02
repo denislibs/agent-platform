@@ -110,7 +110,10 @@ function mailConfig(smtpUrl: string | undefined, from: string | undefined) {
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env) {
-  const parsed = EnvSchema.safeParse(env);
+  // Пустое или пробельное значение — «не задано» для любой переменной: compose передаёт необязательные
+  // настройки как ${VAR:-}, и пустая строка не должна ломать числа и перечисления или подменять умолчания.
+  const defined = Object.fromEntries(Object.entries(env).filter(([, v]) => v === undefined || v.trim() !== ''));
+  const parsed = EnvSchema.safeParse(defined);
   if (!parsed.success) {
     const details = parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
     throw new Error(`Invalid environment: ${details}`);

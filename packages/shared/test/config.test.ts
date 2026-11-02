@@ -224,3 +224,29 @@ describe('mail', () => {
     expect(() => loadConfig({ ...base, SMTP_URL: 'https://api.resend.com', MAIL_FROM: 'a@b.c' })).toThrow('SMTP_URL');
   });
 });
+
+describe('blank values', () => {
+  test('a blank value is unset for every variable: defaults apply (compose passes optional settings as ${VAR:-})', () => {
+    const c = loadConfig({
+      ...base,
+      WORKER_CONCURRENCY: '',
+      PLANNER_CONTEXT_TOKENS: ' ',
+      LLM_TOOL_CHOICE: '',
+      QUEUE_PREFIX: '',
+      SANDBOX_IMAGE: '',
+      MAX_ACTIVE_TASKS_PER_USER: '',
+      SSE_HEARTBEAT_MS: '',
+    });
+    expect(c.worker.concurrency).toBe(4);
+    expect(c.llm.contextTokens.planner).toBe(64_000);
+    expect(c.llm.toolChoice).toBe('required');
+    expect(c.worker.queuePrefix).toBe('bull');
+    expect(c.sandbox.image).toBe('agent-sandbox:dev');
+    expect(c.limits.maxActiveTasksPerUser).toBe(2);
+    expect(c.api.sseHeartbeatMs).toBe(15_000);
+  });
+
+  test('a blank required variable is reported as missing', () => {
+    expect(() => loadConfig({ ...base, DATABASE_URL: '  ' })).toThrow('DATABASE_URL');
+  });
+});

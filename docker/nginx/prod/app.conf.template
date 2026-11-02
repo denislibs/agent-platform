@@ -49,6 +49,12 @@ server {
     error_page 502 503 504 = @api_unavailable;
   }
 
+  # /api без косой черты — не маршрут приложения: 404 в конверте API, а не index.html из location /.
+  location = /api {
+    default_type application/json;
+    return 404 '{"error":{"code":"not_found","message":"no such route"}}\n';
+  }
+
   location @api_too_large {
     default_type application/json;
     return 413 '{"error":{"code":"payload_too_large","message":"payload too large"}}\n';

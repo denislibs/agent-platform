@@ -1,4 +1,5 @@
-# Веб-приложение в разработке: Vite dev server с HMR за nginx (план 6). Продакшен — статика в nginx (план 7).
+# Веб-приложение в разработке: Vite dev server с HMR за nginx (план 6). Продакшен — статика в nginx
+# (docker/nginx/Dockerfile, docker/compose.prod.yml).
 FROM oven/bun:1.4.2-debian
 
 WORKDIR /app

@@ -1,0 +1,235 @@
+# Продакшен-вариант для закрытой беты на одном хосте: docker compose --env-file .env.prod -f docker/compose.prod.yml
+# (bun run prod:up). Наружу — только loopback: nginx (APP_PORT) и Garage (GARAGE_PORT) за TLS reverse proxy хоста
+# (docs/beta-checklist.md). Переменные — явным списком на каждый сервис, без env_file: сервис видит только своё.
+# Обязательные — ${VAR:?…} (compose не стартует без них), необязательные — ${VAR:-} (пустое значение loadConfig
+# считает незаданным и берёт значение по умолчанию).
+name: agent-prod
+
+x-hardening: &hardening
+  cap_drop: ['ALL']
+  security_opt: ['no-new-privileges:true']
+  init: true
+
+x-db: &db
+  DATABASE_URL: postgres://${POSTGRES_USER:-agent}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-agent}
+
+x-valkey: &valkey
+  VALKEY_URL: redis://:${VALKEY_PASSWORD:?set VALKEY_PASSWORD}@valkey:6379
+
+x-s3: &s3
+  S3_ENDPOINT: ${S3_ENDPOINT:-http://garage:3900}
+  S3_REGION: ${S3_REGION:-garage}
+  S3_BUCKET: ${S3_BUCKET:-agent-files}
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY}
+  # Адрес S3 для браузера (presigned URL, CSP connect-src): https-адрес reverse proxy перед Garage или R2/S3.
+  S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:?set S3_PUBLIC_ENDPOINT}
+
+# Лимиты задач: и API (приём задачи), и воркер (бюджеты).
+x-limits: &limits
+  MAX_ACTIVE_TASKS_PER_USER: ${MAX_ACTIVE_TASKS_PER_USER:-}
+  TASK_TOKEN_BUDGET: ${TASK_TOKEN_BUDGET:-}
+  TASK_WALL_TIME_MS: ${TASK_WALL_TIME_MS:-}
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-agent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-agent}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    # Пароль — из окружения контейнера, а не в командной строке compose.
+    command:
+      [
+        'sh',
+        '-c',
+        'exec valkey-server --appendonly yes --appendfsync everysec --maxmemory-policy noeviction --requirepass "$$VALKEY_PASSWORD"',
+      ]
+    environment:
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:?set VALKEY_PASSWORD}
+    volumes: [valkeydata:/data]
+    healthcheck:
+      test: ['CMD-SHELL', 'valkey-cli -a "$$VALKEY_PASSWORD" --no-auth-warning ping | grep -q PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  garage:
+    image: dxflrs/garage:v2.4.1
+    command: ['/garage', 'server', '--single-node', '--default-bucket']
+    # Секреты Garage — из окружения: garage.prod.toml их не содержит.
+    environment:
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:?set GARAGE_RPC_SECRET}
+      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN:?set GARAGE_ADMIN_TOKEN}
+      GARAGE_METRICS_TOKEN: ${GARAGE_METRICS_TOKEN:?set GARAGE_METRICS_TOKEN}
+      GARAGE_DEFAULT_ACCESS_KEY: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID}
+      GARAGE_DEFAULT_SECRET_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY}
+      GARAGE_DEFAULT_BUCKET: ${S3_BUCKET:-agent-files}
+    # Браузер грузит и скачивает файлы по presigned URL: порт — для reverse proxy хоста (S3_PUBLIC_ENDPOINT).
+    ports: ['127.0.0.1:${GARAGE_PORT:-3900}:3900']
+    volumes:
+      - ./garage/garage.prod.toml:/etc/garage.toml:ro
+      - garagemeta:/var/lib/garage/meta
+      - garagedata:/var/lib/garage/data
+    healthcheck:
+      test: ['CMD', '/garage', 'status']
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  migrate:
+    build: { context: .., dockerfile: docker/backend/Dockerfile, target: app }
+    image: agent-api:prod
+    command: ['bun', 'packages/db/src/migrate.ts']
+    environment: { <<: *db }
+    depends_on: { postgres: { condition: service_healthy } }
+    <<: *hardening
+    read_only: true
+    restart: 'no'
+
+  # CORS бакета для origin приложения: браузер грузит входные файлы прямо в S3 (план 6).
+  s3-cors:
+    image: agent-api:prod
+    pull_policy: never # образ собирает сервис migrate
+    command: ['bun', 'packages/storage/src/cors-cli.ts', '${APP_ORIGIN:?set APP_ORIGIN}']
+    environment:
+      <<: [*db, *valkey, *s3]
+    depends_on:
+      garage: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    <<: *hardening
+    read_only: true
+    restart: 'no'
+
+  api:
+    image: agent-api:prod
+    pull_policy: never # образ собирает сервис migrate
+    environment:
+      <<: [*db, *valkey, *s3, *limits]
+      # Не test и не development: rate limiting Better Auth и предупреждения включены.
+      NODE_ENV: production
+      API_HOST: 0.0.0.0
+      API_PORT: '3000'
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET}
+      # Публичный https-адрес приложения: OAuth-колбэки, ссылки входа, проверка Origin, Secure-cookie.
+      BETTER_AUTH_URL: ${APP_ORIGIN:?set APP_ORIGIN}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      SMTP_URL: ${SMTP_URL:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-}
+    expose: ['3000']
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      valkey: { condition: service_healthy }
+      garage: { condition: service_healthy }
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'bun',
+          '-e',
+          "fetch('http://127.0.0.1:3000/api/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    <<: *hardening
+    read_only: true
+    tmpfs: ['/tmp']
+    restart: unless-stopped
+    stop_grace_period: 15s
+
+  # Прокси Docker API (docker/docker-proxy.yml): docker.sock видит только он.
+  docker-proxy:
+    extends: { file: docker-proxy.yml, service: docker-proxy }
+
+  worker:
+    build: { context: .., dockerfile: docker/backend/Dockerfile, target: worker }
+    image: agent-worker:prod
+    environment:
+      <<: [*db, *valkey, *s3, *limits]
+      DOCKER_HOST: tcp://docker-proxy:2375
+      # Удаление данных по запросу запускается в контейнере воркера (exec worker bun run admin:delete-user <email>):
+      # пользователей ведёт Better Auth, ему нужны секрет и адрес приложения.
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET}
+      BETTER_AUTH_URL: ${APP_ORIGIN:?set APP_ORIGIN}
+      LITELLM_BASE_URL: ${LITELLM_BASE_URL:?set LITELLM_BASE_URL}
+      LITELLM_API_KEY: ${LITELLM_API_KEY:?set LITELLM_API_KEY}
+      PLANNER_MODEL: ${PLANNER_MODEL:?set PLANNER_MODEL}
+      EXECUTOR_MODEL: ${EXECUTOR_MODEL:?set EXECUTOR_MODEL}
+      LLM_TOOL_CHOICE: ${LLM_TOOL_CHOICE:-}
+      PLANNER_CONTEXT_TOKENS: ${PLANNER_CONTEXT_TOKENS:-}
+      EXECUTOR_CONTEXT_TOKENS: ${EXECUTOR_CONTEXT_TOKENS:-}
+      PLANNER_PRICE_IN: ${PLANNER_PRICE_IN:-}
+      PLANNER_PRICE_OUT: ${PLANNER_PRICE_OUT:-}
+      EXECUTOR_PRICE_IN: ${EXECUTOR_PRICE_IN:-}
+      EXECUTOR_PRICE_OUT: ${EXECUTOR_PRICE_OUT:-}
+      BRAVE_API_KEY: ${BRAVE_API_KEY:-}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-}
+      UPLOAD_TTL_MS: ${UPLOAD_TTL_MS:-}
+      SANDBOX_IMAGE: ${SANDBOX_IMAGE:-agent-sandbox:dev}
+      SANDBOX_CPUS: ${SANDBOX_CPUS:-}
+      SANDBOX_MEMORY: ${SANDBOX_MEMORY:-}
+      # Сборщик видит только песочницы своего пространства имён (у prod:smoke — своё: он не тронет песочницы беты).
+      SANDBOX_NAMESPACE: ${SANDBOX_NAMESPACE:-prod}
+    networks: [default, docker-api]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      valkey: { condition: service_healthy }
+      garage: { condition: service_healthy }
+      docker-proxy: { condition: service_healthy }
+    <<: *hardening
+    read_only: true
+    tmpfs: ['/tmp']
+    restart: unless-stopped
+    stop_grace_period: 60s
+
+  # Статика веб-приложения и reverse proxy (docker/nginx/Dockerfile).
+  nginx:
+    build: { context: .., dockerfile: docker/nginx/Dockerfile }
+    image: agent-nginx:prod
+    environment:
+      # Имя приложения в server_name: чужой Host получает 444.
+      APP_HOST: ${APP_HOST:?set APP_HOST}
+      S3_PUBLIC_ORIGIN: ${S3_PUBLIC_ENDPOINT:?set S3_PUBLIC_ENDPOINT}
+    ports: ['127.0.0.1:${APP_PORT:-8080}:8080']
+    depends_on:
+      api: { condition: service_healthy, restart: true }
+      s3-cors: { condition: service_completed_successfully }
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:8080/healthz']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    read_only: true
+    tmpfs: ['/tmp']
+    cap_drop: ['ALL']
+    security_opt: ['no-new-privileges:true']
+    restart: unless-stopped
+
+networks:
+  default:
+  # Только воркер и прокси Docker API.
+  docker-api:
+    internal: true
+
+volumes:
+  pgdata:
+  valkeydata:
+  garagemeta:
+  garagedata:

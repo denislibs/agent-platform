@@ -189,6 +189,30 @@ Sandbox network isolation:
   `DOCKER-USER` egress rules that drop traffic from the sandbox network to the host gateway, the infra networks
   and `169.254.169.254` (cloud metadata).
 
+## Production-like stack
+
+`docker/compose.prod.yml` runs the closed beta on one host: Postgres and Valkey with passwords, Garage with secrets from
+the environment, `migrate` and `s3-cors` once, the API (`agent-api:prod`), the worker (`agent-worker:prod`, non-root,
+Docker through `docker-proxy`) and nginx (`agent-nginx:prod`) with the static web app and the production CSP. Only
+loopback ports are published (`APP_PORT`, `GARAGE_PORT`): put a TLS reverse proxy of the host in front of them.
+Every service gets an explicit list of variables from `.env.prod` (copy `.env.prod.example`); required ones stop
+compose when missing.
+
+```bash
+bun run sandbox:build       # the sandbox image (SANDBOX_IMAGE, default agent-sandbox:dev)
+bun run prod:up             # build and start, wait until nginx and the worker are up
+bun run prod:logs
+docker compose --env-file .env.prod -f docker/compose.prod.yml exec api bun packages/api/src/admin-grant.ts you@example.com 10
+docker compose --env-file .env.prod -f docker/compose.prod.yml exec worker bun run admin:delete-user user@example.com
+bun run prod:smoke --browser   # a throwaway copy on :58080 with one-off secrets: API, static app, CSP, logs, proxy, Chromium
+```
+
+`prod:smoke` never reads `.env` or `.env.prod`: it generates one-off secrets, runs as the compose project
+`agent-prod-smoke` with its own volumes (ports 58080 and 53990) and removes the containers, networks and volumes at
+the end, also on failure or Ctrl+C (`--keep` leaves the stack up and prints the `down -v` command).
+
+The beta checklist and the runbook (backups, upgrades, restore, data deletion): `docs/beta-checklist.md`.
+
 ## API
 
 ```bash
