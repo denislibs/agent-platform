@@ -194,8 +194,9 @@ Sandbox network isolation:
 ## Production-like stack
 
 `docker/compose.prod.yml` runs the closed beta on one host: Postgres and Valkey with passwords, Garage with secrets from
-the environment, `migrate` and `s3-cors` once, the API (`agent-api:prod`), the worker (`agent-worker:prod`, non-root,
-Docker through `docker-proxy`) and nginx (`agent-nginx:prod`) with the static web app and the production CSP. Only
+the environment, `migrate` and `s3-cors` once, the API (`agent-api`), the worker (`agent-worker`, non-root, Docker
+through `docker-proxy`) and nginx (`agent-nginx`) with the static web app and the production CSP. Images are tagged
+`IMAGE_TAG` (default `prod`). Only
 loopback ports are published (`APP_PORT`, `GARAGE_PORT`): put a TLS reverse proxy of the host in front of them.
 Every service gets an explicit list of variables from `.env.prod` (copy `.env.prod.example`); required ones stop
 compose when missing. `S3_PUBLIC_ENDPOINT` is an origin only (`https://files.example.com`, no path): the nginx
@@ -211,8 +212,10 @@ bun run prod:smoke --browser   # a throwaway copy on :58080 with one-off secrets
 ```
 
 `prod:smoke` never reads `.env` or `.env.prod`: it generates one-off secrets, runs as the compose project
-`agent-prod-smoke` with its own volumes (ports 58080 and 53990) and removes the containers, networks and volumes at
-the end, also on failure or Ctrl+C (`--keep` leaves the stack up and prints the `down -v` command).
+`agent-prod-smoke` with its own volumes (ports 58080 and 53990) and images (`IMAGE_TAG=smoke`: the `:prod` images of a
+beta on the same Docker are not overwritten) and removes the containers, networks and volumes at the end, also on
+failure or Ctrl+C (`--keep` leaves the stack up and prints the `down -v` command); the `:smoke` images stay as a build
+cache.
 
 The beta checklist and the runbook (backups, upgrades, restore, data deletion): `docs/beta-checklist.md`.
 

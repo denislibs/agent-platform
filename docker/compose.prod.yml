@@ -2,7 +2,8 @@
 # (bun run prod:up). Наружу — только loopback: nginx (APP_PORT) и Garage (GARAGE_PORT) за TLS reverse proxy хоста
 # (docs/beta-checklist.md). Переменные — явным списком на каждый сервис, без env_file: сервис видит только своё.
 # Обязательные — ${VAR:?…} (compose не стартует без них), необязательные — ${VAR:-} (пустое значение loadConfig
-# считает незаданным и берёт значение по умолчанию).
+# считает незаданным и берёт значение по умолчанию). Тег образов — IMAGE_TAG (по умолчанию prod): prod:smoke собирает
+# :smoke и образы беты на том же Docker не перезаписывает.
 name: agent-prod
 
 x-hardening: &hardening
@@ -92,7 +93,7 @@ services:
 
   migrate:
     build: { context: .., dockerfile: docker/backend/Dockerfile, target: app }
-    image: agent-api:prod
+    image: agent-api:${IMAGE_TAG:-prod}
     command: ['bun', 'packages/db/src/migrate.ts']
     environment: { <<: *db }
     depends_on: { postgres: { condition: service_healthy } }
@@ -102,7 +103,7 @@ services:
 
   # CORS бакета для origin приложения: браузер грузит входные файлы прямо в S3 (план 6).
   s3-cors:
-    image: agent-api:prod
+    image: agent-api:${IMAGE_TAG:-prod}
     pull_policy: never # образ собирает сервис migrate
     command: ['bun', 'packages/storage/src/cors-cli.ts', '${APP_ORIGIN:?set APP_ORIGIN}']
     environment:
@@ -115,7 +116,7 @@ services:
     restart: 'no'
 
   api:
-    image: agent-api:prod
+    image: agent-api:${IMAGE_TAG:-prod}
     pull_policy: never # образ собирает сервис migrate
     environment:
       <<: [*db, *valkey, *s3, *limits]
@@ -161,7 +162,7 @@ services:
 
   worker:
     build: { context: .., dockerfile: docker/backend/Dockerfile, target: worker }
-    image: agent-worker:prod
+    image: agent-worker:${IMAGE_TAG:-prod}
     environment:
       <<: [*db, *valkey, *s3, *limits]
       DOCKER_HOST: tcp://docker-proxy:2375
@@ -203,7 +204,7 @@ services:
   # Статика веб-приложения и reverse proxy (docker/nginx/Dockerfile).
   nginx:
     build: { context: .., dockerfile: docker/nginx/Dockerfile }
-    image: agent-nginx:prod
+    image: agent-nginx:${IMAGE_TAG:-prod}
     environment:
       # Имя приложения в server_name: чужой Host получает 444.
       APP_HOST: ${APP_HOST:?set APP_HOST}

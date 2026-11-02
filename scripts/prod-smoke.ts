@@ -38,6 +38,8 @@ const env: Record<string, string> = {
   EXECUTOR_MODEL: 'smoke-executor',
   // Своё пространство имён песочниц: сборщик этого стека не видит песочниц беты на том же Docker.
   SANDBOX_NAMESPACE: 'prod-smoke',
+  // Свои теги образов: :prod беты на том же Docker не перезаписываются.
+  IMAGE_TAG: 'smoke',
 };
 
 const dir = await mkdtemp(join(tmpdir(), 'agent-prod-smoke-'));
@@ -188,7 +190,19 @@ try {
     images.out,
   );
   const bind = await run(
-    [...compose, 'exec', '-T', 'worker', 'docker', 'run', '--rm', '-v', '/:/host', 'agent-worker:prod', 'true'],
+    [
+      ...compose,
+      'exec',
+      '-T',
+      'worker',
+      'docker',
+      'run',
+      '--rm',
+      '-v',
+      '/:/host',
+      `agent-worker:${env.IMAGE_TAG}`,
+      'true',
+    ],
     {
       allowFail: true,
     },
