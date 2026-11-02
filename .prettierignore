@@ -7,3 +7,6 @@ backlog.md
 .superpowers
 docker/sandbox/browserd/package-lock.json
 packages/ui/showcase/dist
+apps/web/dist
+apps/web/test-results
+apps/web/playwright-report

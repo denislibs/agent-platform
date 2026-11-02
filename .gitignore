@@ -5,3 +5,6 @@ node_modules/
 .DS_Store
 coverage/
 packages/ui/showcase/dist/
+apps/web/dist/
+apps/web/test-results/
+apps/web/playwright-report/

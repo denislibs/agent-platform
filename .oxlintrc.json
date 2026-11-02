@@ -11,7 +11,7 @@
     "import/no-unassigned-import": [
       "warn",
       {
-        "allow": ["**/*.css"]
+        "allow": ["**/*.css", "./zod-jitless.ts"]
       }
     ],
     "react/react-in-jsx-scope": "off",
@@ -28,7 +28,10 @@
     "node_modules/**",
     "packages/ui/showcase/dist/**",
     ".superpowers/**",
-    "docker/sandbox/browserd/node_modules/**"
+    "docker/sandbox/browserd/node_modules/**",
+    "apps/web/dist/**",
+    "apps/web/test-results/**",
+    "apps/web/playwright-report/**"
   ],
   "overrides": [
     {
@@ -694,6 +697,129 @@
                   "@aws-sdk/**"
                 ],
                 "message": "@agent/ui is pure UI: no backend packages or server libraries (spec 13, design system layers)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/src/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "bun",
+                "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
+              },
+              {
+                "name": "hono",
+                "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
+              },
+              {
+                "name": "better-auth",
+                "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
+              },
+              {
+                "name": "drizzle-orm",
+                "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
+              },
+              {
+                "name": "postgres",
+                "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
+              },
+              {
+                "name": "bullmq",
+                "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
+              },
+              {
+                "name": "ioredis",
+                "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
+              },
+              {
+                "name": "openai",
+                "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
+              },
+              {
+                "name": "awilix",
+                "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
+              },
+              {
+                "name": "@agent/core",
+                "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
+              },
+              {
+                "name": "@agent/agent",
+                "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
+              },
+              {
+                "name": "@agent/api",
+                "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
+              },
+              {
+                "name": "@agent/composition",
+                "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
+              },
+              {
+                "name": "@agent/db",
+                "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
+              },
+              {
+                "name": "@agent/llm",
+                "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
+              },
+              {
+                "name": "@agent/queue",
+                "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
+              },
+              {
+                "name": "@agent/sandbox",
+                "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
+              },
+              {
+                "name": "@agent/search",
+                "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
+              },
+              {
+                "name": "@agent/storage",
+                "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
+              },
+              {
+                "name": "@agent/testing",
+                "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
+              },
+              {
+                "name": "@agent/worker",
+                "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
+              }
+            ],
+            "patterns": [
+              {
+                "group": [
+                  "@agent/core/**",
+                  "@agent/agent/**",
+                  "@agent/api/**",
+                  "@agent/composition/**",
+                  "@agent/db/**",
+                  "@agent/llm/**",
+                  "@agent/queue/**",
+                  "@agent/sandbox/**",
+                  "@agent/search/**",
+                  "@agent/storage/**",
+                  "@agent/testing/**",
+                  "@agent/worker/**",
+                  "hono/**",
+                  "better-auth/**",
+                  "drizzle-orm/**",
+                  "bullmq/**",
+                  "ioredis/**",
+                  "openai/**",
+                  "awilix/**",
+                  "@aws-sdk/**"
+                ],
+                "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
               }
             ]
           }

@@ -3,12 +3,15 @@
   "private": true,
   "type": "module",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "apps/*"
   ],
   "scripts": {
-    "test": "bun test && bun run test:ui",
-    "test:unit": "bun test packages/shared packages/core packages/testing packages/llm packages/search packages/agent packages/api/test/unit && bun run test:ui",
+    "test": "bun test && bun run test:ui && bun run test:web",
+    "test:unit": "bun test packages/shared packages/core packages/testing packages/llm packages/search packages/agent packages/api/test/unit && bun run test:ui && bun run test:web",
     "test:ui": "bun test --preload ./packages/ui/test/dom.ts --path-ignore-patterns '**/node_modules/**' packages/ui",
+    "test:web": "bun test --preload ./apps/web/test/dom.ts --path-ignore-patterns '**/node_modules/**' apps/web/test",
+    "test:e2e:web": "bun run --cwd apps/web e2e",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "oxlint",
     "format": "prettier --write .",
@@ -16,6 +19,8 @@
     "check": "bun run typecheck && bun run lint && bun run format:check",
     "ui:dev": "bun run --cwd packages/ui dev",
     "ui:build": "bun run --cwd packages/ui build",
+    "web:dev": "bun run --cwd apps/web dev",
+    "web:build": "bun run --cwd apps/web build",
     "sandbox:build": "docker build -t agent-sandbox:dev docker/sandbox",
     "infra:up": "docker compose -f docker/compose.yml up -d",
     "infra:down": "docker compose -f docker/compose.yml down",

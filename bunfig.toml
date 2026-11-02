@@ -1,4 +1,5 @@
 [test]
 timeout = 20000
-# Тесты ui-kit идут отдельным процессом с happy-dom в preload: bun run test:ui (флаг --path-ignore-patterns заменяет этот список).
-pathIgnorePatterns = ["packages/ui/**"]
+# Тесты ui-kit и веб-приложения идут отдельными процессами с happy-dom в preload: bun run test:ui и test:web
+# (флаг --path-ignore-patterns заменяет этот список).
+pathIgnorePatterns = ["packages/ui/**", "apps/web/**"]
