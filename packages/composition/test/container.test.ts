@@ -11,6 +11,7 @@ import {
 } from '@agent/core';
 import { ExecutorStage, PlannerStage, ResultComposer } from '@agent/agent';
 import { buildContainer, type AppContainer } from '@agent/composition';
+import { SmtpMailer } from '@agent/mail';
 import {
   DrizzleCreditLedger,
   DrizzleFileRepository,
@@ -103,6 +104,14 @@ test('registers the docker sandbox provider and, without a key, unavailable sear
 test('uses Brave search when BRAVE_API_KEY is configured', () => {
   container = buildContainer({ ...config, search: { ...config.search, braveApiKey: 'k' } });
   expect(container.cradle.search).toBeInstanceOf(BraveSearchProvider);
+});
+
+test('uses SMTP mail when SMTP_URL and MAIL_FROM are configured, the log mailer otherwise', () => {
+  container = buildContainer({
+    ...config,
+    mail: { smtpUrl: 'smtp://user:pass@smtp.example.com:587', from: 'noreply@example.com' },
+  });
+  expect(container.cradle.mailer).toBeInstanceOf(SmtpMailer);
 });
 
 test('wired adapters work together against real infrastructure', async () => {

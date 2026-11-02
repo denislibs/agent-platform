@@ -11,6 +11,7 @@
     "@agent/core": "workspace:*",
     "@agent/db": "workspace:*",
     "@agent/llm": "workspace:*",
+    "@agent/mail": "workspace:*",
     "@agent/queue": "workspace:*",
     "@agent/sandbox": "workspace:*",
     "@agent/search": "workspace:*",

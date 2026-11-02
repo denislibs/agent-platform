@@ -199,3 +199,22 @@ describe('loadConfig', () => {
     expect(loadConfig({ ...base, BETTER_AUTH_SECRET: 'x'.repeat(32) }).auth.secret).toBe('x'.repeat(32));
   });
 });
+
+describe('mail', () => {
+  test('no SMTP_URL — no provider; SMTP_URL with MAIL_FROM — the provider', () => {
+    expect(loadConfig(base).mail).toEqual({ smtpUrl: null, from: null });
+    expect(
+      loadConfig({
+        ...base,
+        SMTP_URL: 'smtps://resend:re_key@smtp.resend.com:465',
+        MAIL_FROM: 'Agent <noreply@example.com>',
+      }).mail,
+    ).toEqual({ smtpUrl: 'smtps://resend:re_key@smtp.resend.com:465', from: 'Agent <noreply@example.com>' });
+  });
+
+  test('half of the pair or a non-SMTP URL is a config error', () => {
+    expect(() => loadConfig({ ...base, SMTP_URL: 'smtp://smtp.example.com:587' })).toThrow('SMTP_URL and MAIL_FROM');
+    expect(() => loadConfig({ ...base, MAIL_FROM: 'noreply@example.com' })).toThrow('SMTP_URL and MAIL_FROM');
+    expect(() => loadConfig({ ...base, SMTP_URL: 'https://api.resend.com', MAIL_FROM: 'a@b.c' })).toThrow('SMTP_URL');
+  });
+});

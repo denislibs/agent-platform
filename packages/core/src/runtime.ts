@@ -45,7 +45,7 @@ export class ConsoleLogger implements Logger {
 
 /**
  * Почта для разработки и закрытой беты: письмо не отправляется, а пишется в журнал — ссылку magic link видно
- * в логе API. Настоящий провайдер — backlog.
+ * в логе API. С `SMTP_URL` и `MAIL_FROM` контейнер регистрирует `SmtpMailer` (`@agent/mail`).
  */
 export class LogMailer implements Mailer {
   constructor(private readonly deps: { logger: Logger }) {}

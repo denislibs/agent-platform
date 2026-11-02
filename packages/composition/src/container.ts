@@ -28,6 +28,7 @@ import {
   type DbHandle,
 } from '@agent/db';
 import { createLlm } from '@agent/llm';
+import { SmtpMailer } from '@agent/mail';
 import { BullJobQueue, redisConnection, TaskLock, ValkeyStepEvents, type RedisConnection } from '@agent/queue';
 import { DockerSandboxProvider } from '@agent/sandbox';
 import { BraveSearchProvider, UnavailableSearchProvider } from '@agent/search';
@@ -97,7 +98,12 @@ export function buildContainer(appConfig: Config, overrides: Overrides = {}): Ap
     ).singleton(),
     // Через asFunction: asClass передал бы конструктору cradle.
     logger: asFunction(() => new ConsoleLogger()).singleton(),
-    mailer: asFunction(({ logger }: Cradle) => new LogMailer({ logger })).singleton(),
+    // SMTP, если заданы SMTP_URL и MAIL_FROM; иначе ссылка входа пишется в журнал API (разработка).
+    mailer: asFunction(({ config, logger }: Cradle) =>
+      config.mail.smtpUrl && config.mail.from
+        ? new SmtpMailer({ url: config.mail.smtpUrl, from: config.mail.from })
+        : new LogMailer({ logger }),
+    ).singleton(),
     ...agentServices(),
     ...overrides,
   });

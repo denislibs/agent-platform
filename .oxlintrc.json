@@ -90,6 +90,10 @@
                 "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
               },
               {
+                "name": "@agent/mail",
+                "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
                 "name": "@agent/agent",
                 "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
               },
@@ -128,6 +132,10 @@
               {
                 "name": "@agent/api",
                 "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
+              },
+              {
+                "name": "nodemailer",
+                "message": "nodemailer lives only in @agent/mail (spec 3.1)."
               }
             ],
             "patterns": [
@@ -144,6 +152,7 @@
                   "@agent/composition/**",
                   "@agent/sandbox/**",
                   "@agent/search/**",
+                  "@agent/mail/**",
                   "@agent/agent/**",
                   "@agent/queue/**",
                   "@agent/worker/**",
@@ -152,7 +161,8 @@
                   "@aws-sdk/**",
                   "hono/**",
                   "better-auth/**",
-                  "@agent/api/**"
+                  "@agent/api/**",
+                  "nodemailer/**"
                 ],
                 "message": "@agent/core stays free of infrastructure: depend on ports, implement them in adapter packages."
               }
@@ -205,6 +215,10 @@
                 "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
               },
               {
+                "name": "@agent/mail",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
                 "name": "@agent/composition",
                 "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
               },
@@ -243,6 +257,10 @@
               {
                 "name": "@agent/api",
                 "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "nodemailer",
+                "message": "nodemailer lives only in @agent/mail (spec 3.1)."
               }
             ],
             "patterns": [
@@ -257,6 +275,7 @@
                   "@agent/storage/**",
                   "@agent/sandbox/**",
                   "@agent/search/**",
+                  "@agent/mail/**",
                   "@agent/composition/**",
                   "@agent/queue/**",
                   "@agent/worker/**",
@@ -264,7 +283,8 @@
                   "@aws-sdk/**",
                   "hono/**",
                   "better-auth/**",
-                  "@agent/api/**"
+                  "@agent/api/**",
+                  "nodemailer/**"
                 ],
                 "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
               },
@@ -321,6 +341,10 @@
                 "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
               },
               {
+                "name": "@agent/mail",
+                "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
                 "name": "@agent/composition",
                 "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
               },
@@ -355,6 +379,10 @@
               {
                 "name": "@agent/api",
                 "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
+              },
+              {
+                "name": "nodemailer",
+                "message": "nodemailer lives only in @agent/mail (spec 3.1)."
               }
             ],
             "patterns": [
@@ -369,6 +397,7 @@
                   "@agent/storage/**",
                   "@agent/sandbox/**",
                   "@agent/search/**",
+                  "@agent/mail/**",
                   "@agent/composition/**",
                   "@agent/queue/**",
                   "@agent/worker/**",
@@ -376,7 +405,8 @@
                   "@aws-sdk/**",
                   "hono/**",
                   "better-auth/**",
-                  "@agent/api/**"
+                  "@agent/api/**",
+                  "nodemailer/**"
                 ],
                 "message": "@agent/agent holds pure services: depend on ports from @agent/core; adapters are wired in @agent/composition."
               }
@@ -417,6 +447,10 @@
                 "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
               },
               {
+                "name": "@agent/mail",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
                 "name": "@agent/queue",
                 "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
               },
@@ -451,6 +485,10 @@
               {
                 "name": "awilix",
                 "message": "awilix is allowed in @agent/api only in src/auth/better-auth.ts, src/main.ts, src/admin-grant.ts and src/admin-delete-user.ts: routes take their dependencies as one object."
+              },
+              {
+                "name": "nodemailer",
+                "message": "nodemailer lives only in @agent/mail (spec 3.1)."
               }
             ],
             "patterns": [
@@ -462,13 +500,14 @@
                   "@agent/llm/**",
                   "@agent/sandbox/**",
                   "@agent/search/**",
+                  "@agent/mail/**",
                   "@agent/queue/**",
                   "@agent/worker/**"
                 ],
                 "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
               },
               {
-                "group": ["drizzle-orm/**", "@agent/storage/**", "@aws-sdk/**"],
+                "group": ["drizzle-orm/**", "@agent/storage/**", "@aws-sdk/**", "nodemailer/**"],
                 "message": "@agent/api reaches infrastructure only through ports from the container: S3 is @agent/storage, the database is the repositories (spec 3.1)."
               },
               {
@@ -521,6 +560,10 @@
                 "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
               },
               {
+                "name": "@agent/mail",
+                "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
+              },
+              {
                 "name": "@agent/queue",
                 "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
               },
@@ -543,6 +586,10 @@
               {
                 "name": "@aws-sdk/s3-request-presigner",
                 "message": "@agent/api reaches infrastructure only through ports from the container: S3 is @agent/storage, the database is the repositories (spec 3.1)."
+              },
+              {
+                "name": "nodemailer",
+                "message": "nodemailer lives only in @agent/mail (spec 3.1)."
               }
             ],
             "patterns": [
@@ -554,13 +601,14 @@
                   "@agent/llm/**",
                   "@agent/sandbox/**",
                   "@agent/search/**",
+                  "@agent/mail/**",
                   "@agent/queue/**",
                   "@agent/worker/**"
                 ],
                 "message": "The API runs no agent logic: queue jobs through the JobQueue port (spec 3)."
               },
               {
-                "group": ["drizzle-orm/**", "@agent/storage/**", "@aws-sdk/**"],
+                "group": ["drizzle-orm/**", "@agent/storage/**", "@aws-sdk/**", "nodemailer/**"],
                 "message": "@agent/api reaches infrastructure only through ports from the container: S3 is @agent/storage, the database is the repositories (spec 3.1)."
               }
             ]
@@ -581,6 +629,48 @@
         "packages/worker/**",
         "packages/testing/**"
       ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "hono",
+                "message": "hono and better-auth live only in @agent/api (spec 3.1)."
+              },
+              {
+                "name": "better-auth",
+                "message": "hono and better-auth live only in @agent/api (spec 3.1)."
+              },
+              {
+                "name": "@aws-sdk/client-s3",
+                "message": "@aws-sdk/* lives only in @agent/storage (spec 3.1)."
+              },
+              {
+                "name": "@aws-sdk/s3-request-presigner",
+                "message": "@aws-sdk/* lives only in @agent/storage (spec 3.1)."
+              },
+              {
+                "name": "nodemailer",
+                "message": "nodemailer lives only in @agent/mail (spec 3.1)."
+              }
+            ],
+            "patterns": [
+              {
+                "group": ["hono/**", "better-auth/**"],
+                "message": "hono and better-auth live only in @agent/api (spec 3.1)."
+              },
+              {
+                "group": ["@aws-sdk/**", "nodemailer/**"],
+                "message": "@aws-sdk/* lives only in @agent/storage (spec 3.1)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/mail/**"],
       "rules": {
         "no-restricted-imports": [
           "error",
@@ -631,6 +721,10 @@
               {
                 "name": "better-auth",
                 "message": "hono and better-auth live only in @agent/api (spec 3.1)."
+              },
+              {
+                "name": "nodemailer",
+                "message": "nodemailer lives only in @agent/mail (spec 3.1)."
               }
             ],
             "patterns": [
@@ -685,6 +779,10 @@
               {
                 "name": "awilix",
                 "message": "@agent/ui is pure UI: no backend packages or server libraries (spec 13, design system layers)."
+              },
+              {
+                "name": "nodemailer",
+                "message": "@agent/ui is pure UI: no backend packages or server libraries (spec 13, design system layers)."
               }
             ],
             "patterns": [
@@ -699,7 +797,8 @@
                   "ioredis/**",
                   "openai/**",
                   "awilix/**",
-                  "@aws-sdk/**"
+                  "@aws-sdk/**",
+                  "nodemailer/**"
                 ],
                 "message": "@agent/ui is pure UI: no backend packages or server libraries (spec 13, design system layers)."
               }
@@ -788,6 +887,10 @@
                 "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
               },
               {
+                "name": "@agent/mail",
+                "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
+              },
+              {
                 "name": "@agent/storage",
                 "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
               },
@@ -797,6 +900,10 @@
               },
               {
                 "name": "@agent/worker",
+                "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
+              },
+              {
+                "name": "nodemailer",
                 "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
               }
             ],
@@ -812,6 +919,7 @@
                   "@agent/queue/**",
                   "@agent/sandbox/**",
                   "@agent/search/**",
+                  "@agent/mail/**",
                   "@agent/storage/**",
                   "@agent/testing/**",
                   "@agent/worker/**",
@@ -822,7 +930,8 @@
                   "ioredis/**",
                   "openai/**",
                   "awilix/**",
-                  "@aws-sdk/**"
+                  "@aws-sdk/**",
+                  "nodemailer/**"
                 ],
                 "message": "apps/web talks to the backend over HTTP only: it imports @agent/shared (schemas) and @agent/ui, never backend packages or server libraries (spec 3, 13)."
               }

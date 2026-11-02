@@ -93,9 +93,20 @@ const EnvSchema = z.object({
   GOOGLE_CLIENT_SECRET: optionalText,
   GITHUB_CLIENT_ID: optionalText,
   GITHUB_CLIENT_SECRET: optionalText,
+  /** Почта magic link: smtp(s)://user:password@host:port. Без него письма пишутся в журнал API (LogMailer). */
+  SMTP_URL: z.preprocess(blankAsUnset, z.url({ protocol: /^smtps?$/ }).optional()),
+  /** Отправитель писем: обязателен вместе с SMTP_URL. */
+  MAIL_FROM: optionalText,
 });
 
 export type Config = ReturnType<typeof loadConfig>;
+
+/** Почтовый провайдер включён, только если заданы и адрес SMTP, и отправитель. */
+function mailConfig(smtpUrl: string | undefined, from: string | undefined) {
+  if (!smtpUrl && !from) return { smtpUrl: null, from: null };
+  if (!smtpUrl || !from) throw new Error('Invalid environment: SMTP_URL and MAIL_FROM must be set together');
+  return { smtpUrl, from };
+}
 
 export function loadConfig(env: Record<string, string | undefined> = process.env) {
   const parsed = EnvSchema.safeParse(env);
@@ -171,5 +182,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       google: oauthApp('GOOGLE', e.GOOGLE_CLIENT_ID, e.GOOGLE_CLIENT_SECRET),
       github: oauthApp('GITHUB', e.GITHUB_CLIENT_ID, e.GITHUB_CLIENT_SECRET),
     },
+    mail: mailConfig(e.SMTP_URL, e.MAIL_FROM),
   };
 }
