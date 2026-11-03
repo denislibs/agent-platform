@@ -15,7 +15,7 @@ import {
   type Task,
   type TxRepositories,
 } from '@agent/core';
-import { SubtaskContractSchema, type Config } from '@agent/shared';
+import { currentCycle, SubtaskContractSchema, type Config } from '@agent/shared';
 import { z } from 'zod';
 import {
   askUserTool,
@@ -30,7 +30,15 @@ import {
   type ToolControl,
 } from '../tools';
 import { finishFilesProblem } from './deliverables';
-import { CALL_ERROR_LIMIT, questionsAnswered, trailingCallErrors, trailingSilent, unappliedControl } from './turns';
+import {
+  CALL_ERROR_LIMIT,
+  cycleSubtasks,
+  questionsAnswered,
+  requestBrief,
+  trailingCallErrors,
+  trailingSilent,
+  unappliedControl,
+} from './turns';
 import type { ModelGateway } from './gateway';
 import type { TaskGuard } from './guard';
 import type { StageOutcome } from './outcome';
@@ -82,9 +90,11 @@ const ReviewControlSchema: z.ZodType<ReviewControl> = z.discriminatedUnion('kind
   z.object({ kind: z.literal('ask_user'), question: z.string() }),
 ]);
 
-/** Сколько replan уже применено: успешные tool_result с именем replan (отклонённые — ok = false). */
+/** Сколько replan уже применено в этом цикле: успешные tool_result с именем replan (отклонённые — ok = false). */
 export function replansUsed(steps: readonly Step[]): number {
-  return steps.filter(s => s.payload.type === 'tool_result' && s.payload.name === 'replan' && s.payload.ok).length;
+  return currentCycle(steps).filter(
+    s => s.payload.type === 'tool_result' && s.payload.name === 'replan' && s.payload.ok,
+  ).length;
 }
 
 /**
@@ -199,13 +209,15 @@ export class PlannerStage {
       await sandbox.readFile('plan.md');
     } catch (err) {
       if (!(err instanceof NotFoundError && err.entity === 'file')) throw err;
-      await sandbox.writeFile('plan.md', renderPlan(await this.deps.subtasks.list(task.id)));
+      await sandbox.writeFile('plan.md', renderPlan(cycleSubtasks(await this.deps.subtasks.list(task.id), task)));
     }
   }
 
-  /** Шаги планирования: уровень задачи (subtaskId = null), без шагов status. */
+  /** Шаги планирования этого цикла: уровень задачи (subtaskId = null), без шагов status. */
   private async history(task: Task): Promise<Step[]> {
-    return (await this.deps.steps.list(task.id)).filter(s => s.subtaskId === null && s.payload.type !== 'status');
+    return currentCycle(await this.deps.steps.list(task.id)).filter(
+      s => s.subtaskId === null && s.payload.type !== 'status',
+    );
   }
 
   private async step(task: Task, sandbox: Sandbox): Promise<PlanStep> {
@@ -377,7 +389,7 @@ export class PlannerStage {
    * упавшая остаётся failed и после replan, а currentKind = 'review' стоит ровно до решения.
    */
   private async underReview(task: Task): Promise<Subtask | undefined> {
-    const subs = await this.deps.subtasks.list(task.id);
+    const subs = cycleSubtasks(await this.deps.subtasks.list(task.id), task);
     const reviewing = subs.find(s => s.status === 'reviewing');
     if (reviewing) return reviewing;
     return task.currentKind === 'review' ? subs.filter(s => s.status === 'failed').at(-1) : undefined;
@@ -390,7 +402,7 @@ export class PlannerStage {
    * исполнителя после решения (revise) значит, что оно применено, — иначе следующая проверка повторила бы его.
    */
   private async reviewSteps(task: Task, sub: Subtask): Promise<{ scope: Step[]; history: Step[] }> {
-    const all = await this.deps.steps.list(task.id);
+    const all = currentCycle(await this.deps.steps.list(task.id));
     const question = questionsAnswered(all);
     const answersOurs = (s: Step) => {
       const q = question.get(s.seq);
@@ -440,7 +452,11 @@ export class PlannerStage {
       validateControl: async control => {
         if (control.kind === 'finish') return finishFilesProblem(sandbox, control.files);
         return control.kind === 'replan'
-          ? validateReplan(control.changes, await this.deps.subtasks.list(task.id), this.deps.config.limits.maxSubtasks)
+          ? validateReplan(
+              control.changes,
+              cycleSubtasks(await this.deps.subtasks.list(task.id), task),
+              this.deps.config.limits.maxSubtasks,
+            )
           : null;
       },
     });
@@ -484,7 +500,7 @@ export class PlannerStage {
   }
 
   private async reviewHead(task: Task, sub: Subtask, canReplan: boolean): Promise<ChatMessage[]> {
-    const subs = await this.deps.subtasks.list(task.id);
+    const subs = cycleSubtasks(await this.deps.subtasks.list(task.id), task);
     const { maxRevisions } = this.deps.config.limits;
     const report = sub.report
       ? [
@@ -494,7 +510,7 @@ export class PlannerStage {
         ]
       : ['No report.'];
     const context = [
-      `Task: ${task.prompt}`,
+      requestBrief(task, await this.deps.steps.list(task.id)),
       '',
       'Plan:',
       ...subs.map(s => `[idx ${s.idx}] (${s.status}) ${s.goal}`),

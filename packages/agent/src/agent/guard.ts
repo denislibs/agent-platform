@@ -1,4 +1,4 @@
-import { isTerminalTask, type Config, type JobKind, type TaskStatus } from '@agent/shared';
+import { currentCycle, isTerminalTask, type Config, type JobKind, type TaskStatus } from '@agent/shared';
 import {
   InvalidTransitionError,
   type Clock,
@@ -24,12 +24,13 @@ export type GuardVerdict =
 
 /**
  * Есть ли в ленте ответ на последнюю паузу: сообщение пользователя после последнего шага status → waiting_user.
- * Без такого шага паузы не было — и ответа нет.
+ * Без такого шага паузы не было — и ответа нет. Пауза прошлого цикла не в счёт: новый запрос не ответ на неё.
  */
 export function answeredAfterLastPause(steps: readonly Step[]): boolean {
-  const pausedAt = steps.findLastIndex(s => s.payload.type === 'status' && s.payload.to === 'waiting_user');
+  const cycle = currentCycle(steps);
+  const pausedAt = cycle.findLastIndex(s => s.payload.type === 'status' && s.payload.to === 'waiting_user');
   if (pausedAt === -1) return false;
-  return steps.slice(pausedAt + 1).some(s => s.agent === 'user' && s.payload.type === 'message');
+  return cycle.slice(pausedAt + 1).some(s => s.agent === 'user' && s.payload.type === 'message');
 }
 
 /**
@@ -67,8 +68,10 @@ export class TaskGuard {
     if (!task || isTerminalTask(task.status) || (cycle !== undefined && task.cycle !== cycle)) return { kind: 'stop' };
     if (task.status === 'finalizing') return { kind: 'finalizing' };
     const { taskTokenBudget, taskWallTimeMs } = this.deps.config.limits;
-    if (task.tokensUsed >= taskTokenBudget * BUDGET_SHARE) return { kind: 'limit', task, reason: 'token_budget' };
-    if (task.activeMs >= taskWallTimeMs) return { kind: 'limit', task, reason: 'wall_time' };
+    // Бюджет и время — на цикл работы; кредиты — на пользователя.
+    if (task.tokensUsed - task.cycleBaseTokens >= taskTokenBudget * BUDGET_SHARE)
+      return { kind: 'limit', task, reason: 'token_budget' };
+    if (task.activeMs - task.cycleBaseActiveMs >= taskWallTimeMs) return { kind: 'limit', task, reason: 'wall_time' };
     if ((await this.deps.ledger.balance(task.userId)) <= 0) return { kind: 'limit', task, reason: 'credits' };
     return { kind: 'ok', task };
   }

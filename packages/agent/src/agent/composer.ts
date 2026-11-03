@@ -9,6 +9,7 @@ import {
   type Task,
   type TaskRepository,
 } from '@agent/core';
+import { currentCycle } from '@agent/shared';
 import { finishTool } from '../tools';
 import {
   finishFilesProblem,
@@ -22,6 +23,7 @@ import type { ModelGateway } from './gateway';
 import type { TaskGuard } from './guard';
 import { PROMPTS } from './prompts';
 import type { ToolExecutor } from './tool-executor';
+import { cycleSubtasks, requestBrief } from './turns';
 
 export interface ComposedResult {
   answer: string;
@@ -102,8 +104,11 @@ export class ResultComposer {
     const task = await this.deps.tasks.get(taskId);
     if (!task || task.status !== 'finalizing') throw new Error(`task ${taskId} is not finalizing`);
     const sandbox = await this.deps.sandboxes.create(task.id);
-    const accepted = (await this.deps.subtasks.list(task.id)).filter(s => s.status === 'accepted' && s.report);
-    const history = await this.deps.steps.list(task.id);
+    const accepted = cycleSubtasks(await this.deps.subtasks.list(task.id), task).filter(
+      s => s.status === 'accepted' && s.report,
+    );
+    // Только этот цикл: finish прошлого цикла подхватить нельзя.
+    const history = currentCycle(await this.deps.steps.list(task.id));
     let result = lastFinish(history);
 
     // Одна попытка на финализацию: llm_call планировщика уровня задачи после последнего перехода в finalizing
@@ -121,7 +126,7 @@ export class ResultComposer {
     if (!result && !attempted) {
       const hint = await workspaceFileHint(sandbox);
       const context = [
-        `Task: ${task.prompt}`,
+        requestBrief(task, history),
         task.partial ? `The task stopped early (${task.stopReason ?? 'limit'}); answer with what was done.` : '',
         '',
         'Subtask reports:',

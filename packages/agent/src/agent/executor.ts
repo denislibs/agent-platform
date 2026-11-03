@@ -12,7 +12,7 @@ import {
   type Task,
   type TaskRepository,
 } from '@agent/core';
-import type { Config, SubtaskReport } from '@agent/shared';
+import { currentCycle, type Config, type SubtaskReport } from '@agent/shared';
 import { z } from 'zod';
 import { executorTools, fileListTool, reportTool, type Tool } from '../tools';
 import type { ModelGateway } from './gateway';
@@ -23,8 +23,10 @@ import type { ToolExecutor } from './tool-executor';
 import { toMessages, type Compactor } from './transcript';
 import {
   CALL_ERROR_LIMIT,
+  cycleSubtasks,
   isCompaction,
   questionsAnswered,
+  requestBrief,
   trailingCallErrors,
   trailingSilent,
   unappliedControl,
@@ -110,7 +112,7 @@ export class ExecutorStage {
   }
 
   private async pickSubtask(task: Task): Promise<Subtask | StageOutcome> {
-    const subs = await this.deps.subtasks.list(task.id);
+    const subs = cycleSubtasks(await this.deps.subtasks.list(task.id), task);
     const running = subs.find(s => s.status === 'running');
     if (running) return running;
     if (subs.some(s => s.status === 'reviewing')) return { next: 'review' };
@@ -134,7 +136,7 @@ export class ExecutorStage {
   }
 
   private async history(task: Task, sub: Subtask): Promise<Step[]> {
-    const all = await this.deps.steps.list(task.id);
+    const all = currentCycle(await this.deps.steps.list(task.id));
     const firstSeq = all.find(s => s.subtaskId === sub.id)?.seq ?? Number.POSITIVE_INFINITY;
     const question = questionsAnswered(all);
     // Шаги проверки планировщика (agent = planner) пишутся с тем же subtaskId — исполнителю они не принадлежат,
@@ -150,7 +152,9 @@ export class ExecutorStage {
   }
 
   private async head(task: Task, sub: Subtask, sandbox: Sandbox): Promise<ChatMessage[]> {
-    const done = (await this.deps.subtasks.list(task.id)).filter(s => s.status === 'accepted' && s.report);
+    const done = cycleSubtasks(await this.deps.subtasks.list(task.id), task).filter(
+      s => s.status === 'accepted' && s.report,
+    );
     const files = await fileListTool.run(
       {},
       {
@@ -163,7 +167,7 @@ export class ExecutorStage {
       },
     );
     const context = [
-      `Task: ${task.prompt}`,
+      requestBrief(task, await this.deps.steps.list(task.id)),
       '',
       `Your subtask (#${sub.idx + 1}): ${sub.goal}`,
       `Context: ${sub.context || '-'}`,
