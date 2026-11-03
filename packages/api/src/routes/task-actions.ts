@@ -27,7 +27,7 @@ export function taskActionRoutes(app: Hono<ApiEnv>, deps: ApiDeps): void {
 
   app.delete('/api/tasks/:id', async c => {
     const task = await ownTask(deps.tasks, c.req.param('id'), c.get('user').id);
-    await deleteTask(deps, task);
+    await deleteTask(deps, task.id);
     return c.body(null, 204);
   });
 }

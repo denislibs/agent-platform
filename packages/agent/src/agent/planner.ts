@@ -186,10 +186,11 @@ type PlanStep = { outcome?: StageOutcome; sandbox: Sandbox };
 const isRestoredNote = (s: Step) =>
   s.payload.type === 'message' && s.payload.kind === 'note' && s.payload.text === PROMPTS.workspaceRestored;
 
-/** Песочница пропала или встала: файл тут ни при чём, job повторится. */
-const sandboxDown = (err: unknown) =>
-  (err instanceof SandboxError && err.code === 'not_running') ||
-  (err instanceof NotFoundError && err.entity === 'sandbox');
+/** Файл не вернуть и повтор не поможет: объекта нет в хранилище или песочница отказала в самом файле. */
+const unrestorable = (err: unknown) =>
+  (err instanceof NotFoundError && err.entity === 'object') ||
+  (err instanceof SandboxError &&
+    (err.code === 'path_outside_workspace' || err.code === 'fs_error' || err.code === 'file_too_large'));
 
 export class PlannerStage {
   constructor(private readonly deps: PlannerDeps) {}
@@ -409,14 +410,19 @@ export class PlannerStage {
     }
   }
 
-  /** Входные и выданные файлы — на их прежние пути. Файл, который не вернуть, не мешает остальным. */
+  /**
+   * Входные и выданные файлы — на их прежние пути. Пропускается только файл, которого не вернуть насовсем (объекта
+   * нет в хранилище, песочница отказала в самом файле). Любой другой сбой — сеть, хранилище, docker — бросается: job
+   * повторится и вернёт файлы снова. Пропуск при временном сбое оставил бы рабочую папку без отчёта, исполнитель
+   * создал бы его заново, и upsertOutput затёр бы хороший объект.
+   */
   private async restoreFiles(task: Task, sandbox: Sandbox): Promise<void> {
     for (const f of await this.deps.files.listForTask(task.id)) {
       const path = f.kind === 'input' ? `inputs/${inputName(f)}` : f.path;
       try {
         await sandbox.writeFile(path, await this.deps.fileStore.getBytes(f.storageKey));
       } catch (err) {
-        if (sandboxDown(err)) throw err;
+        if (!unrestorable(err)) throw err;
         this.deps.logger.warn('could not restore a file of the task', {
           taskId: task.id,
           path,

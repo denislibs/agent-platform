@@ -67,14 +67,22 @@ export async function replyToTask(
 }
 
 /**
- * Удаление задачи владельцем: только финальная, активную сначала останавливают. Сначала объекты S3 (удаление
- * идемпотентно: сбой — 500, повтор доделает), затем строка: шаги, подзадачи и файлы уходят каскадом, у событий расхода
- * task_id становится null. Песочницу задачи, которой больше нет, уберёт сборщик (Sweeper.reclaimSandboxes).
+ * Удаление задачи владельцем: только финальная, активную сначала останавливают. Финальный статус не окончателен —
+ * задачу открывают заново сообщением, — поэтому он проверяется под блокировкой строки задачи, в той же транзакции,
+ * что и удаление: открытие заново либо уже закоммичено (409), либо ждёт эту блокировку и найдёт задачи нет.
+ * Сначала объекты S3 (удаление идемпотентно: сбой откатывает транзакцию, ответ 500, повтор доделает), затем строка:
+ * шаги, подзадачи и файлы уходят каскадом, у событий расхода task_id становится null. Блокировка держится на время
+ * удаления объектов: файлов у задачи немного. Песочницу задачи, которой больше нет, уберёт сборщик
+ * (Sweeper.reclaimSandboxes).
  */
-export async function deleteTask(deps: Pick<ApiDeps, 'tasks' | 'files' | 'fileStore'>, task: Task): Promise<void> {
-  if (!isTerminalTask(task.status)) throw new ApiError(409, 'conflict', 'the task is still running; stop it first');
-  for (const file of await deps.files.listForTask(task.id)) await deps.fileStore.delete(file.storageKey);
-  await deps.tasks.delete(task.id);
+export async function deleteTask(deps: Pick<ApiDeps, 'uow' | 'fileStore'>, taskId: string): Promise<void> {
+  await deps.uow.run(async tx => {
+    const task = await tx.lockTask(taskId);
+    if (!task) throw new ApiError(404, 'not_found', 'task not found');
+    if (!isTerminalTask(task.status)) throw new ApiError(409, 'conflict', 'the task is still running; stop it first');
+    for (const file of await tx.files.listForTask(taskId)) await deps.fileStore.delete(file.storageKey);
+    await tx.tasks.delete(taskId);
+  });
 }
 
 /**

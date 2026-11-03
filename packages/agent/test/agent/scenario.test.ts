@@ -56,6 +56,25 @@ async function firstCycle(c: C) {
   return task;
 }
 
+/** Песочница уже удалена, задача открыта заново; запись outputs/report.md в новую песочницу падает с error. */
+async function reopenWithFailingWrite(c: C, error: Error) {
+  const task = await firstCycle(c);
+  c.clock.advance(RETENTION_MS);
+  await c.sweeper.sweep();
+  await c.intake.reopen({ taskId: task.id, userId: task.userId, text: 'More' });
+  const create = c.sandboxes.create.bind(c.sandboxes);
+  c.sandboxes.create = async id => {
+    const sandbox = await create(id);
+    const write = sandbox.writeFile.bind(sandbox);
+    sandbox.writeFile = async (path, data) => {
+      if (path === 'outputs/report.md') throw error;
+      return write(path, data);
+    };
+    return sandbox;
+  };
+  return { task, create };
+}
+
 /** Второй цикл через очередь: тот же файл в новой версии. */
 async function secondCycle(c: C, task: { id: string; userId: string }) {
   c.llm.push(
@@ -204,6 +223,59 @@ describe('a follow-up on a finished task', () => {
       s => s.payload.type === 'message' && s.payload.text === PROMPTS.workspaceRestored,
     );
     expect(notes).toHaveLength(1);
+  });
+
+  test('a transient failure while restoring a file makes the job throw; the retry restores it, with one note', async () => {
+    const c = setupAgent({ SANDBOX_RETENTION_MS: String(RETENTION_MS) });
+    const task = await firstCycle(c);
+    c.clock.advance(RETENTION_MS);
+    await c.sweeper.sweep();
+    await c.intake.reopen({ taskId: task.id, userId: task.userId, text: 'More' });
+    const job = c.queue.next()!;
+    // Сбой хранилища (не «объекта нет»): файл пропускать нельзя, иначе исполнитель создаст его заново поверх хорошего.
+    const getBytes = c.fileStore.getBytes.bind(c.fileStore);
+    let failures = 0;
+    c.fileStore.getBytes = async key => {
+      if (key !== 'uploads/data.csv' && failures++ === 0) throw new Error('S3 connection reset');
+      return getBytes(key);
+    };
+    await expect(c.runner.run(job)).rejects.toThrow('S3 connection reset');
+    expect(c.logger.entries).toEqual([]);
+
+    c.llm.push(calls(['create_plan', { subtasks: [{ goal: 'more', done_criteria: 'x' }] }]));
+    expect(await c.runner.run(job)).toEqual({ next: 'execute' });
+
+    const sandbox = await c.sandboxes.create(task.id);
+    expect(TEXT.decode(await sandbox.readFile('inputs/data.csv'))).toBe('a,b');
+    expect(TEXT.decode(await sandbox.readFile('outputs/report.md'))).toBe('first version');
+    const notes = (await c.steps.list(task.id)).filter(
+      s => s.payload.type === 'message' && s.payload.text === PROMPTS.workspaceRestored,
+    );
+    expect(notes).toHaveLength(1);
+  });
+
+  test('a file the sandbox refuses is logged and skipped; the others come back and the job goes on', async () => {
+    const c = setupAgent({ SANDBOX_RETENTION_MS: String(RETENTION_MS) });
+    const { task, create } = await reopenWithFailingWrite(
+      c,
+      new SandboxError('file_too_large', 'the file is too large'),
+    );
+    c.llm.push(calls(['create_plan', { subtasks: [{ goal: 'more', done_criteria: 'x' }] }]));
+
+    expect(await c.runner.run(c.queue.next()!)).toEqual({ next: 'execute' });
+
+    expect(c.logger.entries).toMatchObject([
+      { level: 'warn', fields: { taskId: task.id, path: 'outputs/report.md', error: 'the file is too large' } },
+    ]);
+    expect(TEXT.decode(await (await create(task.id)).readFile('inputs/data.csv'))).toBe('a,b');
+  });
+
+  test('a sandbox failure other than a refused file fails the job instead of skipping the file', async () => {
+    const c = setupAgent({ SANDBOX_RETENTION_MS: String(RETENTION_MS) });
+    await reopenWithFailingWrite(c, new Error('docker exec failed'));
+
+    await expect(c.runner.run(c.queue.next()!)).rejects.toThrow('docker exec failed');
+    expect(c.logger.entries).toEqual([]);
   });
 
   test('a question and an answer work in the second cycle, and so does stopping it', async () => {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { NotFoundError, SandboxError } from '@agent/core';
 import { currentCycle, FILE_CATEGORIES, FILE_CATEGORY_NAMES } from '@agent/shared';
-import { MAX_DELIVERED_FILES, mimeOf, safeOutputPath } from '../../src';
+import { MAX_DELIVERED_FILES, mimeOf, safeOutputPath, WORKSPACE_HINT_FILES } from '../../src';
 import { calls, finishedCycle, nextCycle, planned, say, setupAgent } from './fixtures';
 
 type C = ReturnType<typeof setupAgent>;
@@ -403,6 +403,31 @@ describe('Finalizer — a later cycle', () => {
     await c.finalizer.finalize(task.id);
     const prompt = c.llm.calls[0]!.messages.map(m => m.content ?? '').join('\n');
     expect(prompt).toContain('Delivered earlier (name them again if you changed them):\n- todo-app/App.jsx');
+  });
+});
+
+describe('Finalizer — delivered earlier list', () => {
+  test('a long list of earlier files is cut at the hint limit, with a note', async () => {
+    const c = setupAgent();
+    const task = await secondCycle(c, []);
+    const total = WORKSPACE_HINT_FILES + 5;
+    for (let i = 0; i < total; i++) await c.files.insert(outputRow(task, `old/f${String(i).padStart(3, '0')}.md`));
+    c.llm.push(calls(['finish', { answer: 'Done', files: [] }]));
+    await c.finalizer.finalize(task.id);
+    const prompt = c.llm.calls[0]!.messages.map(m => m.content ?? '').join('\n');
+    const section = prompt.slice(prompt.indexOf('Delivered earlier'));
+    expect(section.match(/^- old\//gm)).toHaveLength(WORKSPACE_HINT_FILES);
+    expect(section).toContain(`(the list is cut at ${WORKSPACE_HINT_FILES} files; more exist)`);
+  });
+
+  test('a short list has no note', async () => {
+    const c = setupAgent();
+    const task = await secondCycle(c, []);
+    await c.files.insert(outputRow(task, 'old/a.md'));
+    c.llm.push(calls(['finish', { answer: 'Done', files: [] }]));
+    await c.finalizer.finalize(task.id);
+    const prompt = c.llm.calls[0]!.messages.map(m => m.content ?? '').join('\n');
+    expect(prompt.slice(prompt.indexOf('Delivered earlier'))).not.toContain('the list is cut');
   });
 });
 
