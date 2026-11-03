@@ -2,12 +2,77 @@ import { describe, expect, test } from 'bun:test';
 import { LlmError, type ChatResult, type Task } from '@agent/core';
 import { toolCall } from '@agent/testing';
 import { PROMPTS } from '../../src';
-import { calls, planned, say, seedTask, setupAgent } from './fixtures';
+import { calls, finishedCycle, planned, say, seedTask, setupAgent } from './fixtures';
 
 type Cradle = ReturnType<typeof setupAgent>;
 
 const subtask = (goal: string) => ({ goal, context: '', done_criteria: `${goal} done`, expected_outputs: [] });
 const text = (b: Uint8Array) => new TextDecoder().decode(b);
+
+/** Законченная задача и открытие заново; вернёт текст того, что увидел планировщик. */
+async function plannedFollowUp(c: Cradle) {
+  const task = await finishedCycle(c);
+  await c.intake.reopen({ taskId: task.id, userId: task.userId, text: 'Add a date filter' });
+  c.llm.push(calls(['create_plan', { subtasks: [subtask('filter')] }]));
+  expect(await c.plannerStage.plan(task.id)).toEqual({ next: 'execute' });
+  return { task, messages: c.llm.calls[0]!.messages };
+}
+
+describe('PlannerStage.plan — a follow-up', () => {
+  test('the head has the request and the answer of each earlier cycle, then the current message comes last', async () => {
+    const c = setupAgent();
+    const { task, messages } = await plannedFollowUp(c);
+    expect(messages[0]).toEqual({ role: 'system', content: PROMPTS.plannerPlanSystem });
+    expect(messages[1]?.content).toContain(`Request 1: ${task.prompt}`);
+    expect(messages[1]?.content).toContain('Final answer 1: Old answer');
+    expect(messages.at(-1)).toEqual({ role: 'user', content: 'Add a date filter' });
+    expect(messages).toHaveLength(3);
+  });
+
+  test('the head lists the files in the workspace', async () => {
+    const c = setupAgent();
+    const task = await finishedCycle(c);
+    const sandbox = await c.sandboxes.create(task.id);
+    await sandbox.writeFile('outputs/table.md', '| a |');
+    await sandbox.writeFile('node_modules/x/index.js', 'x');
+    await c.intake.reopen({ taskId: task.id, userId: task.userId, text: 'More' });
+    c.llm.push(calls(['create_plan', { subtasks: [subtask('more')] }]));
+    await c.plannerStage.plan(task.id);
+    const head = c.llm.calls[0]!.messages[1]?.content;
+    expect(head).toContain('- outputs/table.md');
+    expect(head).not.toContain('node_modules');
+    expect(head).toContain(PROMPTS.continued);
+  });
+
+  test('a stopped cycle has no answer to show, a third cycle sees both earlier ones in order', async () => {
+    const c = setupAgent();
+    const { task } = await plannedFollowUp(c);
+    await c.tasks.transition(task.id, 'cancelled');
+    await c.intake.reopen({ taskId: task.id, userId: task.userId, text: 'Third' });
+    c.llm.push(calls(['create_plan', { subtasks: [subtask('third')] }]));
+    await c.plannerStage.plan(task.id);
+    const head = c.llm.calls.at(-1)!.messages[1]?.content ?? '';
+    expect(head.indexOf('Final answer 1: Old answer')).toBeLessThan(head.indexOf('Request 2: Add a date filter'));
+    expect(head).toContain('Final answer 2: (stopped before a final answer)');
+    expect(c.llm.calls.at(-1)!.messages.at(-1)).toEqual({ role: 'user', content: 'Third' });
+  });
+
+  test('a very long earlier answer is cut', async () => {
+    const c = setupAgent();
+    const task = await finishedCycle(c);
+    await c.tasks.update(task.id, { result: 'x'.repeat(5000) });
+    await c.intake.reopen({ taskId: task.id, userId: task.userId, text: 'More' });
+    c.llm.push(calls(['create_plan', { subtasks: [subtask('more')] }]));
+    await c.plannerStage.plan(task.id);
+    const head = c.llm.calls[0]!.messages[1]?.content ?? '';
+    expect(head).toContain(`${'x'.repeat(4000)}…`);
+    expect(head).not.toContain('x'.repeat(4001));
+  });
+
+  test('the planning prompt asks for the smallest change', () => {
+    expect(PROMPTS.plannerPlanSystem).toContain('smallest change');
+  });
+});
 
 describe('PlannerStage.plan', () => {
   test('starts planning, copies input files, and a plan moves the task to running', async () => {

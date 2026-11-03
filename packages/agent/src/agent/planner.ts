@@ -15,7 +15,7 @@ import {
   type Task,
   type TxRepositories,
 } from '@agent/core';
-import { currentCycle, SubtaskContractSchema, type Config } from '@agent/shared';
+import { currentCycle, splitCycles, SubtaskContractSchema, type Config } from '@agent/shared';
 import { z } from 'zod';
 import {
   askUserTool,
@@ -29,7 +29,7 @@ import {
   type Tool,
   type ToolControl,
 } from '../tools';
-import { finishFilesProblem } from './deliverables';
+import { finishFilesProblem, WORKSPACE_HINT_FILES, workspaceFileHint } from './deliverables';
 import {
   CALL_ERROR_LIMIT,
   cycleSubtasks,
@@ -47,6 +47,29 @@ import type { ToolExecutor } from './tool-executor';
 import { toMessages, type Compactor } from './transcript';
 
 const SILENT_LIMIT = 3;
+
+/** Сколько символов прошлого ответа видит планировщик: длинные ответы не должны вытеснять работу из окна модели. */
+const EARLIER_ANSWER_CHARS = 4000;
+
+const messageText = (step: Step | undefined): string | undefined =>
+  step?.payload.type === 'message' ? step.payload.text : undefined;
+
+/** Прошлые циклы для планировщика: запросы и итоговые ответы по порядку, без истории инструментов. */
+function earlierWork(steps: readonly Step[]): string[] {
+  return splitCycles(steps)
+    .slice(0, -1)
+    .flatMap((cycle, i) => {
+      const request = messageText(cycle.find(s => s.agent === 'user' && s.payload.type === 'message'));
+      const answer = messageText(cycle.findLast(s => s.payload.type === 'message' && s.payload.kind === 'answer'));
+      const clipped =
+        answer && answer.length > EARLIER_ANSWER_CHARS ? `${answer.slice(0, EARLIER_ANSWER_CHARS)}…` : answer;
+      return [
+        `Request ${i + 1}: ${request ?? ''}`,
+        `Final answer ${i + 1}: ${clipped ?? '(stopped before a final answer)'}`,
+        '',
+      ];
+    });
+}
 
 export function renderPlan(subtasks: readonly Subtask[]): string {
   const lines = ['# Plan', ''];
@@ -225,7 +248,7 @@ export class PlannerStage {
     const history = await this.history(task);
     const unapplied = unappliedControl(history, 'planner', PlanControlSchema);
     if (unapplied) return { outcome: await this.applyControl(task, unapplied, sandbox), sandbox };
-    const head = await this.head(task);
+    const head = await this.head(task, sandbox);
     const { result, step: llmStep } = await this.ask(task, null, head, history, planningTools);
 
     if (result.toolCalls.length === 0) {
@@ -328,13 +351,31 @@ export class PlannerStage {
     }
   }
 
-  private async head(task: Task): Promise<ChatMessage[]> {
+  /**
+   * Первый цикл: входные файлы. Новый цикл: вместо истории инструментов — прошлые запросы и ответы и файлы рабочей
+   * папки; текущее сообщение идёт следом как первый шаг цикла.
+   */
+  private async head(task: Task, sandbox: Sandbox): Promise<ChatMessage[]> {
     const inputs = await this.deps.files.listForTask(task.id, 'input');
     const list = inputs.length ? inputs.map(f => `- inputs/${inputName(f)} (${f.size} bytes)`).join('\n') : 'none';
-    return [
-      { role: 'system', content: PROMPTS.plannerPlanSystem },
-      { role: 'user', content: `Input files in /workspace:\n${list}` },
-    ];
+    const system: ChatMessage = { role: 'system', content: PROMPTS.plannerPlanSystem };
+    if (task.cycle === 1) return [system, { role: 'user', content: `Input files in /workspace:\n${list}` }];
+    const hint = await workspaceFileHint(sandbox);
+    const context = [
+      'This task continues earlier work. The conversation so far, oldest first:',
+      '',
+      ...earlierWork(await this.deps.steps.list(task.id)),
+      PROMPTS.continued,
+      '',
+      `Input files in /workspace:\n${list}`,
+      '',
+      'Files in /workspace:',
+      ...(hint.files.length ? hint.files.map(path => `- ${path}`) : ['none']),
+      ...(hint.truncated ? [`(the list is cut at ${WORKSPACE_HINT_FILES} files; more exist)`] : []),
+      '',
+      'The next message is the current request.',
+    ].join('\n');
+    return [system, { role: 'user', content: context }];
   }
 
   review(taskId: string): Promise<StageOutcome> {
