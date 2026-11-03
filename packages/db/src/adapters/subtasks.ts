@@ -29,7 +29,7 @@ export class DrizzleSubtaskRepository implements SubtaskRepository {
     if (!isUuid(taskId)) throw new NotFoundError('task', taskId);
     return this.db.transaction(async tx => {
       // Блокировка строки задачи сериализует выдачу idx: параллельные вызовы ждут коммита предыдущего.
-      const [locked] = await tx.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, taskId)).for('update');
+      const [locked] = await tx.select({ cycle: tasks.cycle }).from(tasks).where(eq(tasks.id, taskId)).for('update');
       if (!locked) throw new NotFoundError('task', taskId);
       const [last] = await tx
         .select({ maxIdx: sql<number>`coalesce(max(${subtasks.idx}), -1)` })
@@ -42,6 +42,7 @@ export class DrizzleSubtaskRepository implements SubtaskRepository {
           contracts.map((c, i) => ({
             taskId,
             idx: start + i,
+            cycle: locked.cycle,
             goal: c.goal,
             context: c.context,
             doneCriteria: c.doneCriteria,

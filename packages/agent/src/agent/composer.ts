@@ -1,6 +1,7 @@
 import {
   LlmError,
   NotFoundError,
+  type FileRepository,
   type Sandbox,
   type SandboxProvider,
   type Step,
@@ -9,8 +10,10 @@ import {
   type Task,
   type TaskRepository,
 } from '@agent/core';
+import { currentCycle } from '@agent/shared';
 import { finishTool } from '../tools';
 import {
+  deliveredFilesHint,
   finishFilesProblem,
   isSkippedPath,
   safeOutputPath,
@@ -19,8 +22,10 @@ import {
   WORKSPACE_HINT_FILES,
 } from './deliverables';
 import type { ModelGateway } from './gateway';
+import type { TaskGuard } from './guard';
 import { PROMPTS } from './prompts';
 import type { ToolExecutor } from './tool-executor';
+import { cycleSubtasks, requestBrief } from './turns';
 
 export interface ComposedResult {
   answer: string;
@@ -84,8 +89,10 @@ export class ResultComposer {
       tasks: TaskRepository;
       subtasks: SubtaskRepository;
       steps: StepLog;
+      files: FileRepository;
       sandboxes: SandboxProvider;
       gateway: ModelGateway;
+      guard: TaskGuard;
       toolExecutor: ToolExecutor;
     },
   ) {}
@@ -100,8 +107,11 @@ export class ResultComposer {
     const task = await this.deps.tasks.get(taskId);
     if (!task || task.status !== 'finalizing') throw new Error(`task ${taskId} is not finalizing`);
     const sandbox = await this.deps.sandboxes.create(task.id);
-    const accepted = (await this.deps.subtasks.list(task.id)).filter(s => s.status === 'accepted' && s.report);
-    const history = await this.deps.steps.list(task.id);
+    const accepted = cycleSubtasks(await this.deps.subtasks.list(task.id), task).filter(
+      s => s.status === 'accepted' && s.report,
+    );
+    // Только этот цикл: finish прошлого цикла подхватить нельзя.
+    const history = currentCycle(await this.deps.steps.list(task.id));
     let result = lastFinish(history);
 
     // Одна попытка на финализацию: llm_call планировщика уровня задачи после последнего перехода в finalizing
@@ -118,8 +128,10 @@ export class ResultComposer {
 
     if (!result && !attempted) {
       const hint = await workspaceFileHint(sandbox);
+      // Выданный раньше файл обновится, только если его назвать снова: у модели должен быть этот список.
+      const earlier = deliveredFilesHint((await this.deps.files.listForTask(task.id, 'output')).map(f => f.path));
       const context = [
-        `Task: ${task.prompt}`,
+        requestBrief(task, history),
         task.partial ? `The task stopped early (${task.stopReason ?? 'limit'}); answer with what was done.` : '',
         '',
         'Subtask reports:',
@@ -128,6 +140,14 @@ export class ResultComposer {
         'Files in the workspace:',
         ...(hint.files.length ? hint.files.map(path => `- ${path}`) : ['none']),
         ...(hint.truncated ? [`(the list is cut at ${WORKSPACE_HINT_FILES} files; more exist)`] : []),
+        ...(earlier.files.length
+          ? [
+              '',
+              'Delivered earlier (name them again if you changed them):',
+              ...earlier.files.map(path => `- ${path}`),
+              ...(earlier.truncated ? [`(the list is cut at ${WORKSPACE_HINT_FILES} files; more exist)`] : []),
+            ]
+          : []),
       ].join('\n');
       const first = await this.attempt(task, sandbox, context);
       result = first.result;
@@ -161,8 +181,9 @@ export class ResultComposer {
     const named = [...new Set([...result.files, ...outputs, ...unreadable].map(normalise))];
     // Никто не назвал файлов и outputs/ пуста: проект мог быть собран вне неё, отчёты подзадач знают настоящие пути.
     const files = named.length > 0 ? named : [...new Set((await reportedFiles()).map(normalise))];
-    await this.deps.tasks.update(task.id, { result: result.answer });
-    return { answer: result.answer, files, partial: task.partial };
+    const answer = result.answer;
+    await this.deps.guard.write(task, tx => tx.tasks.update(task.id, { result: answer }));
+    return { answer, files, partial: task.partial };
   }
 
   /** Один вызов модели с finish. rejection — текст отказа, если вызов был, но не прошёл проверку. */

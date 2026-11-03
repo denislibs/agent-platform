@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { NotFoundError, SandboxError } from '@agent/core';
-import { FILE_CATEGORIES, FILE_CATEGORY_NAMES } from '@agent/shared';
-import { MAX_DELIVERED_FILES, mimeOf, safeOutputPath } from '../../src';
-import { calls, planned, say, setupAgent } from './fixtures';
+import { currentCycle, FILE_CATEGORIES, FILE_CATEGORY_NAMES } from '@agent/shared';
+import { MAX_DELIVERED_FILES, mimeOf, safeOutputPath, WORKSPACE_HINT_FILES } from '../../src';
+import { calls, finishedCycle, nextCycle, planned, say, setupAgent } from './fixtures';
 
 type C = ReturnType<typeof setupAgent>;
 const text = (b: Uint8Array) => new TextDecoder().decode(b);
@@ -64,6 +64,23 @@ describe('safeOutputPath', () => {
   });
 });
 
+/** Строка результата пишется в транзакции guard.write: подменяем upsertOutput её репозитория. */
+function failOutputWrites(c: C, failure: (input: Parameters<C['files']['upsertOutput']>[0]) => Error) {
+  const run = c.uow.run.bind(c.uow);
+  c.uow.run = fn =>
+    run(tx =>
+      fn({
+        ...tx,
+        files: {
+          ...tx.files,
+          upsertOutput: async input => {
+            throw failure(input);
+          },
+        },
+      }),
+    );
+}
+
 describe('Finalizer', () => {
   test('a task deleted while its file uploads leaves no object behind and the job stops', async () => {
     const c = setupAgent();
@@ -82,9 +99,7 @@ describe('Finalizer', () => {
   test('an owner deleted while the file uploads leaves no object behind and the job stops', async () => {
     const c = setupAgent();
     const task = await ready(c, ['outputs/a.md'], { 'outputs/a.md': 'a' });
-    c.files.insert = async input => {
-      throw new NotFoundError('user', input.userId);
-    };
+    failOutputWrites(c, input => new NotFoundError('user', input.userId));
     expect(await c.finalizer.finalize(task.id)).toEqual({ next: 'stop' });
     expect(c.fileStore.objects.size).toBe(0);
   });
@@ -93,14 +108,12 @@ describe('Finalizer', () => {
     const c = setupAgent();
     const task = await ready(c, ['outputs/a.md'], { 'outputs/a.md': 'a' });
     for (const failure of [new Error('connection lost'), new NotFoundError('subtask', 'x')]) {
-      c.files.insert = async () => {
-        throw failure;
-      };
+      failOutputWrites(c, () => failure);
       await expect(c.finalizer.finalize(task.id)).rejects.toBe(failure);
     }
   });
 
-  test('uploads the files, records them, marks the task done and destroys the sandbox', async () => {
+  test('uploads the files, records them, marks the task done and stops the sandbox with its files', async () => {
     const c = setupAgent();
     const task = await ready(c, ['outputs/table.md'], { 'outputs/table.md': '| a |', 'outputs/chart.png': 'png' });
     expect(await c.finalizer.finalize(task.id)).toEqual({ next: 'stop' });
@@ -113,7 +126,9 @@ describe('Finalizer', () => {
       ['outputs/table.md', 'text/markdown', 5],
     ]);
     expect(text(c.fileStore.objects.get(`tasks/${task.id}/outputs/table.md`)!.bytes)).toBe('| a |');
-    expect(await c.sandboxes.get(`agent-sbx-${task.id}`)).toBeUndefined();
+    expect(await c.sandboxes.list()).toEqual([{ id: `agent-sbx-${task.id}`, taskId: task.id, running: false }]);
+    const sandbox = await c.sandboxes.create(task.id);
+    expect(text(await sandbox.readFile('outputs/table.md'))).toBe('| a |');
   });
 
   test('a repeated finalize is a no-op', async () => {
@@ -173,11 +188,11 @@ describe('Finalizer', () => {
     expect((await c.tasks.get(task.id))?.status).toBe('cancelled');
   });
 
-  test('a failing sandbox destroy after done does not fail the job', async () => {
+  test('a failing sandbox stop after done does not fail the job', async () => {
     const c = setupAgent();
     const task = await ready(c, [], { 'outputs/a.md': 'a' });
     const sandbox = await c.sandboxes.create(task.id);
-    sandbox.destroy = async () => {
+    sandbox.stop = async () => {
       throw new Error('docker is down');
     };
     expect(await c.finalizer.finalize(task.id)).toEqual({ next: 'stop' });
@@ -248,8 +263,180 @@ async function reported(c: C, reportFiles: string[], expectedOutputs: string[] =
 const delivered = async (c: C, taskId: string) =>
   (await c.files.listForTask(taskId, 'output')).map(f => f.path).toSorted();
 
+/** Второй цикл на стадии финального ответа: принятая подзадача, в песочнице файлы writes. */
+async function secondCycle(c: C, expectedOutputs: string[], writes: Record<string, string> = {}) {
+  const first = await finishedCycle(c);
+  const task = await nextCycle(c, first);
+  const sub = (await c.subtasks.list(task.id)).at(-1)!;
+  await c.subtasks.updatePending(sub.id, { expectedOutputs });
+  await c.subtasks.transition(sub.id, 'running');
+  await c.subtasks.transition(sub.id, 'reviewing', { report: { summary: 'changed', files: [], issues: [] } });
+  await c.subtasks.transition(sub.id, 'accepted');
+  await c.guard.toFinalizing(task, 'running');
+  const sandbox = await c.sandboxes.create(task.id);
+  for (const [path, body] of Object.entries(writes)) await sandbox.writeFile(path, body);
+  return task;
+}
+
+const outputRow = (task: { id: string; userId: string }, path: string, size = 1) => ({
+  userId: task.userId,
+  taskId: task.id,
+  kind: 'output' as const,
+  path,
+  storageKey: `tasks/${task.id}/${path}`,
+  size,
+  mime: 'text/markdown',
+});
+
+describe('Finalizer — a later cycle', () => {
+  test('a changed file replaces the object and updates the row, keeping its id', async () => {
+    const c = setupAgent();
+    const task = await secondCycle(c, [], { 'outputs/a.md': 'second version' });
+    const old = await c.files.insert(outputRow(task, 'outputs/a.md'));
+    await c.fileStore.put(old.storageKey, 'first');
+    c.clock.advance(1000);
+    c.llm.push(calls(['finish', { answer: 'Changed', files: ['outputs/a.md'] }]));
+
+    await c.finalizer.finalize(task.id);
+
+    const files = await c.files.listForTask(task.id, 'output');
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatchObject({ id: old.id, size: 14, mime: 'text/markdown' });
+    expect(files[0]!.createdAt.getTime()).toBeGreaterThan(old.createdAt.getTime());
+    expect(text(c.fileStore.objects.get(old.storageKey)!.bytes)).toBe('second version');
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'done', result: 'Changed', partial: false });
+  });
+
+  test('the answer goes into the feed once, with the files of this cycle, before the status step', async () => {
+    const c = setupAgent();
+    const task = await secondCycle(c, [], { 'outputs/new.md': 'n' });
+    await c.files.insert(outputRow(task, 'outputs/old.md'));
+    c.llm.push(calls(['finish', { answer: 'Second answer', files: ['outputs/new.md'] }]));
+
+    await c.finalizer.finalize(task.id);
+    await c.finalizer.finalize(task.id);
+
+    const steps = currentCycle(await c.steps.list(task.id));
+    const answers = steps.filter(s => s.payload.type === 'message' && s.payload.kind === 'answer');
+    expect(answers).toHaveLength(1);
+    expect(answers[0]).toMatchObject({
+      agent: 'planner',
+      subtaskId: null,
+      payload: { role: 'assistant', text: 'Second answer', files: ['outputs/new.md'] },
+    });
+    expect(steps.at(-1)?.payload).toEqual({ type: 'status', from: 'finalizing', to: 'done' });
+    expect(steps.at(-2)).toEqual(answers[0]!);
+  });
+
+  test('a retry after a crash during the upload delivers everything again and records one answer', async () => {
+    const c = setupAgent();
+    const task = await secondCycle(c, [], { 'outputs/a.md': 'a', 'outputs/b.md': 'b' });
+    c.llm.push(calls(['finish', { answer: 'Second answer', files: [] }]));
+    const put = c.fileStore.put.bind(c.fileStore);
+    let crashes = 1;
+    c.fileStore.put = async (key, data, type) => {
+      await put(key, data, type);
+      if (key.endsWith('b.md') && crashes-- > 0) throw new Error('s3 is down');
+    };
+    await expect(c.finalizer.finalize(task.id)).rejects.toThrow('s3 is down');
+    await c.finalizer.finalize(task.id);
+    expect(await delivered(c, task.id)).toEqual(['outputs/a.md', 'outputs/b.md']);
+    const steps = currentCycle(await c.steps.list(task.id));
+    expect(steps.filter(s => s.payload.type === 'message' && s.payload.kind === 'answer')).toHaveLength(1);
+    expect(c.llm.remaining).toBe(0);
+  });
+
+  test('a stop during the upload ends it: no further file goes out and the task is not done', async () => {
+    const c = setupAgent();
+    const task = await secondCycle(c, [], { 'outputs/a.md': 'a', 'outputs/b.md': 'b' });
+    c.llm.push(calls(['finish', { answer: 'Answer', files: [] }]));
+    const put = c.fileStore.put.bind(c.fileStore);
+    c.fileStore.put = async (key, data, type) => {
+      await put(key, data, type);
+      await c.tasks.transition(task.id, 'cancelled');
+    };
+    expect(await c.finalizer.finalize(task.id)).toEqual({ next: 'stop' });
+    expect(await delivered(c, task.id)).toEqual(['outputs/a.md']);
+    expect((await c.tasks.get(task.id))?.status).toBe('cancelled');
+  });
+
+  test('a file promised by this plan is missing even if earlier cycles delivered others', async () => {
+    const c = setupAgent();
+    const task = await secondCycle(c, ['outputs/new.md']);
+    await c.files.insert(outputRow(task, 'outputs/old.md'));
+    c.llm.push(calls(['finish', { answer: 'Done', files: [] }]));
+    await c.finalizer.finalize(task.id);
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'done', partial: true, stopReason: 'missing_files' });
+  });
+
+  test("a promise of the last plan is not this cycle's concern", async () => {
+    const c = setupAgent();
+    const first = await planned(c);
+    const [sub] = await c.subtasks.list(first.id);
+    await c.subtasks.updatePending(sub!.id, { expectedOutputs: ['outputs/old.md'] });
+    await c.subtasks.transition(sub!.id, 'running');
+    await c.subtasks.transition(sub!.id, 'reviewing', { report: { summary: 'x', files: [], issues: [] } });
+    await c.subtasks.transition(sub!.id, 'accepted');
+    await c.tasks.transition(first.id, 'cancelled');
+    const task = await nextCycle(c, first);
+    await c.guard.toFinalizing(task, 'running');
+    c.llm.push(calls(['finish', { answer: 'Done', files: [] }]));
+    await c.finalizer.finalize(task.id);
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'done', partial: false, stopReason: null });
+  });
+
+  test('files of earlier cycles do not use up the cap', async () => {
+    const c = setupAgent();
+    const task = await secondCycle(c, [], { 'outputs/new.md': 'n' });
+    for (let i = 0; i < MAX_DELIVERED_FILES; i++) await c.files.insert(outputRow(task, `old/f${i}.md`));
+    c.llm.push(calls(['finish', { answer: 'Done', files: ['outputs/new.md'] }]));
+    await c.finalizer.finalize(task.id);
+    expect(await c.tasks.get(task.id)).toMatchObject({ partial: false, stopReason: null });
+    expect((await c.files.listForTask(task.id, 'output')).some(f => f.path === 'outputs/new.md')).toBe(true);
+  });
+
+  test('the model is told which files were delivered earlier', async () => {
+    const c = setupAgent();
+    const task = await secondCycle(c, []);
+    await c.files.insert(outputRow(task, 'todo-app/App.jsx'));
+    c.llm.push(calls(['finish', { answer: 'Done', files: [] }]));
+    await c.finalizer.finalize(task.id);
+    const prompt = c.llm.calls[0]!.messages.map(m => m.content ?? '').join('\n');
+    expect(prompt).toContain('Delivered earlier (name them again if you changed them):\n- todo-app/App.jsx');
+  });
+});
+
+describe('Finalizer — delivered earlier list', () => {
+  test('a long list of earlier files keeps the newest up to the hint limit, with a note', async () => {
+    const c = setupAgent();
+    const task = await secondCycle(c, []);
+    const total = WORKSPACE_HINT_FILES + 5;
+    for (let i = 0; i < total; i++) await c.files.insert(outputRow(task, `old/f${String(i).padStart(3, '0')}.md`));
+    c.llm.push(calls(['finish', { answer: 'Done', files: [] }]));
+    await c.finalizer.finalize(task.id);
+    const prompt = c.llm.calls[0]!.messages.map(m => m.content ?? '').join('\n');
+    const section = prompt.slice(prompt.indexOf('Delivered earlier'));
+    expect(section.match(/^- old\//gm)).toHaveLength(WORKSPACE_HINT_FILES);
+    // Файлы идут от старых к новым: отрезаются первые пять, последний остаётся.
+    expect(section).not.toContain('- old/f004.md');
+    expect(section).toContain('- old/f005.md');
+    expect(section).toContain(`- old/f${total - 1}.md`);
+    expect(section).toContain(`(the list is cut at ${WORKSPACE_HINT_FILES} files; more exist)`);
+  });
+
+  test('a short list has no note', async () => {
+    const c = setupAgent();
+    const task = await secondCycle(c, []);
+    await c.files.insert(outputRow(task, 'old/a.md'));
+    c.llm.push(calls(['finish', { answer: 'Done', files: [] }]));
+    await c.finalizer.finalize(task.id);
+    const prompt = c.llm.calls[0]!.messages.map(m => m.content ?? '').join('\n');
+    expect(prompt.slice(prompt.indexOf('Delivered earlier'))).not.toContain('the list is cut');
+  });
+});
+
 describe('Finalizer — folders in reports', () => {
-  test('a project folder named only in the report is delivered and the sandbox is destroyed after', async () => {
+  test('a project folder named only in the report is delivered', async () => {
     const c = setupAgent();
     const { task, sandbox } = await reported(c, ['/workspace/todo-app/']);
     await sandbox.writeFile('todo-app/src/App.jsx', 'a');

@@ -107,6 +107,27 @@ function deps(t: ApiTest, overrides: { steps?: StepLog; stepEvents?: StepEvents 
 }
 
 describe('streamTaskSteps', () => {
+  test('a reopened task: the finished stream ended, a new one from its last seq carries the new cycle', async () => {
+    const t = setupApi();
+    const { user } = await t.signIn();
+    const task = await t.c.intake.create({ userId: user.id, prompt: 'p' });
+    await t.c.tasks.transition(task.id, 'cancelled');
+    const first = new RecordingSink();
+    await streamTaskSteps(deps(t), { taskId: task.id, afterSeq: 0, heartbeatMs: HOUR, sink: first });
+    expect(first.events).toEqual(['step:1', 'end:cancelled']);
+
+    await t.c.intake.reopen({ taskId: task.id, userId: user.id, text: 'More' });
+    const second = new RecordingSink();
+    const done = streamTaskSteps(deps(t), { taskId: task.id, afterSeq: 1, heartbeatMs: HOUR, sink: second });
+    await until(() => second.steps().length === 2);
+    expect(second.events).toEqual(['step:2', 'step:3']);
+
+    await t.c.tasks.transition(task.id, 'cancelled');
+    await t.c.stepEvents.publish(task.id, 3);
+    await done;
+    expect(second.events.at(-1)).toBe('end:cancelled');
+  });
+
   test('a notification is only a hint: steps are read from the log in seq order, whatever lastSeq it carries', async () => {
     const t = setupApi();
     const task = await newTask(t);

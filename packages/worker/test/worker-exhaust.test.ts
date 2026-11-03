@@ -87,7 +87,7 @@ async function waitFor(ok: () => Promise<boolean>, timeoutMs = 15_000): Promise<
 
 test('an exhausted job whose onExhausted ran stays failed', async () => {
   const taskId = crypto.randomUUID();
-  await queue.enqueue({ taskId, kind: 'plan' }, `${taskId}.plan.1`);
+  await queue.enqueue({ taskId, kind: 'plan', cycle: 1 }, `${taskId}.plan.1`);
   await waitFor(async () => (await raw.getJob(`${taskId}.plan.1`)?.then(j => j?.getState())) === 'failed');
   await waitFor(async () => exhausted.some(j => j.taskId === taskId));
   await Bun.sleep(200);
@@ -96,7 +96,7 @@ test('an exhausted job whose onExhausted ran stays failed', async () => {
 
 test('the last attempt runs onExhausted once, still holding the task lock', async () => {
   const taskId = crypto.randomUUID();
-  await queue.enqueue({ taskId, kind: 'plan' }, `${taskId}.plan.1`);
+  await queue.enqueue({ taskId, kind: 'plan', cycle: 1 }, `${taskId}.plan.1`);
   await waitFor(async () => exhausted.some(j => j.taskId === taskId));
   await Bun.sleep(LOCK_RETRY_MS + 200);
   expect(lockHeldOnExhaust.get(taskId)).toBe(true);
@@ -136,7 +136,7 @@ test('a job is removed when onExhausted fails and the task lock then stays busy,
   const taskId = crypto.randomUUID();
   lock.busy.add(taskId);
   throwingExhaust.add(taskId);
-  await queue.enqueue({ taskId, kind: 'plan' }, `${taskId}.plan.1`);
+  await queue.enqueue({ taskId, kind: 'plan', cycle: 1 }, `${taskId}.plan.1`);
   await waitFor(async () => lock.acquired.filter(id => id === taskId).length > 0);
   await waitFor(async () => (await raw.getJob(`${taskId}.plan.1`)) === undefined);
   // Один захват на run (под ним onExhausted бросил) и EXHAUST_ATTEMPTS безуспешных в failed-обработчике.
@@ -147,7 +147,7 @@ test('a job is removed when onExhausted fails and the task lock then stays busy,
 test('a job is removed when onExhausted keeps throwing', async () => {
   const taskId = crypto.randomUUID();
   throwingExhaust.add(taskId);
-  await queue.enqueue({ taskId, kind: 'plan' }, `${taskId}.plan.1`);
+  await queue.enqueue({ taskId, kind: 'plan', cycle: 1 }, `${taskId}.plan.1`);
   await waitFor(async () => exhausted.some(j => j.taskId === taskId));
   await waitFor(async () => (await raw.getJob(`${taskId}.plan.1`)) === undefined);
   // Одна попытка в процессоре и EXHAUST_ATTEMPTS в failed-обработчике.
@@ -158,13 +158,13 @@ test('a first run whose key seq is behind the task lastSeq is skipped as a dupli
   const taskId = crypto.randomUUID();
   okRun.add(taskId);
   lastSeqs.set(taskId, 7);
-  await queue.enqueue({ taskId, kind: 'execute' }, `${taskId}.execute.5`);
+  await queue.enqueue({ taskId, kind: 'execute', cycle: 1 }, `${taskId}.execute.5`);
   await waitFor(async () => lock.acquired.includes(taskId));
   await waitFor(async () => (await raw.getJob(`${taskId}.execute.5`)) === undefined);
   expect(runs).not.toContain(taskId);
   expect(exhausted.some(j => j.taskId === taskId)).toBe(false);
 
   // Ключ по текущему lastSeq (как у сборщика для простаивающей задачи) выполняется.
-  await queue.enqueue({ taskId, kind: 'execute' }, `${taskId}.execute.7`);
+  await queue.enqueue({ taskId, kind: 'execute', cycle: 1 }, `${taskId}.execute.7`);
   await waitFor(async () => runs.includes(taskId));
 });

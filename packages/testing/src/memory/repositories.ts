@@ -34,7 +34,7 @@ import type { InMemoryState } from './state';
 
 type Deps = { memory: InMemoryState };
 /** Внутри UnitOfWork.run годятся только репозитории из tx: in-memory ловит то, что Postgres поймал бы лишь по lock_timeout. */
-function guardedState(deps: Deps, txToken: symbol | undefined): InMemoryState {
+export function guardedState(deps: Deps, txToken: symbol | undefined): InMemoryState {
   const scope = deps.memory.txScope.getStore();
   if (scope?.active && scope.token !== txToken) {
     throw new Error('repository from the container used inside UnitOfWork.run: use the tx passed to fn');
@@ -76,6 +76,9 @@ export class InMemoryTaskRepository implements TaskRepository {
       activeMs: 0,
       lastSeq: 0,
       result: null,
+      cycle: 1,
+      cycleBaseTokens: 0,
+      cycleBaseActiveMs: 0,
       createdAt: now,
       updatedAt: now,
       finishedAt: null,
@@ -212,7 +215,8 @@ export class InMemorySubtaskRepository implements SubtaskRepository {
 
   async insertMany(taskId: string, contracts: SubtaskContract[]): Promise<Subtask[]> {
     if (contracts.length === 0) return [];
-    if (!this.m.tasks.has(taskId)) throw new NotFoundError('task', taskId);
+    const task = this.m.tasks.get(taskId);
+    if (!task) throw new NotFoundError('task', taskId);
     const existing = [...this.m.subtasks.values()].filter(s => s.taskId === taskId);
     let next = existing.reduce((max, s) => Math.max(max, s.idx), -1) + 1;
     const now = this.m.clock.now();
@@ -221,6 +225,7 @@ export class InMemorySubtaskRepository implements SubtaskRepository {
         id: this.m.ids.uuid(),
         taskId,
         idx: next++,
+        cycle: task.cycle,
         goal: c.goal,
         context: c.context,
         doneCriteria: c.doneCriteria,
@@ -367,6 +372,15 @@ export class InMemoryFileRepository implements FileRepository {
     };
     this.m.files.set(f.id, f);
     return copy(f);
+  }
+
+  async upsertOutput(input: Omit<NewFile, 'kind'>): Promise<FileRecord> {
+    const known = [...this.m.files.values()].find(f => f.storageKey === input.storageKey);
+    if (!known) return this.insert({ ...input, kind: 'output' });
+    if (known.userId !== input.userId || known.taskId !== (input.taskId ?? null) || known.kind !== 'output')
+      throw new Error(`storage key ${input.storageKey} belongs to another file`);
+    Object.assign(known, { size: input.size, mime: input.mime, createdAt: this.m.clock.now() });
+    return copy(known);
   }
 
   async get(id: string): Promise<FileRecord | undefined> {

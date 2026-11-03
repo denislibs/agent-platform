@@ -14,6 +14,7 @@ import { safeOutputPath } from './deliverables';
 import type { ResultComposer } from './composer';
 import type { TaskGuard } from './guard';
 import type { StageOutcome, StopReason } from './outcome';
+import { cycleSubtasks } from './turns';
 
 /** Файл нельзя прочитать из песочницы — пропускаем, остальные сбои пробрасываем (job повторится). */
 const SKIPPED_CODES = new Set(['file_too_large', 'not_a_file', 'fs_error', 'path_outside_workspace']);
@@ -53,7 +54,7 @@ export function mimeOf(path: string): string {
   return MIME[ext] ?? 'application/octet-stream';
 }
 
-/** Job finalize (спецификация 4.1, шаг 5): итоговый ответ, файлы в S3, done, песочница уничтожена. */
+/** Job finalize (спецификация 4.1, шаг 5): итоговый ответ, файлы в S3, шаг с ответом, done, песочница остановлена. */
 export class Finalizer {
   constructor(
     private readonly deps: {
@@ -70,25 +71,30 @@ export class Finalizer {
     },
   ) {}
 
-  /** Идемпотентен: повторный job на задаче не в finalizing ничего не делает, уже выгруженные пути пропускаются. */
+  /**
+   * Идемпотентен: повторный job на задаче не в finalizing ничего не делает; выгрузка заново перезаписывает те же
+   * объекты и строки (upsertOutput). Истории версий нет: файл, изменённый в новом цикле, заменяет прежний.
+   * Шаг с ответом пишется в транзакции перехода в done: при повторе его не будет второй раз.
+   * Всё, что считает файлы (потолок, потери, обещанное), смотрит только на этот цикл.
+   */
   async finalize(taskId: string): Promise<StageOutcome> {
     const task = await this.deps.tasks.get(taskId);
     if (!task || task.status !== 'finalizing') return { next: 'stop' };
     const { answer, files } = await this.deps.composer.compose(taskId);
     const sandbox = await this.deps.sandboxes.create(taskId);
-    const already = new Set((await this.deps.files.listForTask(taskId, 'output')).map(f => f.path));
+    const delivered = new Set<string>();
     const lostPaths: string[] = [];
 
     for (const [i, raw] of files.entries()) {
       const path = safeOutputPath(raw);
-      if (path && already.has(path)) continue;
+      if (path && delivered.has(path)) continue;
       if (!path) {
         lostPaths.push(raw);
         continue;
       }
-      if (already.size >= MAX_DELIVERED_FILES) {
+      if (delivered.size >= MAX_DELIVERED_FILES) {
         // Потолок: оставшиеся пути не выгружаем, но и не теряем молча.
-        lostPaths.push(...files.slice(i).filter(rest => !already.has(safeOutputPath(rest) ?? '')));
+        lostPaths.push(...files.slice(i).filter(rest => !delivered.has(safeOutputPath(rest) ?? '')));
         break;
       }
       let bytes: Uint8Array;
@@ -106,31 +112,32 @@ export class Finalizer {
       }
       const storageKey = `tasks/${taskId}/${path}`;
       const mime = mimeOf(path);
+      // Задачу остановили или открыли заново: старые версии не должны затереть то, что выгрузит новый цикл.
+      if ((await this.deps.guard.check(taskId, task.cycle)).kind === 'stop') return { next: 'stop' };
+      // Put, уже начатый к моменту открытия заново, может затереть объект нового цикла: это окно принято, S3 не
+      // транзакционна. Строка в такое окно не попадает: она пишется под блокировкой задачи со сверкой цикла.
       await this.deps.fileStore.put(storageKey, bytes, mime);
       try {
-        await this.deps.files.insert({
-          userId: task.userId,
-          taskId,
-          kind: 'output',
-          path,
-          storageKey,
-          size: bytes.length,
-          mime,
-        });
+        // Строка files ссылается на пользователя, поэтому его блокировка идёт раньше блокировки задачи.
+        await this.deps.guard.write(
+          task,
+          tx => tx.files.upsertOutput({ userId: task.userId, taskId, path, storageKey, size: bytes.length, mime }),
+          { lockUser: task.userId },
+        );
       } catch (err) {
         // Задачу (или владельца) удалили, пока файл грузился: записи не будет, и объект не должен остаться без неё.
         if (!(err instanceof NotFoundError && (err.entity === 'task' || err.entity === 'user'))) throw err;
         await this.deps.fileStore.delete(storageKey);
         return { next: 'stop' };
       }
-      already.add(path);
+      delivered.add(path);
     }
 
-    // План обещал файлы, а выдавать нечего: модель могла не назвать ни одного.
-    const promised = (await this.deps.subtasks.list(taskId)).some(
+    // План этого цикла обещал файлы, а выдавать нечего: модель могла не назвать ни одного.
+    const promised = cycleSubtasks(await this.deps.subtasks.list(taskId), task).some(
       s => s.status === 'accepted' && s.expectedOutputs.some(looksLikePath),
     );
-    const incomplete = lostPaths.length > 0 || (already.size === 0 && promised);
+    const incomplete = lostPaths.length > 0 || (delivered.size === 0 && promised);
     if (lostPaths.length > 0) {
       this.deps.logger.warn('task finished without some of its files', {
         taskId,
@@ -140,9 +147,9 @@ export class Finalizer {
     }
     const reason: StopReason = 'missing_files';
 
-    // Отмена во время выгрузки: задача уже не наша, песочницу уберёт сборщик.
+    // Отмена во время выгрузки: задача уже не наша, песочницу остановит JobRunner.
     const done = await this.deps.guard.unlessStopped(taskId, () =>
-      this.deps.uow.run(async tx => {
+      this.deps.guard.write(task, async tx => {
         await tx.tasks.transition(
           taskId,
           'done',
@@ -154,14 +161,20 @@ export class Finalizer {
           },
           { expectedFrom: 'finalizing' },
         );
+        await tx.steps.append({
+          taskId,
+          agent: 'planner',
+          payload: { type: 'message', role: 'assistant', text: answer, kind: 'answer', files: [...delivered] },
+        });
         await tx.steps.append({ taskId, agent: 'system', payload: { type: 'status', from: 'finalizing', to: 'done' } });
       }),
     );
     if (done) {
       try {
-        await sandbox.destroy();
+        // Файлы остаются для продолжения беседы; песочницу удалит сборщик через SANDBOX_RETENTION_MS.
+        await sandbox.stop();
       } catch {
-        // Задача уже done: повтор job бесполезен, осиротевшую песочницу завершённой задачи уберёт сборщик.
+        // Задача уже done: повтор job бесполезен, работающую песочницу законченной задачи остановит сборщик.
       }
     }
     return { next: 'stop' };

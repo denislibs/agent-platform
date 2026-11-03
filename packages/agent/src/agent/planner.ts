@@ -1,11 +1,14 @@
 import {
+  errorMessage,
   LlmError,
   NotFoundError,
+  SandboxError,
   type ChatMessage,
   type Clock,
   type FileRecord,
   type FileRepository,
   type FileStore,
+  type Logger,
   type Sandbox,
   type SandboxProvider,
   type Step,
@@ -14,9 +17,8 @@ import {
   type SubtaskRepository,
   type Task,
   type TxRepositories,
-  type UnitOfWork,
 } from '@agent/core';
-import { SubtaskContractSchema, type Config } from '@agent/shared';
+import { currentCycle, splitCycles, SubtaskContractSchema, type Config } from '@agent/shared';
 import { z } from 'zod';
 import {
   askUserTool,
@@ -30,16 +32,64 @@ import {
   type Tool,
   type ToolControl,
 } from '../tools';
-import { finishFilesProblem } from './deliverables';
-import { CALL_ERROR_LIMIT, questionsAnswered, trailingCallErrors, trailingSilent, unappliedControl } from './turns';
+import { finishFilesProblem, WORKSPACE_HINT_FILES, workspaceFileHint } from './deliverables';
+import {
+  CALL_ERROR_LIMIT,
+  cycleSubtasks,
+  questionsAnswered,
+  requestBrief,
+  trailingCallErrors,
+  trailingSilent,
+  unappliedControl,
+} from './turns';
 import type { ModelGateway } from './gateway';
 import type { TaskGuard } from './guard';
+import { sandboxIdFor } from './jobs';
 import type { StageOutcome } from './outcome';
 import { PROMPTS } from './prompts';
 import type { ToolExecutor } from './tool-executor';
 import { toMessages, type Compactor } from './transcript';
 
 const SILENT_LIMIT = 3;
+
+/** Сколько символов прошлого ответа видит планировщик: длинные ответы не должны вытеснять работу из окна модели. */
+const EARLIER_ANSWER_CHARS = 4000;
+
+/** Сколько символов прошлого запроса видит планировщик (запрос пользователя может быть в разы длиннее). */
+const EARLIER_REQUEST_CHARS = 2000;
+
+/** Сколько последних прошлых циклов показано полностью: голову нельзя сжать ни сводкой, ни повтором, она должна быть ограничена сама. */
+const EARLIER_CYCLES = 5;
+
+const messageText = (step: Step | undefined): string | undefined =>
+  step?.payload.type === 'message' ? step.payload.text : undefined;
+
+/** Обрезает текст до max символов с многоточием; суррогатная пара не разрезается пополам. */
+function clip(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const high = text.charCodeAt(max - 1);
+  return `${text.slice(0, high >= 0xd800 && high <= 0xdbff ? max - 1 : max)}…`;
+}
+
+/**
+ * Прошлые циклы для планировщика: запросы и итоговые ответы по порядку, без истории инструментов. Полностью — только
+ * последние EARLIER_CYCLES, более старые сворачиваются в одну строку; номера оставшихся сохраняют место в задаче.
+ */
+function earlierWork(steps: readonly Step[]): string[] {
+  const earlier = splitCycles(steps).slice(0, -1);
+  const omitted = Math.max(0, earlier.length - EARLIER_CYCLES);
+  const summary = omitted ? [`(${omitted} earlier ${omitted === 1 ? 'round' : 'rounds'} omitted)`, ''] : [];
+  const kept = earlier.slice(omitted).flatMap((cycle, i) => {
+    const request = messageText(cycle.find(s => s.agent === 'user' && s.payload.type === 'message'));
+    const answer = messageText(cycle.findLast(s => s.payload.type === 'message' && s.payload.kind === 'answer'));
+    return [
+      `Request ${omitted + i + 1}: ${request === undefined ? '' : clip(request, EARLIER_REQUEST_CHARS)}`,
+      `Final answer ${omitted + i + 1}: ${answer === undefined ? '(stopped before a final answer)' : clip(answer, EARLIER_ANSWER_CHARS)}`,
+      '',
+    ];
+  });
+  return [...summary, ...kept];
+}
 
 export function renderPlan(subtasks: readonly Subtask[]): string {
   const lines = ['# Plan', ''];
@@ -83,9 +133,11 @@ const ReviewControlSchema: z.ZodType<ReviewControl> = z.discriminatedUnion('kind
   z.object({ kind: z.literal('ask_user'), question: z.string() }),
 ]);
 
-/** Сколько replan уже применено: успешные tool_result с именем replan (отклонённые — ok = false). */
+/** Сколько replan уже применено в этом цикле: успешные tool_result с именем replan (отклонённые — ok = false). */
 export function replansUsed(steps: readonly Step[]): number {
-  return steps.filter(s => s.payload.type === 'tool_result' && s.payload.name === 'replan' && s.payload.ok).length;
+  return currentCycle(steps).filter(
+    s => s.payload.type === 'tool_result' && s.payload.name === 'replan' && s.payload.ok,
+  ).length;
 }
 
 /**
@@ -119,7 +171,6 @@ type PlannerDeps = {
   subtasks: SubtaskRepository;
   files: FileRepository;
   fileStore: FileStore;
-  uow: UnitOfWork;
   sandboxes: SandboxProvider;
   clock: Clock;
   config: Config;
@@ -127,20 +178,36 @@ type PlannerDeps = {
   gateway: ModelGateway;
   compactor: Compactor;
   toolExecutor: ToolExecutor;
+  logger: Logger;
 };
 
 type PlanStep = { outcome?: StageOutcome; sandbox: Sandbox };
 
+const isRestoredNote = (s: Step) =>
+  s.payload.type === 'message' && s.payload.kind === 'note' && s.payload.text === PROMPTS.workspaceRestored;
+
+/** Шаги планировщика в текущем цикле: без шагов подзадач и без статусов. */
+export const plannerHistory = (steps: readonly Step[]): Step[] =>
+  currentCycle(steps).filter(s => s.subtaskId === null && s.payload.type !== 'status');
+
+/**
+ * Возврат файлов начат и не закончен: заметка о пустой рабочей папке записана, а модель планировщика ещё не вызывалась.
+ * Такую песочницу нужно заполнить заново целиком; по одной заметке этого не видно, если песочница уже есть.
+ */
+export const restoreIncomplete = (history: readonly Step[]): boolean =>
+  history.some(isRestoredNote) && !history.some(s => s.payload.type === 'llm_call');
+
+/** Файл не вернуть и повтор не поможет: объекта нет в хранилище или песочница отказала в самом файле. */
+const unrestorable = (err: unknown) =>
+  (err instanceof NotFoundError && err.entity === 'object') ||
+  (err instanceof SandboxError &&
+    (err.code === 'path_outside_workspace' || err.code === 'fs_error' || err.code === 'file_too_large'));
+
 export class PlannerStage {
   constructor(private readonly deps: PlannerDeps) {}
 
-  async plan(taskId: string): Promise<StageOutcome> {
-    const startedAt = this.deps.clock.now();
-    try {
-      return await this.planLoop(taskId);
-    } finally {
-      await this.deps.guard.addActiveTime(taskId, startedAt);
-    }
+  plan(taskId: string): Promise<StageOutcome> {
+    return this.deps.guard.timed(taskId, () => this.planLoop(taskId));
   }
 
   private async planLoop(taskId: string): Promise<StageOutcome> {
@@ -159,6 +226,7 @@ export class PlannerStage {
       return guard.stopForLimitOrStop(limited, first.reason);
     }
     let task = first.task;
+    const { cycle } = task;
     if (task.status === 'waiting_user') {
       // Пауза другой стадии или ответа ещё нет: этот job устарел или повторён (как у исполнителя).
       if (task.currentKind !== 'plan') return { next: 'wait_user' };
@@ -181,13 +249,10 @@ export class PlannerStage {
     }
     if (task.status !== 'planning') return { next: 'stop' };
 
-    let sandbox = await this.deps.sandboxes.create(task.id);
-    // Пока планировщик не вызывал модель, входные файлы (пере)копируются: сбой между переходом
-    // queued → planning и копированием иначе оставил бы /workspace/inputs/ пустой. Запись идемпотентна.
-    if (!(await this.history(task)).some(s => s.payload.type === 'llm_call')) await this.copyInputs(task, sandbox);
+    let sandbox = await this.prepareWorkspace(task);
 
     for (let i = 0; i < config.limits.stepsPerJob; i++) {
-      const verdict = await guard.check(taskId);
+      const verdict = await guard.check(taskId, cycle);
       if (verdict.kind === 'stop') return { next: 'stop' };
       if (verdict.kind === 'finalizing') return { next: 'finalize' };
       if (verdict.kind === 'limit') return guard.stopForLimitOrStop(verdict.task, verdict.reason);
@@ -205,31 +270,33 @@ export class PlannerStage {
       await sandbox.readFile('plan.md');
     } catch (err) {
       if (!(err instanceof NotFoundError && err.entity === 'file')) throw err;
-      await sandbox.writeFile('plan.md', renderPlan(await this.deps.subtasks.list(task.id)));
+      await sandbox.writeFile('plan.md', renderPlan(cycleSubtasks(await this.deps.subtasks.list(task.id), task)));
     }
   }
 
-  /** Шаги планирования: уровень задачи (subtaskId = null), без шагов status. */
+  /** Шаги планирования этого цикла: уровень задачи (subtaskId = null), без шагов status. */
   private async history(task: Task): Promise<Step[]> {
-    return (await this.deps.steps.list(task.id)).filter(s => s.subtaskId === null && s.payload.type !== 'status');
+    return plannerHistory(await this.deps.steps.list(task.id));
   }
 
   private async step(task: Task, sandbox: Sandbox): Promise<PlanStep> {
-    const { steps } = this.deps;
+    const { guard } = this.deps;
     const history = await this.history(task);
     const unapplied = unappliedControl(history, 'planner', PlanControlSchema);
     if (unapplied) return { outcome: await this.applyControl(task, unapplied, sandbox), sandbox };
-    const head = await this.head(task);
+    const head = await this.head(task, sandbox);
     const { result, step: llmStep } = await this.ask(task, null, head, history, planningTools);
 
     if (result.toolCalls.length === 0) {
       if (trailingSilent([...history, llmStep]) >= SILENT_LIMIT)
         return { outcome: await this.failNoPlan(task), sandbox };
-      await steps.append({
-        taskId: task.id,
-        agent: 'system',
-        payload: { type: 'message', role: 'user', text: PROMPTS.planNudge, kind: 'note' },
-      });
+      await guard.write(task, tx =>
+        tx.steps.append({
+          taskId: task.id,
+          agent: 'system',
+          payload: { type: 'message', role: 'user', text: PROMPTS.planNudge, kind: 'note' },
+        }),
+      );
       return { sandbox };
     }
 
@@ -251,13 +318,13 @@ export class PlannerStage {
 
   /** create_plan: подзадачи и planning → running одной транзакцией, затем plan.md; ask_user: пауза. */
   private async applyControl(task: Task, control: PlanControl, sandbox: Sandbox): Promise<StageOutcome> {
-    const { guard, uow } = this.deps;
+    const { guard } = this.deps;
     if (control.kind === 'ask_user') {
       const paused = await guard.unlessStopped(task.id, () => guard.pause(task, 'plan'));
       return paused ? { next: 'wait_user' } : { next: 'stop' };
     }
     const created = await guard.unlessStopped(task.id, () =>
-      uow.run(async tx => {
+      guard.write(task, async tx => {
         const subs = await tx.subtasks.insertMany(task.id, control.subtasks);
         await tx.tasks.transition(task.id, 'running', { currentKind: 'execute' }, { expectedFrom: 'planning' });
         await tx.steps.append({
@@ -276,7 +343,7 @@ export class PlannerStage {
   /** Третий ответ без инструментов подряд: planning → failed, stopReason = no_plan. */
   private async failNoPlan(task: Task): Promise<StageOutcome> {
     await this.deps.guard.unlessStopped(task.id, () =>
-      this.deps.uow.run(async tx => {
+      this.deps.guard.write(task, async tx => {
         await tx.tasks.transition(
           task.id,
           'failed',
@@ -296,7 +363,7 @@ export class PlannerStage {
   /** queued → planning (currentKind = 'plan') и шаг status одной транзакцией; undefined — задачу отменили. */
   private async start(task: Task): Promise<Task | undefined> {
     const started = await this.deps.guard.unlessStopped(task.id, () =>
-      this.deps.uow.run(async tx => {
+      this.deps.guard.write(task, async tx => {
         const planning = await tx.tasks.transition(
           task.id,
           'planning',
@@ -314,28 +381,95 @@ export class PlannerStage {
     return started?.value;
   }
 
+  /**
+   * Песочница для планирования. Пока планировщик не вызывал модель, файлы (пере)копируются: сбой между переходом
+   * и копированием иначе оставил бы /workspace пустой. Запись идемпотентна.
+   * Первый цикл: входные файлы. Новый цикл: остановленная песочница хранит всё сама и просто запускается. Если её нет,
+   * создаётся новая из выданных файлов. Заметка для планировщика пишется до копирования: на повторе job песочница уже
+   * есть, и только заметка говорит, что копирование ещё может быть не закончено.
+   */
+  private async prepareWorkspace(task: Task): Promise<Sandbox> {
+    const { sandboxes, guard } = this.deps;
+    const history = await this.history(task);
+    const called = history.some(s => s.payload.type === 'llm_call');
+    if (task.cycle === 1) {
+      const sandbox = await sandboxes.create(task.id);
+      if (!called) await this.copyInputs(task, sandbox);
+      return sandbox;
+    }
+    const gone = (await sandboxes.get(sandboxIdFor(task.id))) === undefined;
+    const noted = history.some(isRestoredNote);
+    if (gone && !noted) {
+      await guard.write(task, tx =>
+        tx.steps.append({
+          taskId: task.id,
+          agent: 'system',
+          payload: { type: 'message', role: 'user', text: PROMPTS.workspaceRestored, kind: 'note' },
+        }),
+      );
+    }
+    const sandbox = await sandboxes.create(task.id);
+    if (gone || restoreIncomplete(history)) await this.restoreFiles(task, sandbox);
+    return sandbox;
+  }
+
   private async copyInputs(task: Task, sandbox: Sandbox): Promise<void> {
     for (const f of await this.deps.files.listForTask(task.id, 'input')) {
       await sandbox.writeFile(`inputs/${inputName(f)}`, await this.deps.fileStore.getBytes(f.storageKey));
     }
   }
 
-  private async head(task: Task): Promise<ChatMessage[]> {
-    const inputs = await this.deps.files.listForTask(task.id, 'input');
-    const list = inputs.length ? inputs.map(f => `- inputs/${inputName(f)} (${f.size} bytes)`).join('\n') : 'none';
-    return [
-      { role: 'system', content: PROMPTS.plannerPlanSystem },
-      { role: 'user', content: `Input files in /workspace:\n${list}` },
-    ];
+  /**
+   * Входные и выданные файлы — на их прежние пути. Пропускается только файл, которого не вернуть насовсем (объекта
+   * нет в хранилище, песочница отказала в самом файле). Любой другой сбой — сеть, хранилище, docker — бросается: job
+   * повторится и вернёт файлы снова. Пропуск при временном сбое оставил бы рабочую папку без отчёта, исполнитель
+   * создал бы его заново, и upsertOutput затёр бы хороший объект.
+   */
+  private async restoreFiles(task: Task, sandbox: Sandbox): Promise<void> {
+    for (const f of await this.deps.files.listForTask(task.id)) {
+      const path = f.kind === 'input' ? `inputs/${inputName(f)}` : f.path;
+      try {
+        await sandbox.writeFile(path, await this.deps.fileStore.getBytes(f.storageKey));
+      } catch (err) {
+        if (!unrestorable(err)) throw err;
+        this.deps.logger.warn('could not restore a file of the task', {
+          taskId: task.id,
+          path,
+          error: errorMessage(err),
+        });
+      }
+    }
   }
 
-  async review(taskId: string): Promise<StageOutcome> {
-    const startedAt = this.deps.clock.now();
-    try {
-      return await this.reviewLoop(taskId);
-    } finally {
-      await this.deps.guard.addActiveTime(taskId, startedAt);
-    }
+  /**
+   * Первый цикл: входные файлы. Новый цикл: вместо истории инструментов — прошлые запросы и ответы и файлы рабочей
+   * папки; текущее сообщение идёт следом как первый шаг цикла.
+   */
+  private async head(task: Task, sandbox: Sandbox): Promise<ChatMessage[]> {
+    const inputs = await this.deps.files.listForTask(task.id, 'input');
+    const list = inputs.length ? inputs.map(f => `- inputs/${inputName(f)} (${f.size} bytes)`).join('\n') : 'none';
+    const system: ChatMessage = { role: 'system', content: PROMPTS.plannerPlanSystem };
+    if (task.cycle === 1) return [system, { role: 'user', content: `Input files in /workspace:\n${list}` }];
+    const hint = await workspaceFileHint(sandbox);
+    const context = [
+      'This task continues earlier work. The conversation so far, oldest first:',
+      '',
+      ...earlierWork(await this.deps.steps.list(task.id)),
+      PROMPTS.continued,
+      '',
+      `Input files in /workspace:\n${list}`,
+      '',
+      'Files in /workspace:',
+      ...(hint.files.length ? hint.files.map(path => `- ${path}`) : ['none']),
+      ...(hint.truncated ? [`(the list is cut at ${WORKSPACE_HINT_FILES} files; more exist)`] : []),
+      '',
+      'The next message is the current request.',
+    ].join('\n');
+    return [system, { role: 'user', content: context }];
+  }
+
+  review(taskId: string): Promise<StageOutcome> {
+    return this.deps.guard.timed(taskId, () => this.reviewLoop(taskId));
   }
 
   private async reviewLoop(taskId: string): Promise<StageOutcome> {
@@ -345,6 +479,7 @@ export class PlannerStage {
     if (first.kind === 'finalizing') return { next: 'finalize' };
     if (first.kind === 'limit') return guard.stopForLimitOrStop(first.task, first.reason);
     let task = first.task;
+    const { cycle } = task;
     if (task.status === 'waiting_user') {
       // Пауза другой стадии или ответа ещё нет: этот job устарел или повторён (как у исполнителя и планирования).
       if (task.currentKind !== 'review') return { next: 'wait_user' };
@@ -368,7 +503,7 @@ export class PlannerStage {
         : reviewTools({ canRevise: sub.attempts < config.limits.maxRevisions, canReplan });
 
     for (let i = 0; i < config.limits.stepsPerJob; i++) {
-      const verdict = await guard.check(taskId);
+      const verdict = await guard.check(taskId, cycle);
       if (verdict.kind === 'stop') return { next: 'stop' };
       if (verdict.kind === 'finalizing') return { next: 'finalize' };
       if (verdict.kind === 'limit') return guard.stopForLimitOrStop(verdict.task, verdict.reason);
@@ -385,7 +520,7 @@ export class PlannerStage {
    * упавшая остаётся failed и после replan, а currentKind = 'review' стоит ровно до решения.
    */
   private async underReview(task: Task): Promise<Subtask | undefined> {
-    const subs = await this.deps.subtasks.list(task.id);
+    const subs = cycleSubtasks(await this.deps.subtasks.list(task.id), task);
     const reviewing = subs.find(s => s.status === 'reviewing');
     if (reviewing) return reviewing;
     return task.currentKind === 'review' ? subs.filter(s => s.status === 'failed').at(-1) : undefined;
@@ -398,7 +533,7 @@ export class PlannerStage {
    * исполнителя после решения (revise) значит, что оно применено, — иначе следующая проверка повторила бы его.
    */
   private async reviewSteps(task: Task, sub: Subtask): Promise<{ scope: Step[]; history: Step[] }> {
-    const all = await this.deps.steps.list(task.id);
+    const all = currentCycle(await this.deps.steps.list(task.id));
     const question = questionsAnswered(all);
     const answersOurs = (s: Step) => {
       const q = question.get(s.seq);
@@ -426,12 +561,14 @@ export class PlannerStage {
       if (trailingSilent([...history, llmStep]) >= SILENT_LIMIT) {
         return { outcome: await this.noDecision(task, sub), sandbox };
       }
-      await this.deps.steps.append({
-        taskId: task.id,
-        subtaskId: sub.id,
-        agent: 'planner',
-        payload: { type: 'message', role: 'user', text: PROMPTS.decide, kind: 'note' },
-      });
+      await this.deps.guard.write(task, tx =>
+        tx.steps.append({
+          taskId: task.id,
+          subtaskId: sub.id,
+          agent: 'planner',
+          payload: { type: 'message', role: 'user', text: PROMPTS.decide, kind: 'note' },
+        }),
+      );
       return { sandbox };
     }
 
@@ -446,7 +583,11 @@ export class PlannerStage {
       validateControl: async control => {
         if (control.kind === 'finish') return finishFilesProblem(sandbox, control.files);
         return control.kind === 'replan'
-          ? validateReplan(control.changes, await this.deps.subtasks.list(task.id), this.deps.config.limits.maxSubtasks)
+          ? validateReplan(
+              control.changes,
+              cycleSubtasks(await this.deps.subtasks.list(task.id), task),
+              this.deps.config.limits.maxSubtasks,
+            )
           : null;
       },
     });
@@ -485,12 +626,12 @@ export class PlannerStage {
   private async noDecision(task: Task, sub: Subtask): Promise<StageOutcome> {
     if (sub.status === 'reviewing') return this.accept(task, sub);
     const { guard } = this.deps;
-    const moved = await guard.unlessStopped(task.id, () => guard.toFinalizing(task.id, 'running'));
+    const moved = await guard.unlessStopped(task.id, () => guard.toFinalizing(task, 'running'));
     return moved ? { next: 'finalize' } : { next: 'stop' };
   }
 
   private async reviewHead(task: Task, sub: Subtask, canReplan: boolean): Promise<ChatMessage[]> {
-    const subs = await this.deps.subtasks.list(task.id);
+    const subs = cycleSubtasks(await this.deps.subtasks.list(task.id), task);
     const { maxRevisions } = this.deps.config.limits;
     const report = sub.report
       ? [
@@ -500,7 +641,7 @@ export class PlannerStage {
         ]
       : ['No report.'];
     const context = [
-      `Task: ${task.prompt}`,
+      requestBrief(task, await this.deps.steps.list(task.id)),
       '',
       'Plan:',
       ...subs.map(s => `[idx ${s.idx}] (${s.status}) ${s.goal}`),
@@ -526,7 +667,9 @@ export class PlannerStage {
    */
   private async commit(task: Task, act: (tx: TxRepositories) => Promise<StageOutcome>): Promise<StageOutcome> {
     const done = await this.deps.guard.unlessStopped(task.id, () =>
-      this.deps.uow.run(async tx => ((await tx.tasks.get(task.id))?.status === 'running' ? act(tx) : undefined)),
+      this.deps.guard.write(task, async tx =>
+        (await tx.tasks.get(task.id))?.status === 'running' ? act(tx) : undefined,
+      ),
     );
     return done?.value ?? { next: 'stop' };
   }

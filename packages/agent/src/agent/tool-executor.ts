@@ -6,12 +6,12 @@ import {
   type SandboxProvider,
   type SearchProvider,
   type Step,
-  type StepLog,
   type Task,
   type ToolCall,
 } from '@agent/core';
 import type { Config } from '@agent/shared';
 import { runToolCall, type Tool, type ToolContext, type ToolControl, type ToolOutcome } from '../tools';
+import { StaleJobError, type TaskGuard } from './guard';
 
 export interface ExecutedCall {
   call: ToolCall;
@@ -26,8 +26,14 @@ const recoverable = (err: unknown) =>
 
 export class ToolExecutor {
   constructor(
-    private readonly deps: { steps: StepLog; sandboxes: SandboxProvider; search: SearchProvider; config: Config },
+    private readonly deps: { guard: TaskGuard; sandboxes: SandboxProvider; search: SearchProvider; config: Config },
   ) {}
+
+  /** Для job'а задачи `task` стоп вызван только тем, что задачу открыли заново: без цикла check её не останавливает. */
+  private async reopened(task: Task): Promise<boolean> {
+    const { guard } = this.deps;
+    return (await guard.check(task.id, task.cycle)).kind === 'stop' && (await guard.check(task.id)).kind !== 'stop';
+  }
 
   /** Если execute бросит ошибку посреди хода, записанные результаты остаются; вызовы без ответа чинит toMessages (`[no result recorded]`), а job повторит план 3d. */
   async execute(input: {
@@ -58,10 +64,15 @@ export class ToolExecutor {
           search: this.deps.search,
           limits: this.deps.config.limits,
         });
+        // Задачу открыли заново, пока шли прошлые вызовы хода: новая команда может идти до 30 минут. Остановку без
+        // открытия (отмену) стадия разбирает сама, как и раньше: стоп из-за одного цикла виден по второй проверке.
+        if (await this.reopened(task)) throw new StaleJobError(task.id);
         try {
           outcome = await runToolCall(tools, call, ctx());
         } catch (err) {
           if (!recoverable(err)) throw err;
+          // Задачу остановили или открыли заново, а песочницу убрали: job уже не ведёт задачу, поднимать её незачем.
+          if ((await this.deps.guard.check(task.id, task.cycle)).kind === 'stop') throw new StaleJobError(task.id);
           sandbox = await this.deps.sandboxes.create(task.id);
           outcome = await runToolCall(tools, call, ctx());
         }
@@ -71,22 +82,25 @@ export class ToolExecutor {
         }
         if (outcome.control) control = outcome.control;
       }
-      const step = await this.deps.steps.append({
-        taskId: task.id,
-        subtaskId,
-        agent: role,
-        payload: {
-          type: 'tool_result',
-          toolCallId: call.id,
-          name: call.name,
-          ok: outcome.ok,
-          output: outcome.output,
-          ...(outcome.fullOutputPath ? { fullOutputPath: outcome.fullOutputPath } : {}),
-          ...(outcome.error ? { error: outcome.error } : {}),
-          ...(outcome.screenshotPath ? { screenshotPath: outcome.screenshotPath } : {}),
-          ...(outcome.control ? { control: { ...outcome.control } } : {}),
-        },
-      });
+      const finished = outcome;
+      const step = await this.deps.guard.write(task, tx =>
+        tx.steps.append({
+          taskId: task.id,
+          subtaskId,
+          agent: role,
+          payload: {
+            type: 'tool_result',
+            toolCallId: call.id,
+            name: call.name,
+            ok: finished.ok,
+            output: finished.output,
+            ...(finished.fullOutputPath ? { fullOutputPath: finished.fullOutputPath } : {}),
+            ...(finished.error ? { error: finished.error } : {}),
+            ...(finished.screenshotPath ? { screenshotPath: finished.screenshotPath } : {}),
+            ...(finished.control ? { control: { ...finished.control } } : {}),
+          },
+        }),
+      );
       executed.push({ call, outcome, step });
     }
     return { executed, ...(control ? { control } : {}), sandbox };

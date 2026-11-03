@@ -1,5 +1,6 @@
 import { CallQueue, NotFoundError, sequential, type TxRepositories, type UnitOfWork } from '@agent/core';
 import {
+  guardedState,
   InMemoryCreditLedger,
   InMemoryFileRepository,
   InMemoryStepLog,
@@ -44,6 +45,7 @@ export class InMemoryUnitOfWork implements UnitOfWork {
         queue.run(async () => {
           if (!memory.users.has(userId)) throw new NotFoundError('user', userId);
         }),
+      lockTask: taskId => queue.run(async () => structuredClone(guardedState(this.deps, token).tasks.get(taskId))),
     };
     const mark = { active: true, token };
     try {

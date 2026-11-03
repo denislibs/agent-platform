@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { act, fireEvent, screen, within } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 import type { StepDto, TaskStatus } from '@agent/shared';
@@ -46,6 +46,269 @@ async function open(
   await until(() => FakeEventSource.all.length > 0);
   return env;
 }
+
+const user = { agent: 'user', subtaskId: null } as const;
+const answerStep = (seq: number, text: string, files: string[] = []) =>
+  step(seq, { type: 'message', role: 'assistant', text, kind: 'answer', files }, { agent: 'planner', subtaskId: null });
+const doneTask = taskDetail({ status: 'done', result: 'First answer', lastSeq: 3 });
+const reopened = taskDetail({
+  status: 'planning',
+  cycle: 2,
+  lastSeq: 5,
+  updatedAt: '2026-11-02T10:00:05.000Z',
+});
+
+/** Законченная задача с первым циклом в ленте; поток закрыт. */
+async function finished(responses: Array<ReturnType<typeof taskResponse>>, extra: Parameters<typeof setup>[0] = {}) {
+  const env = await open(responses, extra);
+  emit(prompt, answerStep(2, 'First answer'), status(3, 'finalizing', 'done'));
+  act(() => FakeEventSource.last.emit('end', { status: 'done' }));
+  await screen.findByText('Task completed');
+  return env;
+}
+
+const composer = () => screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement;
+
+test('a finished task takes a follow-up: the request shows at once, the stream reopens, focus goes to main', async () => {
+  let card = doneTask;
+  const { calls, state } = await finished([], {
+    'GET /api/tasks/task-1': () => json(taskResponse({ task: card })),
+    'POST /api/tasks/task-1/messages': () => {
+      card = reopened;
+      return json({ task: reopened }, 202);
+    },
+  });
+  expect(composer().placeholder).toBe('Ask for changes or a follow-up');
+  await userEvent.type(composer(), 'Add a date filter{Enter}');
+
+  await screen.findByText('Add a date filter');
+  expect(calls.find(c => c.method === 'POST')?.body).toEqual({ text: 'Add a date filter' });
+  await until(() => FakeEventSource.last.url === '/api/tasks/task-1/events?after=3');
+  // Итог прошлого цикла остаётся в ленте, а статус экрана — уже нового.
+  expect(screen.getByText('First answer')).toBeTruthy();
+  expect(screen.queryByText('Task completed')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy();
+  expect(screen.queryByRole('textbox', { name: 'Message' })).toBeNull();
+  await until(() => document.activeElement?.id === 'main');
+  await until(() => state.tasks.items.value[0]?.status === 'planning');
+});
+
+test('every request stays in the feed with its answer and its files; the plan and the badge are of the last cycle', async () => {
+  const report = fileDto({ id: 'f1', path: 'outputs/report.md' });
+  const chart = fileDto({ id: 'f2', path: 'outputs/chart.png' });
+  await open([
+    taskResponse({
+      task: taskDetail({ status: 'done', result: 'Second answer', cycle: 2, lastSeq: 8 }),
+      files: [report, chart],
+      subtasks: [
+        subtask(0, { goal: 'Old plan', status: 'accepted' }),
+        subtask(1, { goal: 'New plan', status: 'accepted', cycle: 2 }),
+      ],
+    }),
+  ]);
+  emit(
+    prompt,
+    answerStep(2, 'First answer', ['outputs/report.md']),
+    status(3, 'finalizing', 'done'),
+    status(4, 'done', 'planning'),
+    step(5, { type: 'message', role: 'user', text: 'Add a chart' }, user),
+    answerStep(6, 'Second answer', ['outputs/report.md', 'outputs/chart.png']),
+    status(7, 'finalizing', 'done'),
+  );
+  await screen.findByText('Second answer');
+  const main = document.body.textContent ?? '';
+  const order = ['Find three suppliers', 'First answer', 'Add a chart', 'Second answer'].map(t => main.indexOf(t));
+  expect(order).toEqual(order.toSorted((a, b) => a - b));
+  expect(order.every(at => at >= 0)).toBe(true);
+  expect(screen.getAllByRole('link', { name: /^report\.md/ })).toHaveLength(2);
+  expect(screen.getAllByRole('link', { name: /^chart\.png/ })).toHaveLength(1);
+  expect(screen.getAllByText('Task completed')).toHaveLength(1);
+  expect(screen.getByText('New plan')).toBeTruthy();
+  expect(screen.queryByText('Old plan')).toBeNull();
+});
+
+test('an earlier cycle that did not reach an answer says how it ended', async () => {
+  await open([taskResponse({ task: taskDetail({ status: 'running', cycle: 3, lastSeq: 9 }) })]);
+  emit(
+    prompt,
+    status(2, 'running', 'failed', 'the sandbox crashed'),
+    status(3, 'failed', 'planning'),
+    step(4, { type: 'message', role: 'user', text: 'Try again' }, user),
+    status(5, 'planning', 'cancelled'),
+    status(6, 'cancelled', 'planning'),
+    step(7, { type: 'message', role: 'user', text: 'And again' }, user),
+  );
+  await screen.findByText('And again');
+  expect(screen.getByText('the sandbox crashed')).toBeTruthy();
+  expect(screen.getByText('Try again')).toBeTruthy();
+  expect(screen.getByText('Stopped')).toBeTruthy();
+});
+
+test.each([
+  ['insufficient_credits', 402, 'not enough credits to start a task'],
+  ['too_many_active_tasks', 429, 'at most 2 active tasks per user'],
+] as const)('%s keeps the text in the field and says why', async (code, httpStatus, message) => {
+  await finished([taskResponse({ task: doneTask })], {
+    'POST /api/tasks/task-1/messages': json({ error: { code, message } }, httpStatus),
+  });
+  await userEvent.type(composer(), 'More{Enter}');
+  await screen.findByText('The message was not sent');
+  screen.getByText(message);
+  expect(composer().value).toBe('More');
+  expect(composer().disabled).toBe(false);
+  expect(screen.getByText('Task completed')).toBeTruthy();
+});
+
+test('a task that changed meanwhile: 409 says so and the screen catches up', async () => {
+  let card = doneTask;
+  await finished([], {
+    'GET /api/tasks/task-1': () => json(taskResponse({ task: card })),
+    'POST /api/tasks/task-1/messages': () => {
+      card = reopened;
+      return json({ error: { code: 'conflict', message: 'the task is not waiting for an answer' } }, 409);
+    },
+  });
+  await userEvent.type(composer(), 'More{Enter}');
+  await screen.findByText('The task has changed');
+  await screen.findByRole('button', { name: 'Stop' });
+  await until(() => FakeEventSource.last.url === '/api/tasks/task-1/events?after=3');
+});
+
+/** happy-dom не умеет прокручивать: запоминаем, к чему и как просили. */
+const scrolled: Array<{ text: string | null; options: unknown }> = [];
+const realScroll = Element.prototype.scrollIntoView;
+const realMatchMedia = window.matchMedia;
+beforeEach(() => {
+  scrolled.length = 0;
+  Element.prototype.scrollIntoView = function (this: Element, options?: boolean | ScrollIntoViewOptions) {
+    scrolled.push({ text: this.textContent, options });
+  };
+});
+afterEach(() => {
+  Element.prototype.scrollIntoView = realScroll;
+  window.matchMedia = realMatchMedia;
+});
+
+test('two Enters in one tick send once; a refusal keeps the draft and returns focus to the field', async () => {
+  const { calls } = await finished([taskResponse({ task: doneTask })], {
+    'POST /api/tasks/task-1/messages': json(
+      { error: { code: 'insufficient_credits', message: 'not enough credits to start a task' } },
+      402,
+    ),
+  });
+  await userEvent.type(composer(), 'More');
+  act(() => {
+    fireEvent.keyDown(composer(), { key: 'Enter' });
+    fireEvent.keyDown(composer(), { key: 'Enter' });
+  });
+  // Браузер снимает фокус с поля, которое стало недоступным на время отправки.
+  document.getElementById('main')?.focus();
+  expect(document.activeElement?.id).toBe('main');
+  await screen.findByText('The message was not sent');
+  await until(() => document.activeElement === composer());
+  expect(calls.filter(c => c.method === 'POST')).toHaveLength(1);
+  expect(composer().value).toBe('More');
+});
+
+test('a new cycle scrolls its request into view, once; smooth unless the user prefers reduced motion', async () => {
+  let card = doneTask;
+  await finished([], {
+    'GET /api/tasks/task-1': () => json(taskResponse({ task: card })),
+    'POST /api/tasks/task-1/messages': () => {
+      card = reopened;
+      return json({ task: reopened }, 202);
+    },
+  });
+  expect(scrolled).toHaveLength(0);
+  await userEvent.type(composer(), 'Add a date filter{Enter}');
+  await until(() => scrolled.length === 1);
+  await until(() => FakeEventSource.last.url === '/api/tasks/task-1/events?after=3');
+  expect(scrolled).toEqual([{ text: 'Add a date filter', options: { block: 'start', behavior: 'smooth' } }]);
+});
+
+test('reduced motion scrolls to the new request without animation', async () => {
+  window.matchMedia = ((query: string) => ({
+    matches: query.includes('prefers-reduced-motion'),
+    media: query,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  })) as unknown as typeof window.matchMedia;
+  let card = doneTask;
+  await finished([], {
+    'GET /api/tasks/task-1': () => json(taskResponse({ task: card })),
+    'POST /api/tasks/task-1/messages': () => {
+      card = reopened;
+      return json({ task: reopened }, 202);
+    },
+  });
+  await userEvent.type(composer(), 'Add a date filter{Enter}');
+  await until(() => scrolled.length === 1);
+  expect(scrolled[0]?.options).toEqual({ block: 'start', behavior: 'auto' });
+});
+
+test('opening a task that already has several cycles does not scroll', async () => {
+  await open([taskResponse({ task: taskDetail({ status: 'done', result: 'Second answer', cycle: 2, lastSeq: 8 }) })]);
+  emit(
+    prompt,
+    answerStep(2, 'First answer'),
+    status(3, 'finalizing', 'done'),
+    status(4, 'done', 'planning'),
+    step(5, { type: 'message', role: 'user', text: 'Add a chart' }, user),
+    answerStep(6, 'Second answer'),
+    status(7, 'finalizing', 'done'),
+  );
+  await screen.findByText('Second answer');
+  expect(scrolled).toHaveLength(0);
+});
+
+test('a task reopened from another tab: the card comes before the feed; the scroll waits for the new cycle', async () => {
+  let card = taskDetail({ status: 'done', result: 'First answer', lastSeq: 5 });
+  await open([], {
+    'GET /api/tasks/task-1': () => json(taskResponse({ task: card })),
+    // Другая вкладка продолжила задачу раньше: отказ перечитывает карточку, она уже второго цикла.
+    'POST /api/tasks/task-1/messages': () => {
+      card = taskDetail({ status: 'running', cycle: 2, lastSeq: 8 });
+      return json({ error: { code: 'conflict', message: 'the task is not waiting for an answer' } }, 409);
+    },
+  });
+  emit(
+    prompt,
+    ...toolStep(2, 'web_search', { query: 'a' }),
+    answerStep(4, 'First answer'),
+    status(5, 'finalizing', 'done'),
+  );
+  act(() => FakeEventSource.last.emit('end', { status: 'done' }));
+  const earlier = await screen.findByRole('button', { name: 'Searched 1 query' });
+  expect(earlier.getAttribute('aria-expanded')).toBe('false');
+  await userEvent.type(composer(), 'More{Enter}');
+  // Карточка уже второго цикла, а его шагов в ленте ещё нет: прокручивать некуда.
+  await until(() => FakeEventSource.last.url === '/api/tasks/task-1/events?after=5');
+  await screen.findByRole('button', { name: 'Stop' });
+  expect(scrolled).toHaveLength(0);
+
+  // Лента догнала карточку (поток открылся заново): запрос нового цикла на экране, шаги раскрыты.
+  emit(
+    status(6, 'done', 'planning'),
+    step(7, { type: 'message', role: 'user', text: 'Add a chart' }, user),
+    ...toolStep(8, 'web_search', { query: 'b' }),
+  );
+  await until(() => scrolled.length === 1);
+  expect(scrolled[0]?.text).toBe('Add a chart');
+  const current = await screen.findByRole('button', { name: '1 steps' });
+  expect(current.getAttribute('aria-expanded')).toBe('true');
+});
+
+test.each(['failed', 'cancelled'] as const)('a %s task also offers the composer', async taskStatus => {
+  await open([taskResponse({ task: taskDetail({ status: taskStatus }) })]);
+  expect(composer().disabled).toBe(false);
+});
+
+test('the stop dialog says the task can be continued', async () => {
+  await open([taskResponse({ task: taskDetail({ status: 'running' }) })]);
+  await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
+  const dialog = await screen.findByRole('alertdialog');
+  within(dialog).getByText('The agent stops where it is. You can send it a new message to continue.');
+});
 
 test('a running task shows the plan, the steps as they stream and the latest tool on the computer', async () => {
   await open([

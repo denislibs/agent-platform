@@ -1,7 +1,26 @@
-import type { Role, Step } from '@agent/core';
+import type { Role, Step, Subtask, Task } from '@agent/core';
+import { currentCycle, isReopenStep } from '@agent/shared';
 import type { z } from 'zod';
 
-/** Разбор ленты шагов, общий для стадий (исполнитель, планирование, проверка). */
+/**
+ * Разбор ленты шагов, общий для стадий (исполнитель, планирование, проверка). Всё, что смотрит назад по ленте, не
+ * выходит за шаг открытия задачи заново: стадии читают currentCycle, а хвостовые счётчики на этом шаге останавливаются.
+ */
+
+/** Подзадачи текущего цикла работы. */
+export const cycleSubtasks = (subtasks: readonly Subtask[], task: Pick<Task, 'cycle'>): Subtask[] =>
+  subtasks.filter(s => s.cycle === task.cycle);
+
+/**
+ * Что просят сейчас, для моделей исполнителя, проверки и финального ответа. tasks.prompt — всегда первый запрос,
+ * поэтому в новом цикле к нему добавляется первое сообщение пользователя этого цикла.
+ */
+export function requestBrief(task: Pick<Task, 'cycle' | 'prompt'>, steps: readonly Step[]): string {
+  if (task.cycle === 1) return `Task: ${task.prompt}`;
+  const first = currentCycle(steps).find(s => s.agent === 'user' && s.payload.type === 'message');
+  const request = first?.payload.type === 'message' ? first.payload.text : '';
+  return [`Original task: ${task.prompt}`, `Current request: ${request}`].join('\n');
+}
 
 export const isNote = (s: Step) => s.payload.type === 'message' && s.payload.kind === 'note';
 /** Шаги сжатия контекста (вызов-конспект и сам конспект): не ход роли, в счётчиках не участвуют. */
@@ -67,6 +86,8 @@ export function questionsAnswered(steps: readonly Step[]): Map<number, Step> {
   const byMessage = new Map<number, Step>();
   let asked: Step | undefined;
   for (const s of steps) {
+    // Новый цикл: вопрос прошлого цикла закрыт, сообщения этого цикла к нему не относятся.
+    if (isReopenStep(s)) asked = undefined;
     if (s.payload.type === 'tool_result' && s.payload.control?.kind === 'ask_user') asked = s;
     else if (asked && s.subtaskId === null && s.payload.type === 'message') byMessage.set(s.seq, asked);
   }

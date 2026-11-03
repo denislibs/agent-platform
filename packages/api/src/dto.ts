@@ -58,11 +58,13 @@ export const toTaskDetail = (t: Task): TaskDetail => ({
   result: t.result,
   tokensUsed: t.tokensUsed,
   lastSeq: t.lastSeq,
+  cycle: t.cycle,
 });
 
 export const toSubtaskDto = (s: Subtask): SubtaskDto => ({
   id: s.id,
   idx: s.idx,
+  cycle: s.cycle,
   goal: s.goal,
   context: s.context,
   doneCriteria: s.doneCriteria,

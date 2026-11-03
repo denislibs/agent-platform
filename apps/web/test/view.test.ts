@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { SUBTASK_STATUSES, TASK_STATUSES } from '@agent/shared';
+import { SUBTASK_STATUSES, TASK_STATUSES, type StepDto } from '@agent/shared';
 import {
   filesLost,
   isWorking,
@@ -11,11 +11,16 @@ import {
   workingLabel,
 } from '../src/view/status.ts';
 import {
+  answerOf,
   computerEntries,
   conversation,
+  cycleEnd,
+  cycleSeconds,
+  cycleStart,
   describeTool,
   failureReason,
   pendingQuestion,
+  requestOf,
   summarize,
   toolEntries,
 } from '../src/view/timeline.ts';
@@ -84,6 +89,8 @@ describe('status mapping (roadmap notes of plan 5)', () => {
     expect(stopReasonText('constructor')).toBe('it hit a limit');
   });
 });
+
+const at = (iso: string, s: StepDto): StepDto => ({ ...s, createdAt: iso });
 
 describe('timeline', () => {
   test('tool calls pair the model arguments with the result by toolCallId', () => {
@@ -174,6 +181,53 @@ describe('timeline', () => {
       askSeq: null,
       question: 'The agent needs your input to continue.',
     });
+  });
+
+  test('a cycle has its own request, dialogue and answer', () => {
+    const user = { agent: 'user', subtaskId: null } as const;
+    const reopen = { ...status(5, 'done', 'planning'), createdAt: '2026-11-02T11:00:00.000Z' };
+    const cycle = [
+      reopen,
+      step(6, { type: 'message', role: 'user', text: 'Add a filter' }, user),
+      ...toolStep(7, 'ask_user', { question: 'Which?' }, { control: { kind: 'ask_user', question: 'Which?' } }),
+      status(9, 'running', 'waiting_user'),
+      step(10, { type: 'message', role: 'user', text: 'Dates' }, user),
+      step(11, { type: 'message', role: 'assistant', text: 'Filtered', kind: 'answer', files: ['outputs/a.md'] }),
+      { ...status(12, 'finalizing', 'done'), createdAt: '2026-11-02T11:00:30.000Z' },
+    ];
+    expect(requestOf(cycle)).toBe('Add a filter');
+    expect(conversation(cycle)).toEqual([
+      { seq: 8, role: 'agent', text: 'Which?' },
+      { seq: 10, role: 'user', text: 'Dates' },
+    ]);
+    expect(answerOf(cycle)).toEqual({ text: 'Filtered', files: ['outputs/a.md'] });
+    expect(cycleEnd(cycle)).toBeNull();
+    expect(cycleSeconds(cycle)).toBe(30);
+    expect(cycleStart(cycle)).toBe('2026-11-02T11:00:00.000Z');
+  });
+
+  test('a cycle ends at its terminal status: a backfilled answer written much later does not stretch it', () => {
+    const legacy = [
+      at('2026-11-02T11:00:00.000Z', status(5, 'done', 'planning')),
+      at('2026-11-02T11:00:30.000Z', status(8, 'finalizing', 'done')),
+      at(
+        '2026-11-05T11:00:00.000Z',
+        step(9, { type: 'message', role: 'assistant', text: 'Old answer', kind: 'answer' }),
+      ),
+    ];
+    expect(cycleSeconds(legacy)).toBe(30);
+    // Без конечного статуса цикл идёт до последнего шага.
+    expect(cycleSeconds(legacy.slice(0, 1).concat(legacy.slice(2)))).toBe(3 * 24 * 3600);
+  });
+
+  test('a cycle without an answer: how it ended; the first cycle has no reopen step', () => {
+    expect(answerOf([status(2, 'running', 'failed', 'boom')])).toBeNull();
+    expect(cycleEnd([status(2, 'running', 'failed', 'boom')])).toEqual({ status: 'failed', reason: 'boom' });
+    expect(cycleEnd([status(2, 'running', 'cancelled')])).toEqual({ status: 'cancelled', reason: null });
+    expect(cycleStart([status(1, 'queued', 'planning')])).toBeNull();
+    expect(cycleStart([])).toBeNull();
+    expect(cycleSeconds([])).toBe(0);
+    expect(requestOf([])).toBeNull();
   });
 
   test('the failure reason comes from the status step', () => {

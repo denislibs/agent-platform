@@ -1,7 +1,52 @@
 import { describe, expect, test } from 'bun:test';
-import { StepPayloadSchema, SubtaskContractSchema, SubtaskReportSchema, STEP_TYPES } from '@agent/shared';
+import {
+  currentCycle,
+  isReopenStep,
+  splitCycles,
+  StepPayloadSchema,
+  SubtaskContractSchema,
+  SubtaskReportSchema,
+  STEP_TYPES,
+  type StepPayload,
+} from '@agent/shared';
+
+const of = (payload: StepPayload) => ({ payload });
+const request = of({ type: 'message', role: 'user', text: 'first' });
+const started = of({ type: 'status', from: 'queued', to: 'planning' });
+const resumed = of({ type: 'status', from: 'waiting_user', to: 'planning' });
+const reopened = of({ type: 'status', from: 'done', to: 'planning' });
+const followUp = of({ type: 'message', role: 'user', text: 'second' });
+
+describe('cycles of work', () => {
+  test('only a step from a terminal status to planning opens a new cycle', () => {
+    for (const from of ['done', 'failed', 'cancelled'] as const)
+      expect(isReopenStep(of({ type: 'status', from, to: 'planning' }))).toBe(true);
+    for (const step of [request, started, resumed]) expect(isReopenStep(step)).toBe(false);
+  });
+
+  test('currentCycle is the tail from the latest reopen; without one, the whole feed', () => {
+    expect(currentCycle([request, started, resumed])).toEqual([request, started, resumed]);
+    expect(currentCycle([request, started, reopened, followUp])).toEqual([reopened, followUp]);
+    expect(currentCycle([request, reopened, followUp, reopened])).toEqual([reopened]);
+    expect(currentCycle([])).toEqual([]);
+  });
+
+  test('splitCycles keeps every step, oldest cycle first', () => {
+    expect(splitCycles([request, started, reopened, followUp, reopened])).toEqual([
+      [request, started],
+      [reopened, followUp],
+      [reopened],
+    ]);
+    expect(splitCycles([])).toEqual([[]]);
+  });
+});
 
 describe('StepPayloadSchema', () => {
+  test('an answer keeps its text and delivered files', () => {
+    const answer = { type: 'message', role: 'assistant', text: 'Done', kind: 'answer', files: ['outputs/a.md'] };
+    expect(StepPayloadSchema.parse(answer)).toEqual(answer as never);
+  });
+
   test('accepts every step type', () => {
     const samples = [
       { type: 'message', role: 'user', text: 'Find suppliers' },

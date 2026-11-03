@@ -44,7 +44,8 @@ const config = loadConfig({
   SWEEP_EVERY_MS: '3600000',
   SANDBOX_NAMESPACE: 'test',
 });
-// Сценарий агента: план, вопрос пользователю, файл, отчёт, приёмка, ответ с файлом.
+// Сценарий агента: план, вопрос пользователю, файл, отчёт, приёмка, ответ с файлом; затем продолжение беседы:
+// новый план, тот же файл в новой версии, второй ответ.
 const llm = new ScriptedLlm([
   calls(['create_plan', { subtasks: [{ goal: 'Write the greeting', done_criteria: 'hello.md exists' }] }]),
   calls(['ask_user', { question: 'Which greeting?' }]),
@@ -52,6 +53,11 @@ const llm = new ScriptedLlm([
   calls(['report', { summary: 'written', files: ['outputs/hello.md'] }]),
   calls(['accept', {}]),
   calls(['finish', { answer: 'Here is **your file**.', files: ['outputs/hello.md'] }]),
+  calls(['create_plan', { subtasks: [{ goal: 'Shorten the greeting', done_criteria: 'hello.md is short' }] }]),
+  calls(['file_write', { path: 'outputs/hello.md', content: '# Hi' }]),
+  calls(['report', { summary: 'shortened', files: ['outputs/hello.md'] }]),
+  calls(['accept', {}]),
+  calls(['finish', { answer: 'Now it is **shorter**.', files: ['outputs/hello.md'] }]),
 ]);
 const mailer = new CapturingMailer();
 const container = registerAuth(

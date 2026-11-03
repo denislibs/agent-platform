@@ -51,13 +51,14 @@ export function taskSummary(overrides: Partial<TaskSummary> = {}): TaskSummary {
 }
 
 export function taskDetail(overrides: Partial<TaskDetail> = {}): TaskDetail {
-  return { ...taskSummary(), result: null, tokensUsed: 0, lastSeq: 1, ...overrides };
+  return { ...taskSummary(), result: null, tokensUsed: 0, lastSeq: 1, cycle: 1, ...overrides };
 }
 
 export function subtask(idx: number, overrides: Partial<SubtaskDto> = {}): SubtaskDto {
   return {
     id: `sub-${idx}`,
     idx,
+    cycle: 1,
     goal: `Subtask ${idx}`,
     context: '',
     doneCriteria: 'done',

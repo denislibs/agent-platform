@@ -10,6 +10,7 @@ import {
 } from '@agent/core';
 import type { Config } from '@agent/shared';
 import type { Tool } from '../tools';
+import { StaleJobError } from './guard';
 
 export interface ModelCall {
   task: Task;
@@ -26,6 +27,7 @@ const tokens = (n: number) => (Number.isFinite(n) && n > 0 ? Math.floor(n) : 0);
 /**
  * Единственный путь к модели в агенте: вызов, затем одной транзакцией списание (ledger.record) и шаг llm_call.
  * Порядок записей — пользователь, затем задача (итоги ревью 3a). Транзакция не держится во время вызова.
+ * Задачу открыли заново, пока модель отвечала: вызов оплачен, но шаг не пишется — ему нет места в новом цикле.
  */
 export class ModelGateway {
   constructor(private readonly deps: { llm: Llm; uow: UnitOfWork; config: Config }) {}
@@ -50,6 +52,8 @@ export class ModelGateway {
         tokensOut: usage.outputTokens,
         millicredits,
       });
+      // record уже заблокировал строку задачи: открытие заново либо видно здесь, либо пойдёт после коммита.
+      if ((await tx.tasks.get(task.id))?.cycle !== task.cycle) return undefined;
       return tx.steps.append({
         taskId: task.id,
         subtaskId,
@@ -67,6 +71,7 @@ export class ModelGateway {
         },
       });
     });
+    if (!step) throw new StaleJobError(task.id);
     return { result, step };
   }
 }

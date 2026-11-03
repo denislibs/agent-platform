@@ -60,6 +60,8 @@ const EnvSchema = z.object({
   /** Входной файл, объявленный, но не привязанный к задаче дольше этого, сборщик удаляет вместе с объектом S3. */
   /** Не меньше часа: дольше самого долгого presigned PUT (час), иначе можно удалить файл, который ещё грузится. */
   UPLOAD_TTL_MS: z.coerce.number().int().min(3_600_000).default(86_400_000),
+  /** Сколько остановленная песочница законченной задачи ждёт продолжения беседы, прежде чем сборщик её удалит. */
+  SANDBOX_RETENTION_MS: positiveInt(3_600_000),
   DB_LOCK_TIMEOUT_MS: positiveInt(10_000),
   SANDBOX_IMAGE: z.string().min(1).default('agent-sandbox:dev'),
   SANDBOX_NETWORK: z.string().min(1).default('agent-sandbox'),
@@ -159,6 +161,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       sweepEveryMs: e.SWEEP_EVERY_MS,
       staleTaskMs: e.STALE_TASK_MS,
       uploadTtlMs: e.UPLOAD_TTL_MS,
+      sandboxRetentionMs: e.SANDBOX_RETENTION_MS,
     },
     db: { lockTimeoutMs: e.DB_LOCK_TIMEOUT_MS },
     sandbox: {

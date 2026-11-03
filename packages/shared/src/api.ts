@@ -155,10 +155,14 @@ export const TaskDetailSchema = TaskSummarySchema.extend({
   result: z.string().nullable(),
   tokensUsed: z.number().int(),
   lastSeq: z.number().int(),
+  /** Номер цикла работы: растёт при каждом открытии задачи заново. */
+  cycle: z.number().int(),
 });
 export const SubtaskDtoSchema = z.object({
   id: z.string(),
   idx: z.number().int(),
+  /** Цикл работы, в котором подзадача появилась. */
+  cycle: z.number().int(),
   goal: z.string(),
   context: z.string(),
   doneCriteria: z.string(),

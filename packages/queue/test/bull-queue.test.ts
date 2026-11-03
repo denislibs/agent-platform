@@ -22,18 +22,18 @@ afterAll(async () => {
   await redis.quit();
 });
 
-test('a job carries only taskId and kind, under its key, with retries configured', async () => {
-  await queue.enqueue({ taskId: 'task-a', kind: 'plan' }, 'task-a.plan.1');
+test('a job carries only taskId, kind and cycle, under its key, with retries configured', async () => {
+  await queue.enqueue({ taskId: 'task-a', kind: 'plan', cycle: 1 }, 'task-a.plan.1');
   const job = await raw.getJob('task-a.plan.1');
   expect(job?.name).toBe('plan');
-  expect(job?.data).toEqual({ taskId: 'task-a', kind: 'plan' });
+  expect(job?.data).toEqual({ taskId: 'task-a', kind: 'plan', cycle: 1 });
   expect(job?.opts.attempts).toBe(config.worker.jobAttempts);
   expect(job?.opts.backoff).toMatchObject({ type: 'exponential' });
 });
 
 test('enqueueing the same key twice while it is pending adds one job', async () => {
-  await queue.enqueue({ taskId: 'task-b', kind: 'execute' }, 'task-b.execute.7');
-  await queue.enqueue({ taskId: 'task-b', kind: 'execute' }, 'task-b.execute.7');
+  await queue.enqueue({ taskId: 'task-b', kind: 'execute', cycle: 1 }, 'task-b.execute.7');
+  await queue.enqueue({ taskId: 'task-b', kind: 'execute', cycle: 1 }, 'task-b.execute.7');
   const waiting = await raw.getJobs(['waiting']);
   expect(waiting.filter(j => j.id === 'task-b.execute.7')).toHaveLength(1);
 });

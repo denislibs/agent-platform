@@ -122,10 +122,43 @@ export function repositoryContract(
         expect((await h.tasks.get(task.id))?.status).toBe('queued');
       });
 
-      test('terminal status is final', async () => {
+      test('a terminal task can only be reopened, and the patch starts a new cycle', async () => {
         const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
+        await h.tasks.update(task.id, { partial: true, stopReason: 'credits', result: 'old', finishedAt: new Date() });
         await h.tasks.transition(task.id, 'cancelled');
-        await expect(h.tasks.transition(task.id, 'planning')).rejects.toBeInstanceOf(InvalidTransitionError);
+        await expect(h.tasks.transition(task.id, 'failed')).rejects.toBeInstanceOf(InvalidTransitionError);
+        await expect(h.tasks.transition(task.id, 'running')).rejects.toBeInstanceOf(InvalidTransitionError);
+        const reopened = await h.tasks.transition(
+          task.id,
+          'planning',
+          {
+            currentKind: 'plan',
+            partial: false,
+            stopReason: null,
+            result: null,
+            finishedAt: null,
+            cycle: 2,
+            cycleBaseTokens: 10,
+            cycleBaseActiveMs: 20,
+          },
+          { expectedFrom: 'cancelled' },
+        );
+        expect(reopened).toMatchObject({
+          status: 'planning',
+          currentKind: 'plan',
+          partial: false,
+          stopReason: null,
+          result: null,
+          finishedAt: null,
+          cycle: 2,
+          cycleBaseTokens: 10,
+          cycleBaseActiveMs: 20,
+        });
+      });
+
+      test('a new task is in cycle 1 with zero bases', async () => {
+        const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
+        expect(task).toMatchObject({ cycle: 1, cycleBaseTokens: 0, cycleBaseActiveMs: 0 });
       });
 
       test('expectedFrom matching the current status lets the transition through', async () => {
@@ -469,6 +502,15 @@ export function repositoryContract(
         expect(await h.subtasks.insertMany(task.id, [])).toEqual([]);
       });
 
+      test('insertMany records the current cycle of the task', async () => {
+        const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
+        const [first] = await h.subtasks.insertMany(task.id, [contract('a')]);
+        await h.tasks.update(task.id, { cycle: 3 });
+        const [second] = await h.subtasks.insertMany(task.id, [contract('b')]);
+        expect([first?.idx, first?.cycle, second?.idx, second?.cycle]).toEqual([0, 1, 1, 3]);
+        expect((await h.subtasks.list(task.id)).map(s => s.cycle)).toEqual([1, 3]);
+      });
+
       test('parallel insertMany calls get unique consecutive idx', async () => {
         const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
         const calls = 10;
@@ -808,6 +850,74 @@ export function repositoryContract(
         expect(await h.files.listOutputs(userId, { before: { createdAt: new Date(), id: MALFORMED_ID } })).toEqual([]);
       });
 
+      test('upsertOutput creates the output once and then updates the same row', async () => {
+        const userId = await h.seedUser();
+        const task = await h.tasks.create({ userId, prompt: 'x' });
+        const key = `tasks/${task.id}/outputs/a.md`;
+        const input = { userId, taskId: task.id, path: 'outputs/a.md', storageKey: key, size: 1, mime: 'text/plain' };
+        const first = await h.files.upsertOutput(input);
+        expect(first).toMatchObject({ kind: 'output', path: 'outputs/a.md', size: 1, mime: 'text/plain' });
+        await h.elapse(STALE_GAP_MS);
+        const second = await h.files.upsertOutput({ ...input, size: 2, mime: 'text/markdown' });
+        expect(second).toMatchObject({ id: first.id, size: 2, mime: 'text/markdown' });
+        expect(second.createdAt.getTime()).toBeGreaterThan(first.createdAt.getTime());
+        expect(await h.files.listForTask(task.id, 'output')).toHaveLength(1);
+        const other = await h.files.upsertOutput({ ...input, path: 'outputs/b.md', storageKey: `${key}.b` });
+        expect(other.id).not.toBe(first.id);
+        expect(await h.files.listForTask(task.id, 'output')).toHaveLength(2);
+      });
+
+      test('upsertOutput with an unknown task or user throws NotFoundError and writes nothing', async () => {
+        const userId = await h.seedUser();
+        const task = await h.tasks.create({ userId, prompt: 'x' });
+        const input = {
+          userId,
+          taskId: task.id,
+          path: 'a',
+          storageKey: `k/${crypto.randomUUID()}`,
+          size: 1,
+          mime: 'm',
+        };
+        await expectNotFound(h.files.upsertOutput({ ...input, taskId: crypto.randomUUID() }), 'task');
+        await expectNotFound(h.files.upsertOutput({ ...input, taskId: MALFORMED_ID }), 'task');
+        await expectNotFound(h.files.upsertOutput({ ...input, userId: 'no-such-user' }), 'user');
+        expect(await h.files.listForTask(task.id)).toEqual([]);
+      });
+
+      test('upsertOutput on a key of a foreign user, a foreign task or an input file throws and changes nothing', async () => {
+        const userId = await h.seedUser();
+        const otherUserId = await h.seedUser();
+        const task = await h.tasks.create({ userId, prompt: 'x' });
+        const otherTask = await h.tasks.create({ userId, prompt: 'y' });
+        const key = `tasks/${task.id}/outputs/a.md`;
+        const input = { userId, taskId: task.id, path: 'outputs/a.md', storageKey: key, size: 1, mime: 'text/plain' };
+        const output = await h.files.upsertOutput(input);
+        const attempts = [
+          { ...input, userId: otherUserId },
+          { ...input, taskId: otherTask.id },
+          { ...input, taskId: undefined },
+        ];
+        for (const attempt of attempts) {
+          await expect(h.files.upsertOutput({ ...attempt, size: 9, mime: 'x/y' })).rejects.toThrow(key);
+        }
+        expect(await h.files.get(output.id)).toEqual(output);
+
+        const inputKey = `tasks/${task.id}/inputs/b.md`;
+        const uploaded = await h.files.insert({
+          userId,
+          taskId: task.id,
+          kind: 'input',
+          path: 'inputs/b.md',
+          storageKey: inputKey,
+          size: 1,
+          mime: 'text/plain',
+        });
+        await expect(
+          h.files.upsertOutput({ ...input, path: 'inputs/b.md', storageKey: inputKey, size: 9, mime: 'x/y' }),
+        ).rejects.toThrow(inputKey);
+        expect(await h.files.get(uploaded.id)).toEqual(uploaded);
+      });
+
       test('deleteOutput removes only an output file', async () => {
         const userId = await h.seedUser();
         const task = await h.tasks.create({ userId, prompt: 'x' });
@@ -965,6 +1075,44 @@ export function repositoryContract(
         const results = await Promise.all([attempt(), attempt(), attempt()]);
         expect(results.toSorted()).toEqual(['created', 'rejected', 'rejected']);
         expect(await h.tasks.countActive(userId)).toBe(1);
+      });
+
+      test('lockTask returns the task; an unknown or malformed id gives undefined', async () => {
+        const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
+        await h.uow.run(async tx => {
+          expect(await tx.lockTask(task.id)).toMatchObject({ id: task.id, cycle: 1 });
+          expect(await tx.lockTask(crypto.randomUUID())).toBeUndefined();
+          expect(await tx.lockTask(MALFORMED_ID)).toBeUndefined();
+        });
+      });
+
+      // На in-memory порядок задаёт последовательный UnitOfWork (run идут по очереди), а не блокировка строки:
+      // блокировку этот тест доказывает только на Postgres.
+      test('a transition waits for lockTask: the run sees one cycle until it commits', async () => {
+        const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
+        await h.tasks.transition(task.id, 'cancelled');
+        let locked!: () => void;
+        const isLocked = new Promise<void>(resolve => (locked = resolve));
+        let release!: () => void;
+        const released = new Promise<void>(resolve => (release = resolve));
+        const order: string[] = [];
+        const writer = h.uow.run(async tx => {
+          const seen = await tx.lockTask(task.id);
+          locked();
+          await released;
+          await tx.steps.append({ taskId: task.id, agent: 'system', payload: msg(`cycle ${seen?.cycle}`) });
+          order.push('writer');
+        });
+        await isLocked;
+        const reopen = h.uow.run(async tx => {
+          await tx.tasks.transition(task.id, 'planning', { cycle: 2 });
+          order.push('reopen');
+        });
+        await Bun.sleep(50);
+        release();
+        await Promise.all([writer, reopen]);
+        expect(order).toEqual(['writer', 'reopen']);
+        expect(await h.steps.list(task.id)).toMatchObject([{ payload: { text: 'cycle 1' } }]);
       });
 
       test('lockUser on an unknown user throws NotFoundError', async () => {

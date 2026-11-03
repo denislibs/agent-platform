@@ -107,6 +107,15 @@ export async function workspaceFileHint(sandbox: Sandbox): Promise<{ files: stri
   return { files: files.slice(0, WORKSPACE_HINT_FILES), truncated: walked.length > WORKSPACE_HINT_FILES };
 }
 
+/**
+ * Подсказка модели: ранее выданные файлы, не больше WORKSPACE_HINT_FILES, как и список рабочей папки. Длинный список
+ * раздул бы запрос к модели. Список идёт от старых к новым, поэтому остаются последние: их чаще правят дальше.
+ * truncated — список обрезан.
+ */
+export function deliveredFilesHint(paths: readonly string[]): { files: string[]; truncated: boolean } {
+  return { files: paths.slice(-WORKSPACE_HINT_FILES), truncated: paths.length > WORKSPACE_HINT_FILES };
+}
+
 /** Записи папки; нет папки или путь идёт сквозь файл — пусто. Пропавшая песочница не глотается. */
 async function entriesOf(sandbox: Sandbox, dir: string): Promise<FileEntry[]> {
   try {

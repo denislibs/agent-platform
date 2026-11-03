@@ -37,7 +37,7 @@ describe('JobRunner', () => {
     await drain(c);
     expect(await c.tasks.get(task.id)).toMatchObject({ status: 'done', result: 'Done' });
     expect((await c.files.listForTask(task.id, 'output')).map(f => f.path)).toEqual(['outputs/hello.md']);
-    expect(await c.sandboxes.get(`agent-sbx-${task.id}`)).toBeUndefined();
+    expect(await c.sandboxes.list()).toEqual([{ id: `agent-sbx-${task.id}`, taskId: task.id, running: false }]);
     expect(c.llm.remaining).toBe(0);
   });
 
@@ -57,31 +57,46 @@ describe('JobRunner', () => {
     c.llm.push(calls(['create_plan', { subtasks: [sub('a')] }]));
     await c.runner.run(c.queue.next()!);
     const after = (await c.tasks.get(task.id))!;
-    expect(c.queue.jobs).toEqual([{ taskId: task.id, kind: 'execute', key: `${task.id}.execute.${after.lastSeq}` }]);
+    expect(c.queue.jobs).toEqual([
+      { taskId: task.id, kind: 'execute', cycle: 1, key: `${task.id}.execute.${after.lastSeq}` },
+    ]);
   });
 
   test('wait_user stops the sandbox; nothing is queued', async () => {
     const c = setupAgent();
     const task = await planned(c);
     c.llm.push(calls(['ask_user', { question: 'Which?' }]));
-    expect(await c.runner.run({ taskId: task.id, kind: 'execute' })).toEqual({ next: 'wait_user' });
+    expect(await c.runner.run({ taskId: task.id, kind: 'execute', cycle: 1 })).toEqual({ next: 'wait_user' });
     expect((await c.sandboxes.list()).find(s => s.taskId === task.id)?.running).toBe(false);
     expect(c.queue.jobs).toHaveLength(0);
   });
 
-  test('stop on a cancelled task destroys the sandbox; stop on a live task leaves it', async () => {
+  test('stop on a cancelled task stops the sandbox and keeps its files; stop on a live task leaves it', async () => {
     const c = setupAgent();
     const task = await planned(c);
-    await c.sandboxes.create(task.id);
+    const sandbox = await c.sandboxes.create(task.id);
+    await sandbox.writeFile('notes.md', 'kept');
     await c.tasks.transition(task.id, 'cancelled');
-    await c.runner.run({ taskId: task.id, kind: 'execute' });
-    expect(await c.sandboxes.get(`agent-sbx-${task.id}`)).toBeUndefined();
+    await c.runner.run({ taskId: task.id, kind: 'execute', cycle: 1 });
+    expect((await c.sandboxes.list()).find(s => s.taskId === task.id)?.running).toBe(false);
+    await sandbox.start();
+    expect(new TextDecoder().decode(await sandbox.readFile('notes.md'))).toBe('kept');
 
     const live = await planned(c);
     await c.sandboxes.create(live.id);
     await c.tasks.transition(live.id, 'waiting_user', { currentKind: 'execute' });
-    await c.runner.run({ taskId: live.id, kind: 'plan' }); // устаревший job
+    await c.runner.run({ taskId: live.id, kind: 'plan', cycle: 1 }); // устаревший job
     expect(await c.sandboxes.get(`agent-sbx-${live.id}`)).toBeDefined();
+  });
+
+  test('stop on a task deleted meanwhile destroys the sandbox', async () => {
+    const c = setupAgent();
+    const task = await planned(c);
+    await c.sandboxes.create(task.id);
+    await c.tasks.transition(task.id, 'cancelled');
+    await c.tasks.delete(task.id);
+    await c.runner.run({ taskId: task.id, kind: 'execute', cycle: 1 });
+    expect(await c.sandboxes.list()).toEqual([]);
   });
 
   test('a retryable model error propagates for BullMQ to retry', async () => {
@@ -90,7 +105,7 @@ describe('JobRunner', () => {
     c.llm.push(() => {
       throw new LlmError('rate_limited', 'slow down', true);
     });
-    await expect(c.runner.run({ taskId: task.id, kind: 'execute' })).rejects.toBeInstanceOf(LlmError);
+    await expect(c.runner.run({ taskId: task.id, kind: 'execute', cycle: 1 })).rejects.toBeInstanceOf(LlmError);
   });
 
   test('a non-retryable model error finalises with a partial result', async () => {
@@ -99,7 +114,7 @@ describe('JobRunner', () => {
     c.llm.push(() => {
       throw new LlmError('bad_request', 'tools invalid', false);
     });
-    expect(await c.runner.run({ taskId: task.id, kind: 'execute' })).toEqual({ next: 'finalize' });
+    expect(await c.runner.run({ taskId: task.id, kind: 'execute', cycle: 1 })).toEqual({ next: 'finalize' });
     expect(await c.tasks.get(task.id)).toMatchObject({
       status: 'finalizing',
       partial: true,
@@ -115,40 +130,40 @@ describe('JobRunner', () => {
     c.llm.push(() => {
       throw new LlmError('bad_request', 'tools invalid', false);
     });
-    await c.runner.run({ taskId: task.id, kind: 'execute' });
+    await c.runner.run({ taskId: task.id, kind: 'execute', cycle: 1 });
     expect(await c.ledger.balance(task.userId)).toBe(before);
     expect((await c.tasks.get(task.id))?.tokensUsed).toBe(0);
   });
 
   describe('onExhausted', () => {
-    test('fails the task when the job is still its current one, and destroys the sandbox', async () => {
+    test('fails the task when the job is still its current one, and stops the sandbox', async () => {
       const c = setupAgent();
       const task = await planned(c);
       await c.sandboxes.create(task.id);
-      await fail(c, { taskId: task.id, kind: 'execute' });
+      await fail(c, { taskId: task.id, kind: 'execute', cycle: 1 });
       expect(await c.tasks.get(task.id)).toMatchObject({ status: 'failed', stopReason: 'job_failed' });
       expect((await c.steps.list(task.id)).at(-1)?.payload).toMatchObject({
         type: 'status',
         to: 'failed',
         reason: 'docker exploded',
       });
-      expect(await c.sandboxes.get(`agent-sbx-${task.id}`)).toBeUndefined();
+      expect((await c.sandboxes.list()).find(s => s.taskId === task.id)?.running).toBe(false);
     });
 
     test('leaves the task alone for a stale job, a paused task or a finalizing task', async () => {
       const c = setupAgent();
       const a = await planned(c);
-      await fail(c, { taskId: a.id, kind: 'review' }); // currentKind execute
+      await fail(c, { taskId: a.id, kind: 'review', cycle: 1 }); // currentKind execute
       expect((await c.tasks.get(a.id))?.status).toBe('running');
 
       const b = await planned(c);
       await c.tasks.transition(b.id, 'waiting_user', { currentKind: 'execute' });
-      await fail(c, { taskId: b.id, kind: 'execute' });
+      await fail(c, { taskId: b.id, kind: 'execute', cycle: 1 });
       expect((await c.tasks.get(b.id))?.status).toBe('waiting_user');
 
       const d = await planned(c);
       await c.tasks.transition(d.id, 'finalizing', { currentKind: 'finalize' });
-      await fail(c, { taskId: d.id, kind: 'execute' });
+      await fail(c, { taskId: d.id, kind: 'execute', cycle: 1 });
       expect((await c.tasks.get(d.id))?.status).toBe('finalizing');
     });
 
@@ -156,7 +171,7 @@ describe('JobRunner', () => {
       const c = setupAgent();
       const task = await planned(c);
       await c.runner.onExhausted(
-        { taskId: task.id, kind: 'execute' },
+        { taskId: task.id, kind: 'execute', cycle: 1 },
         new InvalidTransitionError('task', task.id, 'x'),
       );
       expect((await c.tasks.get(task.id))?.status).toBe('failed');
@@ -168,7 +183,7 @@ describe('JobRunner', () => {
       // TaskIntake ставит currentKind 'plan'; у queued без него kind всё равно plan.
       const task = await c.tasks.update(seeded.id, { currentKind: null });
       expect(task).toMatchObject({ status: 'queued', currentKind: null });
-      await fail(c, { taskId: task.id, kind: 'plan' });
+      await fail(c, { taskId: task.id, kind: 'plan', cycle: 1 });
       expect(await c.tasks.get(task.id)).toMatchObject({ status: 'failed', stopReason: 'job_failed' });
     });
 
@@ -183,7 +198,7 @@ describe('JobRunner', () => {
         await c.tasks.transition(task.id, 'finalizing', { currentKind: 'finalize' });
         return run(fn);
       }) as typeof c.uow.run;
-      await fail(c, { taskId: task.id, kind: 'execute' });
+      await fail(c, { taskId: task.id, kind: 'execute', cycle: 1 });
       expect((await c.tasks.get(task.id))?.status).toBe('finalizing');
       expect(await c.sandboxes.get(`agent-sbx-${task.id}`)).toBeDefined();
     });
@@ -193,22 +208,22 @@ describe('JobRunner', () => {
       const task = await planned(c);
       // Эмодзи занимает UTF-16 позиции 199–200: срез по единицам UTF-16 разрезал бы суррогатную пару.
       const message = `\u0000${'a'.repeat(198)}😀tail`;
-      await c.runner.onExhausted({ taskId: task.id, kind: 'execute' }, new Error(message));
+      await c.runner.onExhausted({ taskId: task.id, kind: 'execute', cycle: 1 }, new Error(message));
       const payload = (await c.steps.list(task.id)).at(-1)?.payload;
       expect(payload).toMatchObject({ type: 'status', to: 'failed', reason: ` ${'a'.repeat(198)}😀` });
     });
   });
 
-  test('a failing sandbox destroy does not fail a stop job', async () => {
+  test('a failing sandbox stop does not fail a stop job', async () => {
     const c = setupAgent();
     const task = await planned(c);
     await c.sandboxes.create(task.id);
     await c.tasks.transition(task.id, 'cancelled');
     const sandbox = (await c.sandboxes.get(`agent-sbx-${task.id}`))!;
-    sandbox.destroy = async () => {
+    sandbox.stop = async () => {
       throw new Error('docker down');
     };
-    expect(await c.runner.run({ taskId: task.id, kind: 'execute' })).toEqual({ next: 'stop' });
+    expect(await c.runner.run({ taskId: task.id, kind: 'execute', cycle: 1 })).toEqual({ next: 'stop' });
   });
 
   test('a non-retryable model error on a task already finalizing queues finalize', async () => {
@@ -219,7 +234,7 @@ describe('JobRunner', () => {
       await c.tasks.transition(task.id, 'finalizing', { currentKind: 'finalize' });
       throw new LlmError('bad_request', 'tools invalid', false);
     };
-    expect(await c.runner.run({ taskId: task.id, kind: 'execute' })).toEqual({ next: 'finalize' });
+    expect(await c.runner.run({ taskId: task.id, kind: 'execute', cycle: 1 })).toEqual({ next: 'finalize' });
     expect(await c.tasks.get(task.id)).toMatchObject({ status: 'finalizing', partial: false, stopReason: null });
     expect(c.queue.jobs.map(j => j.kind)).toEqual(['finalize']);
   });

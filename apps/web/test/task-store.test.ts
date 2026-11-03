@@ -81,6 +81,188 @@ test('reply sends the pause seq; cancel stores the cancelled task and re-reads t
   expect(store.task.value?.status).toBe('cancelled');
 });
 
+test('a follow-up shows its request at once and streams on from the last step received', async () => {
+  const done = taskDetail({ status: 'done', result: 'First', lastSeq: 3 });
+  const reopened = taskDetail({ status: 'planning', cycle: 2, lastSeq: 5, updatedAt: '2026-11-02T12:00:00.000Z' });
+  const { fetch, calls } = fakeFetch({
+    'GET /api/tasks/task-1': json(taskResponse({ task: done })),
+    'POST /api/tasks/task-1/messages': json({ task: reopened }, 202),
+  });
+  const store = createTaskStore(
+    {
+      api: createApi({ fetch }),
+      openEvents: opts => openTaskEvents({ ...opts, createSource: url => new FakeEventSource(url) }),
+    },
+    'task-1',
+  );
+  await store.start();
+  const first = FakeEventSource.last;
+  first.emit('step', step(1, { type: 'message', role: 'user', text: 'Find' }, { agent: 'user', subtaskId: null }));
+  first.emit('step', status(3, 'finalizing', 'done'));
+  first.emit('end', { status: 'done' });
+  await tick();
+
+  const reading = store.followUp('Now change it');
+  await reading;
+
+  expect(calls.find(c => c.method === 'POST')?.body).toEqual({ text: 'Now change it' });
+  expect(store.task.value).toMatchObject({ status: 'planning', cycle: 2 });
+  expect(store.steps.value.map(s => s.seq)).toEqual([1, 3, 4, 5]);
+  expect(store.steps.value.at(-2)?.payload).toEqual({ type: 'status', from: 'done', to: 'planning' });
+  expect(store.steps.value.at(-1)).toMatchObject({
+    agent: 'user',
+    createdAt: '2026-11-02T12:00:00.000Z',
+    payload: { type: 'message', role: 'user', text: 'Now change it' },
+  });
+  expect(FakeEventSource.last).not.toBe(first);
+  expect(FakeEventSource.last.url).toBe('/api/tasks/task-1/events?after=3');
+
+  // Поток повторяет эти шаги: дублей в ленте нет, а новые идут дальше.
+  FakeEventSource.last.emit('step', status(4, 'done', 'planning'));
+  FakeEventSource.last.emit(
+    'step',
+    step(5, { type: 'message', role: 'user', text: 'Now change it' }, { agent: 'user' }),
+  );
+  FakeEventSource.last.emit('step', status(6, 'planning', 'running'));
+  expect(store.steps.value.map(s => s.seq)).toEqual([1, 3, 4, 5, 6]);
+});
+
+test('a refused follow-up changes nothing: the error goes to the caller, the stream stays closed', async () => {
+  const { fetch } = fakeFetch({
+    'GET /api/tasks/task-1': json(taskResponse({ task: taskDetail({ status: 'done' }) })),
+    'POST /api/tasks/task-1/messages': json({ error: { code: 'insufficient_credits', message: 'no credits' } }, 402),
+  });
+  const store = createTaskStore(
+    {
+      api: createApi({ fetch }),
+      openEvents: opts => openTaskEvents({ ...opts, createSource: url => new FakeEventSource(url) }),
+    },
+    'task-1',
+  );
+  await store.start();
+  FakeEventSource.last.emit('end', { status: 'done' });
+  await tick();
+  const sources = FakeEventSource.all.length;
+  await expect(store.followUp('More')).rejects.toMatchObject({ code: 'insufficient_credits' });
+  expect(store.task.value?.status).toBe('done');
+  expect(store.steps.value).toEqual([]);
+  expect(FakeEventSource.all).toHaveLength(sources);
+});
+
+test('a task continued elsewhere: a re-read that finds it working opens the stream again', async () => {
+  let card = taskDetail({ status: 'done' });
+  const { fetch } = fakeFetch({ 'GET /api/tasks/task-1': () => json(taskResponse({ task: card })) });
+  const store = createTaskStore(
+    {
+      api: createApi({ fetch }),
+      openEvents: opts => openTaskEvents({ ...opts, createSource: url => new FakeEventSource(url) }),
+    },
+    'task-1',
+  );
+  await store.start();
+  const first = FakeEventSource.last;
+  first.emit('step', status(3, 'finalizing', 'done'));
+  first.emit('end', { status: 'done' });
+  await tick();
+  await tick();
+  expect(FakeEventSource.all).toHaveLength(1);
+  card = taskDetail({ status: 'planning', cycle: 2 });
+  await store.refresh();
+  expect(FakeEventSource.all).toHaveLength(2);
+  expect(FakeEventSource.last.url).toBe('/api/tasks/task-1/events?after=3');
+});
+
+function followUpSetup(overrides: {
+  post?: () => Response | Promise<Response>;
+  card?: () => ReturnType<typeof taskDetail>;
+}) {
+  const card = overrides.card ?? (() => taskDetail({ status: 'done', lastSeq: 3 }));
+  const { fetch, calls } = fakeFetch({
+    'GET /api/tasks/task-1': () => json(taskResponse({ task: card() })),
+    'POST /api/tasks/task-1/messages': () => (overrides.post ?? (() => json({ task: card() }, 202)))(),
+  });
+  const store = createTaskStore(
+    {
+      api: createApi({ fetch }),
+      openEvents: opts => openTaskEvents({ ...opts, createSource: url => new FakeEventSource(url) }),
+    },
+    'task-1',
+  );
+  return { store, calls };
+}
+
+function deferred() {
+  let resolve!: (res: Response) => void;
+  const promise = new Promise<Response>(r => (resolve = r));
+  return { promise, resolve };
+}
+
+async function endedAt(store: ReturnType<typeof createTaskStore>, seq: number): Promise<void> {
+  await store.start();
+  FakeEventSource.last.emit('step', status(seq, 'finalizing', 'done'));
+  FakeEventSource.last.emit('end', { status: 'done' });
+  await tick();
+  await tick();
+}
+
+test('leaving the screen during a follow-up opens no stream', async () => {
+  const pending = deferred();
+  const { store } = followUpSetup({ post: () => pending.promise });
+  await endedAt(store, 3);
+  const sources = FakeEventSource.all.length;
+  const sending = store.followUp('More');
+  store.dispose();
+  pending.resolve(json({ task: taskDetail({ status: 'planning', cycle: 2, lastSeq: 5 }) }, 202));
+  await sending;
+  await tick();
+  expect(FakeEventSource.all).toHaveLength(sources);
+  expect(store.steps.value.map(s => s.seq)).toEqual([3]);
+});
+
+test('a second follow-up while one is in flight does nothing', async () => {
+  const pending = deferred();
+  const { store, calls } = followUpSetup({ post: () => pending.promise });
+  await endedAt(store, 3);
+  const first = store.followUp('One');
+  await store.followUp('Two');
+  pending.resolve(json({ task: taskDetail({ status: 'planning', cycle: 2, lastSeq: 5 }) }, 202));
+  await first;
+  expect(calls.filter(c => c.method === 'POST')).toHaveLength(1);
+  expect(calls.find(c => c.method === 'POST')?.body).toEqual({ text: 'One' });
+});
+
+test('a refused follow-up re-reads the task, so a task running in another tab shows up', async () => {
+  let card = taskDetail({ status: 'done', lastSeq: 3 });
+  const { store, calls } = followUpSetup({
+    card: () => card,
+    post: () => json({ error: { code: 'conflict', message: 'task is running' } }, 409),
+  });
+  await endedAt(store, 3);
+  const reads = calls.filter(c => c.method === 'GET').length;
+  card = taskDetail({ status: 'planning', cycle: 2, lastSeq: 5 });
+  await expect(store.followUp('More')).rejects.toMatchObject({ code: 'conflict' });
+  await tick();
+  expect(calls.filter(c => c.method === 'GET').length).toBeGreaterThan(reads);
+  expect(store.task.value).toMatchObject({ status: 'planning', cycle: 2 });
+  expect(FakeEventSource.last.url).toBe('/api/tasks/task-1/events?after=3');
+});
+
+test('a cycle continued elsewhere and already finished: a re-read with newer steps opens the stream again', async () => {
+  let card = taskDetail({ status: 'done', lastSeq: 3 });
+  const { store } = followUpSetup({ card: () => card });
+  await endedAt(store, 3);
+  expect(FakeEventSource.all).toHaveLength(1);
+  card = taskDetail({ status: 'done', cycle: 2, lastSeq: 9 });
+  await store.refresh();
+  expect(FakeEventSource.all).toHaveLength(2);
+  expect(FakeEventSource.last.url).toBe('/api/tasks/task-1/events?after=3');
+  // Поток снова закрылся, а шагов больше не пришло: тот же lastSeq второй раз поток не открывает.
+  FakeEventSource.last.emit('end', { status: 'done' });
+  await tick();
+  await tick();
+  expect(FakeEventSource.all).toHaveLength(2);
+});
+
 test('an unknown task ends in an error and opens no stream', async () => {
   const { store } = setup([]);
   await store.start();

@@ -65,6 +65,14 @@ export function createTaskStore(deps: TaskStoreDeps, taskId: string) {
   const clearTimer = deps.clearTimer ?? ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
   let offlineTimer: unknown;
   let stream: { close(): void } | undefined;
+  /** Последний seq, пришедший по потоку: с него поток открывается снова. */
+  let received = 0;
+  /** Сервер закрыл поток (end): задача была в конечном статусе. */
+  let ended = false;
+  /** Идёт отправка сообщения: вторая, пока первая не ответила, ничего не делает. */
+  let sending = false;
+  /** lastSeq карточки, ради которого поток уже открывали заново: от петли, если часть шагов потоком не придёт. */
+  let reopenedAt = -1;
   let starting: Promise<void> | undefined;
   let refreshing: Promise<void> | undefined;
   let dirty = false;
@@ -119,6 +127,16 @@ export function createTaskStore(deps: TaskStoreDeps, taskId: string) {
           await load();
           if (!dirty || disposed) break;
         }
+        // Поток закрылся на конечном статусе, а задача снова работает (её продолжили в другой вкладке).
+        // Или она уже закончилась, но в ней есть шаги, которых поток не принёс.
+        if (ended && !disposed && task.value) {
+          const working = !isTerminalTask(task.value.status);
+          const missed = task.value.lastSeq > received && task.value.lastSeq !== reopenedAt;
+          if (working || missed) {
+            reopenedAt = task.value.lastSeq;
+            reopenStream();
+          }
+        }
       } catch (err) {
         if (!disposed) {
           const failure = err instanceof ApiRequestError ? err : new ApiRequestError(0, 'network', String(err));
@@ -155,16 +173,21 @@ export function createTaskStore(deps: TaskStoreDeps, taskId: string) {
   }
 
   function openStream(): void {
+    ended = false;
     // Шагов в карточке нет: поток с нуля отдаёт всю ленту, у финальной задачи — и сразу end.
     stream = (deps.openEvents ?? openTaskEvents)({
       taskId,
-      afterSeq: 0,
+      afterSeq: received,
       onStep: step => {
+        received = Math.max(received, step.seq);
         steps.value = mergeStep(steps.value, step);
         if (changesTheTask(step)) void refresh();
       },
       // Статус в end не нужен (и может не прочитаться): итог, файлы и статус — из карточки.
-      onEnd: () => void refresh(),
+      onEnd: () => {
+        ended = true;
+        void refresh();
+      },
       onConnection: value => {
         setConnected(value);
         // Пропала связь: сразу (без задержки пометки) проверить задачу и сессию — 401 уведёт на вход, 404 — задачи нет.
@@ -176,6 +199,11 @@ export function createTaskStore(deps: TaskStoreDeps, taskId: string) {
       onRefused: () => void (refreshing ?? refresh()),
       onInvalidStep: () => void skippedSteps.value++,
     });
+  }
+
+  function reopenStream(): void {
+    closeStream();
+    openStream();
   }
 
   return {
@@ -192,6 +220,47 @@ export function createTaskStore(deps: TaskStoreDeps, taskId: string) {
     /** Ответ на вопрос агента; questionSeq — пауза, на которую отвечаем. */
     async reply(text: string, questionSeq: number | undefined): Promise<void> {
       task.value = (await deps.api.reply(taskId, text, questionSeq)).task;
+    },
+    /**
+     * Сообщение на законченной задаче: задача открывается заново. API только что записал шаг status (lastSeq − 1) и
+     * сообщение (lastSeq): они попадают в ленту сразу, а поток открывается с последнего полученного шага и дочитывает
+     * всё, что идёт дальше (те же seq отбросит mergeStep).
+     */
+    async followUp(text: string): Promise<void> {
+      if (sending) return;
+      sending = true;
+      const before = task.value;
+      let updated: TaskDetail;
+      try {
+        updated = (await deps.api.reply(taskId, text)).task;
+      } catch (err) {
+        // Отказ (например, 409: задачу уже продолжили в другой вкладке): показанное могло устареть.
+        if (!disposed) void refresh();
+        throw err;
+      } finally {
+        sending = false;
+      }
+      if (disposed) return;
+      batch(() => {
+        task.value = updated;
+        if (before && updated.cycle > before.cycle) {
+          const own = {
+            subtaskId: null,
+            agent: 'user',
+            tokensIn: 0,
+            tokensOut: 0,
+            createdAt: updated.updatedAt,
+          } as const;
+          const status = { type: 'status', from: before.status, to: updated.status } as const;
+          const message = { type: 'message', role: 'user', text } as const;
+          steps.value = mergeStep(
+            mergeStep(steps.value, { ...own, seq: updated.lastSeq - 1, type: 'status', payload: status }),
+            { ...own, seq: updated.lastSeq, type: 'message', payload: message },
+          );
+        }
+      });
+      reopenStream();
+      void refresh();
     },
     async cancel(): Promise<void> {
       task.value = (await deps.api.cancel(taskId)).task;

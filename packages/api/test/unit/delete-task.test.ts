@@ -47,6 +47,28 @@ describe('DELETE /api/tasks/:id', () => {
     expect(await t.c.tasks.get(task.id)).toBeDefined();
   });
 
+  test('a task reopened after it was read as finished is 409; nothing is deleted', async () => {
+    const t = setupApi();
+    const { user, headers } = await t.signIn();
+    const { task, file } = await finishedTask(t, user.id);
+    // Пользователь написал в законченную задачу между проверкой владельца и удалением.
+    const get = t.c.tasks.get.bind(t.c.tasks);
+    t.c.tasks.get = async id => {
+      const read = await get(id);
+      t.c.tasks.get = get;
+      await t.c.intake.reopen({ taskId: task.id, userId: user.id, text: 'One more thing' });
+      return read;
+    };
+
+    const res = await t.call('DELETE', `/api/tasks/${task.id}`, { headers });
+
+    expect(res.status).toBe(409);
+    expect(ApiErrorSchema.parse(await res.json()).error.message).toContain('stop it first');
+    expect(await t.c.tasks.get(task.id)).toMatchObject({ status: 'planning', cycle: 2 });
+    expect(await t.c.files.get(file.id)).toBeDefined();
+    expect(await t.c.fileStore.exists(file.storageKey)).toBe(true);
+  });
+
   test("another user's task, an unknown id and a malformed id are 404", async () => {
     const t = setupApi();
     const owner = await t.signIn();

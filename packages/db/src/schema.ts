@@ -105,6 +105,11 @@ export const tasks = pgTable(
     activeMs: bigint('active_ms', { mode: 'number' }).notNull().default(0),
     lastSeq: integer('last_seq').notNull().default(0),
     result: text('result'),
+    /** Цикл работы: 1 при создании, +1 при открытии задачи заново (план 9). */
+    cycle: integer('cycle').notNull().default(1),
+    /** tokens_used и active_ms на начало цикла: от них считаются лимиты задачи. */
+    cycleBaseTokens: integer('cycle_base_tokens').notNull().default(0),
+    cycleBaseActiveMs: bigint('cycle_base_active_ms', { mode: 'number' }).notNull().default(0),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
@@ -123,6 +128,8 @@ export const subtasks = pgTable(
       .notNull()
       .references(() => tasks.id, { onDelete: 'cascade' }),
     idx: integer('idx').notNull(),
+    /** Цикл работы задачи, в котором подзадача появилась. */
+    cycle: integer('cycle').notNull().default(1),
     goal: text('goal').notNull(),
     context: text('context').notNull(),
     doneCriteria: text('done_criteria').notNull(),

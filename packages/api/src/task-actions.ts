@@ -56,7 +56,7 @@ export async function replyToTask(
     return { task: after, kind: after.currentKind };
   });
   try {
-    await deps.queue.enqueue({ taskId, kind }, jobKey(taskId, kind, task.lastSeq));
+    await deps.queue.enqueue({ taskId, kind, cycle: task.cycle }, jobKey(taskId, kind, task.lastSeq));
   } catch (err) {
     deps.logger.warn('could not queue the job after a reply; the sweeper will retry', {
       taskId,
@@ -67,19 +67,27 @@ export async function replyToTask(
 }
 
 /**
- * Удаление задачи владельцем: только финальная, активную сначала останавливают. Сначала объекты S3 (удаление
- * идемпотентно: сбой — 500, повтор доделает), затем строка: шаги, подзадачи и файлы уходят каскадом, у событий расхода
- * task_id становится null. Песочницу задачи, которой больше нет, уберёт сборщик (Sweeper.destroyOrphans).
+ * Удаление задачи владельцем: только финальная, активную сначала останавливают. Финальный статус не окончателен —
+ * задачу открывают заново сообщением, — поэтому он проверяется под блокировкой строки задачи, в той же транзакции,
+ * что и удаление: открытие заново либо уже закоммичено (409), либо ждёт эту блокировку и найдёт задачи нет.
+ * Сначала объекты S3 (удаление идемпотентно: сбой откатывает транзакцию, ответ 500, повтор доделает), затем строка:
+ * шаги, подзадачи и файлы уходят каскадом, у событий расхода task_id становится null. Блокировка держится на время
+ * удаления объектов: файлов у задачи немного. Песочницу задачи, которой больше нет, уберёт сборщик
+ * (Sweeper.reclaimSandboxes).
  */
-export async function deleteTask(deps: Pick<ApiDeps, 'tasks' | 'files' | 'fileStore'>, task: Task): Promise<void> {
-  if (!isTerminalTask(task.status)) throw new ApiError(409, 'conflict', 'the task is still running; stop it first');
-  for (const file of await deps.files.listForTask(task.id)) await deps.fileStore.delete(file.storageKey);
-  await deps.tasks.delete(task.id);
+export async function deleteTask(deps: Pick<ApiDeps, 'uow' | 'fileStore'>, taskId: string): Promise<void> {
+  await deps.uow.run(async tx => {
+    const task = await tx.lockTask(taskId);
+    if (!task) throw new ApiError(404, 'not_found', 'task not found');
+    if (!isTerminalTask(task.status)) throw new ApiError(409, 'conflict', 'the task is still running; stop it first');
+    for (const file of await tx.files.listForTask(taskId)) await deps.fileStore.delete(file.storageKey);
+    await tx.tasks.delete(taskId);
+  });
 }
 
 /**
- * Отмена (спецификация 8): нефинальная задача → cancelled. Воркер выйдет на ближайшей проверке статуса,
- * песочницу уберёт сборщик. Статус мог смениться между чтением и переходом — тогда перечитать и повторить:
+ * Отмена (спецификация 8): нефинальная задача → cancelled. Воркер выйдет на ближайшей проверке статуса и остановит
+ * песочницу: задачу можно продолжить новым сообщением. Статус мог смениться между чтением и переходом — тогда перечитать и повторить:
  * если задача за это время стала cancelled, вернуть её, если done/failed — 409.
  */
 export async function cancelTask(deps: Pick<ApiDeps, 'uow' | 'clock'>, taskId: string): Promise<Task> {

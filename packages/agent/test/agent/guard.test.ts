@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { StaleJobError } from '../../src';
 import { seedTask, setupAgent } from './fixtures';
 
 describe('TaskGuard', () => {
@@ -91,6 +92,66 @@ describe('TaskGuard', () => {
     c.clock.advance(500);
     await c.guard.addActiveTime(task.id, new Date(c.clock.now().getTime() - 500));
     expect((await c.tasks.get(task.id))?.activeMs).toBe(2000);
+  });
+
+  test('a task in another cycle is stopped for the job that started before it', async () => {
+    const c = setupAgent();
+    const task = await seedTask(c);
+    expect((await c.guard.check(task.id, 1)).kind).toBe('ok');
+    await c.tasks.update(task.id, { cycle: 2 });
+    expect(await c.guard.check(task.id, 1)).toEqual({ kind: 'stop' });
+    expect((await c.guard.check(task.id, 2)).kind).toBe('ok');
+    expect((await c.guard.check(task.id)).kind).toBe('ok');
+  });
+
+  test('write rolls back with StaleJobError when the task moved to another cycle', async () => {
+    const c = setupAgent();
+    const task = await seedTask(c);
+    const steps = await c.steps.list(task.id);
+    await c.tasks.update(task.id, { cycle: 2 });
+    const note = { type: 'message', role: 'user', text: 'late' } as const;
+    await expect(
+      c.guard.write(task, tx => tx.steps.append({ taskId: task.id, agent: 'system', payload: note })),
+    ).rejects.toBeInstanceOf(StaleJobError);
+    expect(await c.steps.list(task.id)).toEqual(steps);
+    await c.guard.write({ ...task, cycle: 2 }, tx =>
+      tx.steps.append({ taskId: task.id, agent: 'system', payload: note }),
+    );
+    expect(await c.steps.list(task.id)).toHaveLength(steps.length + 1);
+  });
+
+  test('write with lockUser locks the owner before the task, and still rejects a stale cycle', async () => {
+    const c = setupAgent();
+    const task = await seedTask(c);
+    const order: string[] = [];
+    const run = c.uow.run.bind(c.uow);
+    c.uow.run = fn =>
+      run(tx =>
+        fn({
+          ...tx,
+          lockUser: async id => {
+            order.push('user');
+            await tx.lockUser(id);
+          },
+          lockTask: async id => {
+            order.push('task');
+            return tx.lockTask(id);
+          },
+        }),
+      );
+
+    await c.guard.write(task, async () => {}, { lockUser: task.userId });
+    expect(order).toEqual(['user', 'task']);
+
+    order.length = 0;
+    await c.guard.write(task, async () => {});
+    expect(order).toEqual(['task']);
+
+    await c.tasks.update(task.id, { cycle: 2 });
+    await expect(c.guard.write(task, async () => {}, { lockUser: task.userId })).rejects.toBeInstanceOf(StaleJobError);
+    await expect(c.guard.write({ ...task, cycle: 2 }, async () => {}, { lockUser: 'no-such-user' })).rejects.toThrow(
+      'no-such-user',
+    );
   });
 
   test('hasAnswer: only a user message after the latest pause counts', async () => {

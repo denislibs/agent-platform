@@ -18,7 +18,7 @@ describe('POST /api/tasks', () => {
     expect(res.status).toBe(201);
     const { task } = TaskEnvelopeSchema.parse(await res.json());
     expect(task).toMatchObject({ prompt: 'Compare three CRMs', status: 'queued', partial: false, lastSeq: 1 });
-    expect(t.c.queue.jobs).toEqual([{ taskId: task.id, kind: 'plan', key: `${task.id}.plan.1` }]);
+    expect(t.c.queue.jobs).toEqual([{ taskId: task.id, kind: 'plan', cycle: 1, key: `${task.id}.plan.1` }]);
   });
 
   test('attaches own uploaded files', async () => {

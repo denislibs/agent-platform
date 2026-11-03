@@ -1,3 +1,4 @@
+import type { Task } from '../entities';
 import type { CreditLedger, FileRepository, StepLog, SubtaskRepository, TaskRepository } from './repositories';
 
 /** Репозитории, привязанные к одной транзакции. */
@@ -13,6 +14,11 @@ export interface TxRepositories {
    * Неизвестный пользователь — NotFoundError('user').
    */
   lockUser(userId: string): Promise<void>;
+  /**
+   * Блокирует строку задачи до конца транзакции и возвращает её. Открытие задачи заново и запись job'а так видят
+   * один и тот же цикл работы. Неизвестный или кривой id — undefined.
+   */
+  lockTask(taskId: string): Promise<Task | undefined>;
 }
 
 /**

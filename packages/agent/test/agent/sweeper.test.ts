@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { jobKey } from '../../src';
-import { planned, seedTask, setupAgent } from './fixtures';
+import { calls, planned, seedTask, setupAgent } from './fixtures';
 
-const env = { STALE_TASK_MS: '120000', WAIT_USER_TIMEOUT_MS: '86400000' };
+const env = { STALE_TASK_MS: '120000', WAIT_USER_TIMEOUT_MS: '86400000', SANDBOX_RETENTION_MS: '3600000' };
+const STALE_MS = 120_000;
+const RETENTION_MS = 3_600_000;
 
 describe('Sweeper', () => {
   test('re-queues stale tasks with the job that moves them on; fresh ones are left', async () => {
@@ -22,6 +24,25 @@ describe('Sweeper', () => {
       ].toSorted(),
     );
     expect(c.queue.jobs.some(j => j.taskId === fresh.id)).toBe(false);
+  });
+
+  test('a re-queued job carries the cycle of its task', async () => {
+    const c = setupAgent(env);
+    const task = await planned(c);
+    await c.tasks.update(task.id, { cycle: 3 });
+    c.clock.advance(121_000);
+    await c.sweeper.sweep();
+    expect(c.queue.jobs).toMatchObject([{ taskId: task.id, kind: 'execute', cycle: 3 }]);
+  });
+
+  test('the finalize job of a timed-out wait carries the cycle of its task', async () => {
+    const c = setupAgent({ ...env, WAIT_USER_TIMEOUT_MS: '60000' });
+    const task = await planned(c);
+    await c.tasks.update(task.id, { cycle: 3 });
+    await c.guard.pause({ ...task, cycle: 3 }, 'execute');
+    c.clock.advance(61_000);
+    await c.sweeper.sweep();
+    expect(c.queue.jobs).toMatchObject([{ taskId: task.id, kind: 'finalize', cycle: 3 }]);
   });
 
   test('a second sweep does not duplicate a pending job', async () => {
@@ -49,7 +70,7 @@ describe('Sweeper', () => {
     const after = await c.tasks.get(answered.id);
     expect(r.requeued).toBe(1);
     expect(c.queue.jobs).toEqual([
-      { taskId: answered.id, kind: 'execute', key: jobKey(answered.id, 'execute', after!.lastSeq) },
+      { taskId: answered.id, kind: 'execute', cycle: 1, key: jobKey(answered.id, 'execute', after!.lastSeq) },
     ]);
     expect(after?.status).toBe('waiting_user');
   });
@@ -69,17 +90,74 @@ describe('Sweeper', () => {
     expect(c.queue.jobs.map(j => j.kind)).toContain('finalize');
   });
 
-  test('sandboxes of finished or missing tasks are destroyed; live ones are kept', async () => {
+  test('a sandbox of a finished task stays until SANDBOX_RETENTION_MS after the finish; of a missing task it goes at once; a live one is kept', async () => {
     const c = setupAgent(env);
     const done = await planned(c);
-    await c.sandboxes.create(done.id);
-    await c.tasks.transition(done.id, 'cancelled');
+    await (await c.sandboxes.create(done.id)).stop();
+    await c.tasks.transition(done.id, 'finalizing');
+    await c.tasks.transition(done.id, 'done', { finishedAt: c.clock.now() });
     await c.sandboxes.create('ghost-task');
     const live = await planned(c);
     await c.sandboxes.create(live.id);
-    const r = await c.sweeper.sweep();
-    expect(r.destroyed).toBe(2);
+
+    expect(await c.sweeper.sweep()).toMatchObject({ destroyed: 1, stopped: 0 });
+    expect((await c.sandboxes.list()).map(s => s.taskId).toSorted()).toEqual([done.id, live.id].toSorted());
+
+    c.clock.advance(RETENTION_MS - 1);
+    expect(await c.sweeper.sweep()).toMatchObject({ destroyed: 0, stopped: 0 });
+    c.clock.advance(1);
+    expect(await c.sweeper.sweep()).toMatchObject({ destroyed: 1, stopped: 0 });
     expect((await c.sandboxes.list()).map(s => s.taskId)).toEqual([live.id]);
+  });
+
+  test('a task reopened within the retention keeps its sandbox past the old deadline', async () => {
+    const c = setupAgent(env);
+    const task = await planned(c);
+    await (await c.sandboxes.create(task.id)).stop();
+    await c.tasks.transition(task.id, 'cancelled', { finishedAt: c.clock.now() });
+    await c.intake.reopen({ taskId: task.id, userId: task.userId, text: 'More' });
+    c.queue.next();
+    c.clock.advance(RETENTION_MS + 1);
+    expect((await c.sweeper.sweep()).destroyed).toBe(0);
+    expect((await c.sandboxes.list()).map(s => s.taskId)).toEqual([task.id]);
+  });
+
+  test('a sandbox still running after a cancel is stopped only once its job has had time to end', async () => {
+    const c = setupAgent(env);
+    const task = await planned(c);
+    await c.sandboxes.create(task.id);
+    await c.tasks.transition(task.id, 'cancelled', { finishedAt: c.clock.now() });
+
+    expect((await c.sweeper.sweep()).stopped).toBe(0);
+    expect((await c.sandboxes.list())[0]?.running).toBe(true);
+
+    c.clock.advance(STALE_MS);
+    expect((await c.sweeper.sweep()).stopped).toBe(1);
+    expect((await c.sandboxes.list())[0]?.running).toBe(false);
+    expect((await c.sweeper.sweep()).stopped).toBe(0);
+  });
+
+  test('a command of a cancelled job cut by that stop ends the job without bringing the sandbox back', async () => {
+    const c = setupAgent(env);
+    const task = await planned(c);
+    const sandbox = await c.sandboxes.create(task.id);
+    let runs = 0;
+    c.sandboxes.handlers = {
+      exec: async () => {
+        runs++;
+        await c.tasks.transition(task.id, 'cancelled', { finishedAt: c.clock.now() });
+        c.clock.advance(STALE_MS);
+        await c.sweeper.sweep();
+        return sandbox.exec('ls', { timeoutMs: 1000 });
+      },
+    };
+    c.llm.push(calls(['shell', { cmd: 'long-running' }]));
+
+    expect(await c.runner.run({ taskId: task.id, kind: 'execute', cycle: 1 })).toEqual({ next: 'stop' });
+
+    expect(runs).toBe(1);
+    expect((await c.sandboxes.list())[0]).toMatchObject({ taskId: task.id, running: false });
+    expect((await c.steps.list(task.id)).some(s => s.payload.type === 'tool_result')).toBe(false);
   });
 
   test('the sandbox of a deleted task is destroyed', async () => {
@@ -102,6 +180,7 @@ describe('Sweeper', () => {
     broken.destroy = () => Promise.reject(new Error('docker is gone'));
     await c.sandboxes.create(b.id);
     await c.sandboxes.create('ghost-task');
+    c.clock.advance(RETENTION_MS);
     const r = await c.sweeper.sweep();
     expect(r).toMatchObject({ destroyed: 2, failed: 1 });
     expect((await c.sandboxes.list()).map(s => s.taskId)).toEqual([a.id]);
@@ -171,7 +250,7 @@ describe('Sweeper', () => {
     const after = await c.tasks.get(task.id);
     expect(after).toMatchObject({ status: 'finalizing', partial: true, stopReason: 'wait_timeout' });
     expect(c.queue.jobs).toEqual([
-      { taskId: task.id, kind: 'finalize', key: jobKey(task.id, 'finalize', after!.lastSeq) },
+      { taskId: task.id, kind: 'finalize', cycle: 1, key: jobKey(task.id, 'finalize', after!.lastSeq) },
     ]);
     const steps = await c.steps.list(task.id);
     expect(steps.at(-1)?.payload).toEqual({

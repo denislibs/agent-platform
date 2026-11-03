@@ -85,9 +85,10 @@ test('a task goes from intake to done through BullMQ, Postgres, Docker and S3', 
   const outputs = await c.files.listForTask(task.id, 'output');
   expect(outputs.map(f => f.path)).toEqual(['outputs/hello.md']);
   expect(await c.fileStore.getText(outputs[0]!.storageKey)).toBe('# Hello');
+  // Песочница законченной задачи ждёт продолжения беседы остановленной (план 9); удалит её afterAll.
   await waitFor(
-    () => c.sandboxes.get(`agent-sbx-${task.id}`),
-    s => s === undefined,
+    async () => (await c.sandboxes.list()).find(s => s.taskId === task.id),
+    s => s?.running === false,
     30_000,
   );
 }, 120_000);

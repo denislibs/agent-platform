@@ -20,6 +20,9 @@ describe('task transitions', () => {
     ['waiting_user', 'finalizing'],
     ['running', 'finalizing'],
     ['finalizing', 'done'],
+    ['done', 'planning'],
+    ['failed', 'planning'],
+    ['cancelled', 'planning'],
   ] as const)('%s → %s is allowed', (from, to) => {
     expect(canTransitionTask(from, to)).toBe(true);
   });
@@ -28,7 +31,11 @@ describe('task transitions', () => {
     ['queued', 'running'],
     ['done', 'running'],
     ['failed', 'queued'],
-    ['cancelled', 'planning'],
+    ['cancelled', 'finalizing'],
+    ['done', 'failed'],
+    ['done', 'cancelled'],
+    ['failed', 'cancelled'],
+    ['cancelled', 'failed'],
     ['running', 'queued'],
   ] as const)('%s → %s is rejected', (from, to) => {
     expect(canTransitionTask(from, to)).toBe(false);

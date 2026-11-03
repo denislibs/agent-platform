@@ -39,23 +39,59 @@ export class DrizzleFileRepository implements FileRepository {
     if (!t) throw new NotFoundError('task', taskId);
   }
 
-  async insert(input: NewFile): Promise<FileRecord> {
+  /**
+   * Запись строки files. Без предварительной проверки: задачу или пользователя могли удалить между проверкой и
+   * вставкой. Нарушенный внешний ключ — контракт порта: NotFoundError с той сущностью, на которую он указывал.
+   */
+  private async write(input: NewFile, query: () => Promise<FileRecord[]>): Promise<FileRecord | undefined> {
     // Кривой id задачи не дойдёт до Postgres как ошибка формата (22P02).
     if (input.taskId && !isUuid(input.taskId)) throw new NotFoundError('task', input.taskId);
     try {
-      const [row] = await this.db
-        .insert(files)
-        .values({ ...input, taskId: input.taskId ?? null })
-        .returning();
-      return row!;
+      const [row] = await query();
+      return row;
     } catch (err) {
-      // Без предварительной проверки: задачу или пользователя могли удалить между проверкой и вставкой.
-      // Нарушенный внешний ключ — контракт порта: NotFoundError с той сущностью, на которую он указывал.
       const violation = foreignKeyViolation(err);
       if (violation === 'files_task_id_tasks_id_fk') throw new NotFoundError('task', input.taskId ?? '');
       if (violation === 'files_user_id_user_id_fk') throw new NotFoundError('user', input.userId);
       throw err;
     }
+  }
+
+  async insert(input: NewFile): Promise<FileRecord> {
+    const row = await this.write(input, () =>
+      this.db
+        .insert(files)
+        .values({ ...input, taskId: input.taskId ?? null })
+        .returning(),
+    );
+    return row!;
+  }
+
+  /**
+   * storage_key уникален (schema.ts), а ключ результата строится из задачи и пути: отдельный индекс не нужен.
+   * Обновляется только тот же результат того же пользователя и той же задачи; ключ, занятый чужой строкой или
+   * входным файлом, — ошибка программиста: Error, строка не меняется.
+   */
+  async upsertOutput(input: Omit<NewFile, 'kind'>): Promise<FileRecord> {
+    const record: NewFile = { ...input, kind: 'output' };
+    const taskId = record.taskId ?? null;
+    const row = await this.write(record, () =>
+      this.db
+        .insert(files)
+        .values({ ...record, taskId })
+        .onConflictDoUpdate({
+          target: files.storageKey,
+          set: { size: record.size, mime: record.mime, createdAt: sql`now()` },
+          setWhere: and(
+            eq(files.userId, record.userId),
+            taskId === null ? isNull(files.taskId) : eq(files.taskId, taskId),
+            eq(files.kind, 'output'),
+          ),
+        })
+        .returning(),
+    );
+    if (!row) throw new Error(`storage key ${record.storageKey} belongs to another file`);
+    return row;
   }
 
   async get(id: string): Promise<FileRecord | undefined> {

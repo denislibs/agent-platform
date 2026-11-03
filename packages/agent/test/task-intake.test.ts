@@ -131,7 +131,7 @@ describe('TaskIntake', () => {
     const userId = memory.seedUser();
     const task = await intake.create({ userId, prompt: 'x' });
     expect(task.currentKind).toBe('plan');
-    expect(queue.jobs).toEqual([{ taskId: task.id, kind: 'plan', key: `${task.id}.plan.${task.lastSeq}` }]);
+    expect(queue.jobs).toEqual([{ taskId: task.id, kind: 'plan', cycle: 1, key: `${task.id}.plan.${task.lastSeq}` }]);
   });
 
   test('a refused task queues nothing', async () => {

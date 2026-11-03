@@ -51,6 +51,7 @@ describe('loadConfig', () => {
       sweepEveryMs: 60_000,
       staleTaskMs: 120_000,
       uploadTtlMs: 86_400_000,
+      sandboxRetentionMs: 3_600_000,
     });
     expect(c.db).toEqual({ lockTimeoutMs: 10_000 });
     expect(loadConfig({ ...base, QUEUE_PREFIX: 'test-1', DB_LOCK_TIMEOUT_MS: '2500' })).toMatchObject({
