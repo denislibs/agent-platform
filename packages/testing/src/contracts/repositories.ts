@@ -884,6 +884,40 @@ export function repositoryContract(
         expect(await h.files.listForTask(task.id)).toEqual([]);
       });
 
+      test('upsertOutput on a key of a foreign user, a foreign task or an input file throws and changes nothing', async () => {
+        const userId = await h.seedUser();
+        const otherUserId = await h.seedUser();
+        const task = await h.tasks.create({ userId, prompt: 'x' });
+        const otherTask = await h.tasks.create({ userId, prompt: 'y' });
+        const key = `tasks/${task.id}/outputs/a.md`;
+        const input = { userId, taskId: task.id, path: 'outputs/a.md', storageKey: key, size: 1, mime: 'text/plain' };
+        const output = await h.files.upsertOutput(input);
+        const attempts = [
+          { ...input, userId: otherUserId },
+          { ...input, taskId: otherTask.id },
+          { ...input, taskId: undefined },
+        ];
+        for (const attempt of attempts) {
+          await expect(h.files.upsertOutput({ ...attempt, size: 9, mime: 'x/y' })).rejects.toThrow(key);
+        }
+        expect(await h.files.get(output.id)).toEqual(output);
+
+        const inputKey = `tasks/${task.id}/inputs/b.md`;
+        const uploaded = await h.files.insert({
+          userId,
+          taskId: task.id,
+          kind: 'input',
+          path: 'inputs/b.md',
+          storageKey: inputKey,
+          size: 1,
+          mime: 'text/plain',
+        });
+        await expect(
+          h.files.upsertOutput({ ...input, path: 'inputs/b.md', storageKey: inputKey, size: 9, mime: 'x/y' }),
+        ).rejects.toThrow(inputKey);
+        expect(await h.files.get(uploaded.id)).toEqual(uploaded);
+      });
+
       test('deleteOutput removes only an output file', async () => {
         const userId = await h.seedUser();
         const task = await h.tasks.create({ userId, prompt: 'x' });
@@ -1052,6 +1086,8 @@ export function repositoryContract(
         });
       });
 
+      // На in-memory порядок задаёт последовательный UnitOfWork (run идут по очереди), а не блокировка строки:
+      // блокировку этот тест доказывает только на Postgres.
       test('a transition waits for lockTask: the run sees one cycle until it commits', async () => {
         const task = await h.tasks.create({ userId: await h.seedUser(), prompt: 'x' });
         await h.tasks.transition(task.id, 'cancelled');

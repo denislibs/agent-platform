@@ -34,7 +34,7 @@ import type { InMemoryState } from './state';
 
 type Deps = { memory: InMemoryState };
 /** Внутри UnitOfWork.run годятся только репозитории из tx: in-memory ловит то, что Postgres поймал бы лишь по lock_timeout. */
-function guardedState(deps: Deps, txToken: symbol | undefined): InMemoryState {
+export function guardedState(deps: Deps, txToken: symbol | undefined): InMemoryState {
   const scope = deps.memory.txScope.getStore();
   if (scope?.active && scope.token !== txToken) {
     throw new Error('repository from the container used inside UnitOfWork.run: use the tx passed to fn');
@@ -377,6 +377,8 @@ export class InMemoryFileRepository implements FileRepository {
   async upsertOutput(input: Omit<NewFile, 'kind'>): Promise<FileRecord> {
     const known = [...this.m.files.values()].find(f => f.storageKey === input.storageKey);
     if (!known) return this.insert({ ...input, kind: 'output' });
+    if (known.userId !== input.userId || known.taskId !== (input.taskId ?? null) || known.kind !== 'output')
+      throw new Error(`storage key ${input.storageKey} belongs to another file`);
     Object.assign(known, { size: input.size, mime: input.mime, createdAt: this.m.clock.now() });
     return copy(known);
   }
