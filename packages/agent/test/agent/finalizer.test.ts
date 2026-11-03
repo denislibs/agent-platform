@@ -113,7 +113,7 @@ describe('Finalizer', () => {
     }
   });
 
-  test('uploads the files, records them, marks the task done and destroys the sandbox', async () => {
+  test('uploads the files, records them, marks the task done and stops the sandbox with its files', async () => {
     const c = setupAgent();
     const task = await ready(c, ['outputs/table.md'], { 'outputs/table.md': '| a |', 'outputs/chart.png': 'png' });
     expect(await c.finalizer.finalize(task.id)).toEqual({ next: 'stop' });
@@ -126,7 +126,9 @@ describe('Finalizer', () => {
       ['outputs/table.md', 'text/markdown', 5],
     ]);
     expect(text(c.fileStore.objects.get(`tasks/${task.id}/outputs/table.md`)!.bytes)).toBe('| a |');
-    expect(await c.sandboxes.get(`agent-sbx-${task.id}`)).toBeUndefined();
+    expect(await c.sandboxes.list()).toEqual([{ id: `agent-sbx-${task.id}`, taskId: task.id, running: false }]);
+    const sandbox = await c.sandboxes.create(task.id);
+    expect(text(await sandbox.readFile('outputs/table.md'))).toBe('| a |');
   });
 
   test('a repeated finalize is a no-op', async () => {
@@ -186,11 +188,11 @@ describe('Finalizer', () => {
     expect((await c.tasks.get(task.id))?.status).toBe('cancelled');
   });
 
-  test('a failing sandbox destroy after done does not fail the job', async () => {
+  test('a failing sandbox stop after done does not fail the job', async () => {
     const c = setupAgent();
     const task = await ready(c, [], { 'outputs/a.md': 'a' });
     const sandbox = await c.sandboxes.create(task.id);
-    sandbox.destroy = async () => {
+    sandbox.stop = async () => {
       throw new Error('docker is down');
     };
     expect(await c.finalizer.finalize(task.id)).toEqual({ next: 'stop' });
@@ -405,7 +407,7 @@ describe('Finalizer — a later cycle', () => {
 });
 
 describe('Finalizer — folders in reports', () => {
-  test('a project folder named only in the report is delivered and the sandbox is destroyed after', async () => {
+  test('a project folder named only in the report is delivered', async () => {
     const c = setupAgent();
     const { task, sandbox } = await reported(c, ['/workspace/todo-app/']);
     await sandbox.writeFile('todo-app/src/App.jsx', 'a');

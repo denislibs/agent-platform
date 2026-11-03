@@ -6,6 +6,7 @@ import {
   type JobQueue,
   type Logger,
   type SandboxProvider,
+  type Clock,
   type Task,
   type TaskRepository,
   type UnitOfWork,
@@ -20,9 +21,12 @@ interface PassResult {
   failed: number;
 }
 
+/** Сколько мс назад задача закончилась; без finishedAt — по последнему обновлению. */
+const finishedFor = (task: Task, now: Date): number => now.getTime() - (task.finishedAt ?? task.updatedAt).getTime();
+
 /**
- * Сборщик (спецификация 8, 4.2): раз в SWEEP_EVERY_MS — зависшие задачи, тайм-аут ответа, песочницы-сироты
- * и входные файлы, которые объявили, но не привязали к задаче за UPLOAD_TTL_MS.
+ * Сборщик (спецификация 8, 4.2): раз в SWEEP_EVERY_MS — зависшие задачи, тайм-аут ответа, песочницы законченных
+ * и удалённых задач и входные файлы, которые объявили, но не привязали к задаче за UPLOAD_TTL_MS.
  * Ошибка на одной задаче или песочнице не прерывает проход: остальные обрабатываются, а недоделанное подхватит следующий.
  * Число таких ошибок — `failed` в результате: воркер пишет его в лог.
  * Выборка findStale — не больше 100 задач (старейшие первыми) на набор статусов за проход; остальные — в следующий.
@@ -38,22 +42,31 @@ export class Sweeper {
       files: FileRepository;
       fileStore: FileStore;
       uow: UnitOfWork;
+      clock: Clock;
       config: Config;
       logger: Logger;
     },
   ) {}
 
-  async sweep(): Promise<{ requeued: number; timedOut: number; destroyed: number; uploads: number; failed: number }> {
+  async sweep(): Promise<{
+    requeued: number;
+    timedOut: number;
+    stopped: number;
+    destroyed: number;
+    uploads: number;
+    failed: number;
+  }> {
     const requeued = await this.requeueStale();
     const timedOut = await this.timeOutWaiting();
-    const destroyed = await this.destroyOrphans();
+    const { stopped, destroyed, failed } = await this.reclaimSandboxes();
     const uploads = await this.removeStaleUploads();
     return {
       requeued: requeued.count,
       timedOut: timedOut.count,
-      destroyed: destroyed.count,
+      stopped,
+      destroyed,
       uploads: uploads.count,
-      failed: requeued.failed + timedOut.failed + destroyed.failed + uploads.failed,
+      failed: requeued.failed + timedOut.failed + failed + uploads.failed,
     };
   }
 
@@ -133,21 +146,35 @@ export class Sweeper {
     return result;
   }
 
-  /** Песочницы задач, которых нет или которые завершились. */
-  private async destroyOrphans(): Promise<PassResult> {
-    const { tasks, sandboxes } = this.deps;
-    const result: PassResult = { count: 0, failed: 0 };
+  /**
+   * Песочницы законченных и удалённых задач. Задачи нет или она закончилась больше SANDBOX_RETENTION_MS назад и не
+   * открыта заново — песочница удаляется. Раньше срока она ждёт продолжения беседы остановленной. Работающую обычно
+   * останавливает JobRunner, когда job кончился; эта остановка — запас на случай, когда job не дожил до своего конца
+   * (сбой воркера, сбой Docker): поэтому не раньше STALE_TASK_MS после конца задачи. Если job отменённой задачи ещё
+   * выполняет команду, она оборвётся, а job закончится через StaleJobError (ToolExecutor) и песочницу не поднимет.
+   * Осталось окно: задачу открывают заново между чтением здесь и удалением. Тогда первый вызов инструмента поднимет
+   * пустую песочницу, как при её пропаже посреди цикла.
+   */
+  private async reclaimSandboxes(): Promise<{ stopped: number; destroyed: number; failed: number }> {
+    const { tasks, sandboxes, clock, config } = this.deps;
+    const result = { stopped: 0, destroyed: 0, failed: 0 };
     for (const info of await sandboxes.list()) {
       try {
         const task = await tasks.get(info.taskId);
         if (task && !isTerminalTask(task.status)) continue;
         const sandbox = await sandboxes.get(info.id);
         if (!sandbox) continue;
-        await sandbox.destroy();
-        result.count++;
+        const age = task ? finishedFor(task, clock.now()) : Number.POSITIVE_INFINITY;
+        if (age >= config.worker.sandboxRetentionMs) {
+          await sandbox.destroy();
+          result.destroyed++;
+        } else if (info.running && age >= config.worker.staleTaskMs) {
+          await sandbox.stop();
+          result.stopped++;
+        }
       } catch (err) {
         result.failed++; // следующий проход попробует снова
-        this.deps.logger.warn('sweeper could not destroy a sandbox', {
+        this.deps.logger.warn('sweeper could not reclaim a sandbox', {
           sandboxId: info.id,
           taskId: info.taskId,
           error: errorMessage(err),

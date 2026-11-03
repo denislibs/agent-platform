@@ -37,7 +37,7 @@ describe('JobRunner', () => {
     await drain(c);
     expect(await c.tasks.get(task.id)).toMatchObject({ status: 'done', result: 'Done' });
     expect((await c.files.listForTask(task.id, 'output')).map(f => f.path)).toEqual(['outputs/hello.md']);
-    expect(await c.sandboxes.get(`agent-sbx-${task.id}`)).toBeUndefined();
+    expect(await c.sandboxes.list()).toEqual([{ id: `agent-sbx-${task.id}`, taskId: task.id, running: false }]);
     expect(c.llm.remaining).toBe(0);
   });
 
@@ -71,19 +71,32 @@ describe('JobRunner', () => {
     expect(c.queue.jobs).toHaveLength(0);
   });
 
-  test('stop on a cancelled task destroys the sandbox; stop on a live task leaves it', async () => {
+  test('stop on a cancelled task stops the sandbox and keeps its files; stop on a live task leaves it', async () => {
     const c = setupAgent();
     const task = await planned(c);
-    await c.sandboxes.create(task.id);
+    const sandbox = await c.sandboxes.create(task.id);
+    await sandbox.writeFile('notes.md', 'kept');
     await c.tasks.transition(task.id, 'cancelled');
     await c.runner.run({ taskId: task.id, kind: 'execute', cycle: 1 });
-    expect(await c.sandboxes.get(`agent-sbx-${task.id}`)).toBeUndefined();
+    expect((await c.sandboxes.list()).find(s => s.taskId === task.id)?.running).toBe(false);
+    await sandbox.start();
+    expect(new TextDecoder().decode(await sandbox.readFile('notes.md'))).toBe('kept');
 
     const live = await planned(c);
     await c.sandboxes.create(live.id);
     await c.tasks.transition(live.id, 'waiting_user', { currentKind: 'execute' });
     await c.runner.run({ taskId: live.id, kind: 'plan', cycle: 1 }); // устаревший job
     expect(await c.sandboxes.get(`agent-sbx-${live.id}`)).toBeDefined();
+  });
+
+  test('stop on a task deleted meanwhile destroys the sandbox', async () => {
+    const c = setupAgent();
+    const task = await planned(c);
+    await c.sandboxes.create(task.id);
+    await c.tasks.transition(task.id, 'cancelled');
+    await c.tasks.delete(task.id);
+    await c.runner.run({ taskId: task.id, kind: 'execute', cycle: 1 });
+    expect(await c.sandboxes.list()).toEqual([]);
   });
 
   test('a retryable model error propagates for BullMQ to retry', async () => {
@@ -123,7 +136,7 @@ describe('JobRunner', () => {
   });
 
   describe('onExhausted', () => {
-    test('fails the task when the job is still its current one, and destroys the sandbox', async () => {
+    test('fails the task when the job is still its current one, and stops the sandbox', async () => {
       const c = setupAgent();
       const task = await planned(c);
       await c.sandboxes.create(task.id);
@@ -134,7 +147,7 @@ describe('JobRunner', () => {
         to: 'failed',
         reason: 'docker exploded',
       });
-      expect(await c.sandboxes.get(`agent-sbx-${task.id}`)).toBeUndefined();
+      expect((await c.sandboxes.list()).find(s => s.taskId === task.id)?.running).toBe(false);
     });
 
     test('leaves the task alone for a stale job, a paused task or a finalizing task', async () => {
@@ -201,13 +214,13 @@ describe('JobRunner', () => {
     });
   });
 
-  test('a failing sandbox destroy does not fail a stop job', async () => {
+  test('a failing sandbox stop does not fail a stop job', async () => {
     const c = setupAgent();
     const task = await planned(c);
     await c.sandboxes.create(task.id);
     await c.tasks.transition(task.id, 'cancelled');
     const sandbox = (await c.sandboxes.get(`agent-sbx-${task.id}`))!;
-    sandbox.destroy = async () => {
+    sandbox.stop = async () => {
       throw new Error('docker down');
     };
     expect(await c.runner.run({ taskId: task.id, kind: 'execute', cycle: 1 })).toEqual({ next: 'stop' });

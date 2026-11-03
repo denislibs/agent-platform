@@ -110,15 +110,24 @@ test('a task that finished less than --idle-minutes ago is refused: its finalize
   expect(deletedUsers()).toEqual([`user ${me}`]);
 });
 
-test('a sandbox of any task of the user is refused and nothing is deleted', async () => {
+test('a running sandbox of any task of the user is refused and nothing is deleted', async () => {
   const { c, deps, deletedUsers } = setup();
   const { task, mine } = await seedTwoUsers(c);
   await c.sandboxes.create(task.id);
   c.clock.advance(IDLE_MS + 1);
   for (const args of [['ann@test.dev'], ['ann@test.dev', '--yes']])
-    await expect(deleteUserData(deps, args)).rejects.toThrow('ann@test.dev still has 1 sandbox(es)');
+    await expect(deleteUserData(deps, args)).rejects.toThrow('ann@test.dev still has 1 running sandbox(es)');
   for (const f of mine) expect(await c.fileStore.exists(f.storageKey)).toBe(true);
   expect(deletedUsers()).toEqual([]);
+});
+
+test('a stopped sandbox of a finished task does not block the deletion: no job can use it', async () => {
+  const { c, deps, deletedUsers } = setup();
+  const { me, task } = await seedTwoUsers(c);
+  await (await c.sandboxes.create(task.id)).stop();
+  c.clock.advance(IDLE_MS + 1);
+  expect(await deleteUserData(deps, ['ann@test.dev', '--yes'])).toBe('deleted ann@test.dev: 2 file(s)');
+  expect(deletedUsers()).toEqual([`user ${me}`]);
 });
 
 test('sandboxes of other users do not matter; a failing sandbox listing refuses', async () => {

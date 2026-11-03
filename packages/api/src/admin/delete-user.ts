@@ -47,8 +47,9 @@ function parseArgs(args: readonly string[]): { email: string; confirmed: boolean
 }
 
 /**
- * Задачи в работе, песочницы задач и задачи, завершённые меньше idleMinutes назад, мешают удалению: их job,
+ * Задачи в работе, работающие песочницы задач и задачи, завершённые меньше idleMinutes назад, мешают удалению: их job,
  * песочница или финализатор ещё могут записать шаги и файлы (объекты S3 остались бы без записей).
+ * Остановленная песочница законченной задачи не мешает: job'а у неё нет, а без строки задачи её удалит сборщик.
  * Список песочниц недоступен (нет Docker) — тоже отказ: проверить нельзя.
  */
 async function assertIdle(deps: Deps, email: string, userId: string, idleMinutes: number): Promise<void> {
@@ -65,9 +66,9 @@ async function assertIdle(deps: Deps, email: string, userId: string, idleMinutes
       cause: err,
     });
   }
-  const left = sandboxes.filter(s => ids.has(s.taskId)).length;
+  const left = sandboxes.filter(s => s.running && ids.has(s.taskId)).length;
   if (left > 0)
-    throw new Error(`${email} still has ${left} sandbox(es) of their tasks: wait until the sweeper removes them`);
+    throw new Error(`${email} still has ${left} running sandbox(es) of their tasks: wait until the sweeper stops them`);
   if (countRecentlyFinished(tasks, deps.clock, idleMinutes) > 0)
     throw new Error(
       `${email} has task(s) that finished less than ${idleMinutes} minute(s) ago: wait, or pass ${IDLE_FLAG}N`,

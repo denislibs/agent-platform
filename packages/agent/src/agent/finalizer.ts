@@ -54,7 +54,7 @@ export function mimeOf(path: string): string {
   return MIME[ext] ?? 'application/octet-stream';
 }
 
-/** Job finalize (спецификация 4.1, шаг 5): итоговый ответ, файлы в S3, шаг с ответом, done, песочница уничтожена. */
+/** Job finalize (спецификация 4.1, шаг 5): итоговый ответ, файлы в S3, шаг с ответом, done, песочница остановлена. */
 export class Finalizer {
   constructor(
     private readonly deps: {
@@ -147,7 +147,7 @@ export class Finalizer {
     }
     const reason: StopReason = 'missing_files';
 
-    // Отмена во время выгрузки: задача уже не наша, песочницу уберёт сборщик.
+    // Отмена во время выгрузки: задача уже не наша, песочницу остановит JobRunner.
     const done = await this.deps.guard.unlessStopped(taskId, () =>
       this.deps.guard.write(task, async tx => {
         await tx.tasks.transition(
@@ -171,9 +171,10 @@ export class Finalizer {
     );
     if (done) {
       try {
-        await sandbox.destroy();
+        // Файлы остаются для продолжения беседы; песочницу удалит сборщик через SANDBOX_RETENTION_MS.
+        await sandbox.stop();
       } catch {
-        // Задача уже done: повтор job бесполезен, осиротевшую песочницу завершённой задачи уберёт сборщик.
+        // Задача уже done: повтор job бесполезен, работающую песочницу законченной задачи остановит сборщик.
       }
     }
     return { next: 'stop' };

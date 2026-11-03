@@ -108,7 +108,7 @@ export class JobRunner {
       if (err instanceof InvalidTransitionError || err instanceof StaleJobError) return;
       throw err;
     }
-    await this.destroySandbox(task.id);
+    await this.stopSandbox(task.id);
   }
 
   private dispatch(job: AgentJob): Promise<StageOutcome> {
@@ -148,7 +148,9 @@ export class JobRunner {
         return;
       case 'stop':
         // Живая задача при stop — устаревший job: её ведёт другой job, остальное сделает сборщик.
-        if (!task || isTerminalTask(task.status)) await this.destroySandbox(taskId);
+        // Законченная: job кончился, песочница ждёт продолжения беседы остановленной. Задачи нет — продолжения не будет.
+        if (!task) await this.destroySandbox(taskId);
+        else if (isTerminalTask(task.status)) await this.stopSandbox(taskId);
         return;
       default:
         // В другом цикле задачу ведёт job, поставленный при открытии: второй цепочке там делать нечего.
@@ -164,7 +166,15 @@ export class JobRunner {
     try {
       await (await this.deps.sandboxes.get(sandboxIdFor(taskId)))?.destroy();
     } catch {
-      // Работа job сделана, повтор бесполезен: осиротевшую песочницу завершённой задачи уберёт сборщик.
+      // Работа job сделана, повтор бесполезен: песочницу задачи, которой нет, уберёт сборщик.
+    }
+  }
+
+  private async stopSandbox(taskId: string): Promise<void> {
+    try {
+      await (await this.deps.sandboxes.get(sandboxIdFor(taskId)))?.stop();
+    } catch {
+      // Работа job сделана, повтор бесполезен: работающую песочницу законченной задачи остановит сборщик.
     }
   }
 }

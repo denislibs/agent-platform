@@ -69,7 +69,7 @@ export async function replyToTask(
 /**
  * Удаление задачи владельцем: только финальная, активную сначала останавливают. Сначала объекты S3 (удаление
  * идемпотентно: сбой — 500, повтор доделает), затем строка: шаги, подзадачи и файлы уходят каскадом, у событий расхода
- * task_id становится null. Песочницу задачи, которой больше нет, уберёт сборщик (Sweeper.destroyOrphans).
+ * task_id становится null. Песочницу задачи, которой больше нет, уберёт сборщик (Sweeper.reclaimSandboxes).
  */
 export async function deleteTask(deps: Pick<ApiDeps, 'tasks' | 'files' | 'fileStore'>, task: Task): Promise<void> {
   if (!isTerminalTask(task.status)) throw new ApiError(409, 'conflict', 'the task is still running; stop it first');
@@ -78,8 +78,8 @@ export async function deleteTask(deps: Pick<ApiDeps, 'tasks' | 'files' | 'fileSt
 }
 
 /**
- * Отмена (спецификация 8): нефинальная задача → cancelled. Воркер выйдет на ближайшей проверке статуса,
- * песочницу уберёт сборщик. Статус мог смениться между чтением и переходом — тогда перечитать и повторить:
+ * Отмена (спецификация 8): нефинальная задача → cancelled. Воркер выйдет на ближайшей проверке статуса и остановит
+ * песочницу: задачу можно продолжить новым сообщением. Статус мог смениться между чтением и переходом — тогда перечитать и повторить:
  * если задача за это время стала cancelled, вернуть её, если done/failed — 409.
  */
 export async function cancelTask(deps: Pick<ApiDeps, 'uow' | 'clock'>, taskId: string): Promise<Task> {
