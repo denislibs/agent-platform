@@ -197,10 +197,18 @@ export function cycleEnd(steps: readonly StepDto[]): { status: 'failed' | 'cance
   return { status: step.payload.to, reason: step.payload.reason ?? null };
 }
 
-/** Секунды работы законченного цикла: от первого шага до последнего. */
+/**
+ * Секунды работы законченного цикла: от первого шага до его конечного статуса, а без него — до последнего шага.
+ * Ответ, дописанный к старой задаче позже (его createdAt — время открытия следующего цикла), цикл не растягивает.
+ */
 export function cycleSeconds(steps: readonly StepDto[]): number {
   const first = steps.at(0);
-  const last = steps.at(-1);
+  const last =
+    steps.findLast(
+      s =>
+        s.payload.type === 'status' &&
+        (s.payload.to === 'done' || s.payload.to === 'failed' || s.payload.to === 'cancelled'),
+    ) ?? steps.at(-1);
   return first && last ? Math.max(0, (Date.parse(last.createdAt) - Date.parse(first.createdAt)) / 1000) : 0;
 }
 

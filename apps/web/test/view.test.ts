@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { SUBTASK_STATUSES, TASK_STATUSES } from '@agent/shared';
+import { SUBTASK_STATUSES, TASK_STATUSES, type StepDto } from '@agent/shared';
 import {
   filesLost,
   isWorking,
@@ -89,6 +89,8 @@ describe('status mapping (roadmap notes of plan 5)', () => {
     expect(stopReasonText('constructor')).toBe('it hit a limit');
   });
 });
+
+const at = (iso: string, s: StepDto): StepDto => ({ ...s, createdAt: iso });
 
 describe('timeline', () => {
   test('tool calls pair the model arguments with the result by toolCallId', () => {
@@ -202,6 +204,20 @@ describe('timeline', () => {
     expect(cycleEnd(cycle)).toBeNull();
     expect(cycleSeconds(cycle)).toBe(30);
     expect(cycleStart(cycle)).toBe('2026-11-02T11:00:00.000Z');
+  });
+
+  test('a cycle ends at its terminal status: a backfilled answer written much later does not stretch it', () => {
+    const legacy = [
+      at('2026-11-02T11:00:00.000Z', status(5, 'done', 'planning')),
+      at('2026-11-02T11:00:30.000Z', status(8, 'finalizing', 'done')),
+      at(
+        '2026-11-05T11:00:00.000Z',
+        step(9, { type: 'message', role: 'assistant', text: 'Old answer', kind: 'answer' }),
+      ),
+    ];
+    expect(cycleSeconds(legacy)).toBe(30);
+    // Без конечного статуса цикл идёт до последнего шага.
+    expect(cycleSeconds(legacy.slice(0, 1).concat(legacy.slice(2)))).toBe(3 * 24 * 3600);
   });
 
   test('a cycle without an answer: how it ended; the first cycle has no reopen step', () => {

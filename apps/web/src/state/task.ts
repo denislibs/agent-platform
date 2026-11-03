@@ -69,6 +69,10 @@ export function createTaskStore(deps: TaskStoreDeps, taskId: string) {
   let received = 0;
   /** Сервер закрыл поток (end): задача была в конечном статусе. */
   let ended = false;
+  /** Идёт отправка сообщения: вторая, пока первая не ответила, ничего не делает. */
+  let sending = false;
+  /** lastSeq карточки, ради которого поток уже открывали заново: от петли, если часть шагов потоком не придёт. */
+  let reopenedAt = -1;
   let starting: Promise<void> | undefined;
   let refreshing: Promise<void> | undefined;
   let dirty = false;
@@ -124,7 +128,15 @@ export function createTaskStore(deps: TaskStoreDeps, taskId: string) {
           if (!dirty || disposed) break;
         }
         // Поток закрылся на конечном статусе, а задача снова работает (её продолжили в другой вкладке).
-        if (ended && !disposed && task.value && !isTerminalTask(task.value.status)) reopenStream();
+        // Или она уже закончилась, но в ней есть шаги, которых поток не принёс.
+        if (ended && !disposed && task.value) {
+          const working = !isTerminalTask(task.value.status);
+          const missed = task.value.lastSeq > received && task.value.lastSeq !== reopenedAt;
+          if (working || missed) {
+            reopenedAt = task.value.lastSeq;
+            reopenStream();
+          }
+        }
       } catch (err) {
         if (!disposed) {
           const failure = err instanceof ApiRequestError ? err : new ApiRequestError(0, 'network', String(err));
@@ -215,8 +227,20 @@ export function createTaskStore(deps: TaskStoreDeps, taskId: string) {
      * всё, что идёт дальше (те же seq отбросит mergeStep).
      */
     async followUp(text: string): Promise<void> {
+      if (sending) return;
+      sending = true;
       const before = task.value;
-      const { task: updated } = await deps.api.reply(taskId, text);
+      let updated: TaskDetail;
+      try {
+        updated = (await deps.api.reply(taskId, text)).task;
+      } catch (err) {
+        // Отказ (например, 409: задачу уже продолжили в другой вкладке): показанное могло устареть.
+        if (!disposed) void refresh();
+        throw err;
+      } finally {
+        sending = false;
+      }
+      if (disposed) return;
       batch(() => {
         task.value = updated;
         if (before && updated.cycle > before.cycle) {

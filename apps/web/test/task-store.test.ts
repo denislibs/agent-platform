@@ -172,6 +172,97 @@ test('a task continued elsewhere: a re-read that finds it working opens the stre
   expect(FakeEventSource.last.url).toBe('/api/tasks/task-1/events?after=3');
 });
 
+function followUpSetup(overrides: {
+  post?: () => Response | Promise<Response>;
+  card?: () => ReturnType<typeof taskDetail>;
+}) {
+  const card = overrides.card ?? (() => taskDetail({ status: 'done', lastSeq: 3 }));
+  const { fetch, calls } = fakeFetch({
+    'GET /api/tasks/task-1': () => json(taskResponse({ task: card() })),
+    'POST /api/tasks/task-1/messages': () => (overrides.post ?? (() => json({ task: card() }, 202)))(),
+  });
+  const store = createTaskStore(
+    {
+      api: createApi({ fetch }),
+      openEvents: opts => openTaskEvents({ ...opts, createSource: url => new FakeEventSource(url) }),
+    },
+    'task-1',
+  );
+  return { store, calls };
+}
+
+function deferred() {
+  let resolve!: (res: Response) => void;
+  const promise = new Promise<Response>(r => (resolve = r));
+  return { promise, resolve };
+}
+
+async function endedAt(store: ReturnType<typeof createTaskStore>, seq: number): Promise<void> {
+  await store.start();
+  FakeEventSource.last.emit('step', status(seq, 'finalizing', 'done'));
+  FakeEventSource.last.emit('end', { status: 'done' });
+  await tick();
+  await tick();
+}
+
+test('leaving the screen during a follow-up opens no stream', async () => {
+  const pending = deferred();
+  const { store } = followUpSetup({ post: () => pending.promise });
+  await endedAt(store, 3);
+  const sources = FakeEventSource.all.length;
+  const sending = store.followUp('More');
+  store.dispose();
+  pending.resolve(json({ task: taskDetail({ status: 'planning', cycle: 2, lastSeq: 5 }) }, 202));
+  await sending;
+  await tick();
+  expect(FakeEventSource.all).toHaveLength(sources);
+  expect(store.steps.value.map(s => s.seq)).toEqual([3]);
+});
+
+test('a second follow-up while one is in flight does nothing', async () => {
+  const pending = deferred();
+  const { store, calls } = followUpSetup({ post: () => pending.promise });
+  await endedAt(store, 3);
+  const first = store.followUp('One');
+  await store.followUp('Two');
+  pending.resolve(json({ task: taskDetail({ status: 'planning', cycle: 2, lastSeq: 5 }) }, 202));
+  await first;
+  expect(calls.filter(c => c.method === 'POST')).toHaveLength(1);
+  expect(calls.find(c => c.method === 'POST')?.body).toEqual({ text: 'One' });
+});
+
+test('a refused follow-up re-reads the task, so a task running in another tab shows up', async () => {
+  let card = taskDetail({ status: 'done', lastSeq: 3 });
+  const { store, calls } = followUpSetup({
+    card: () => card,
+    post: () => json({ error: { code: 'conflict', message: 'task is running' } }, 409),
+  });
+  await endedAt(store, 3);
+  const reads = calls.filter(c => c.method === 'GET').length;
+  card = taskDetail({ status: 'planning', cycle: 2, lastSeq: 5 });
+  await expect(store.followUp('More')).rejects.toMatchObject({ code: 'conflict' });
+  await tick();
+  expect(calls.filter(c => c.method === 'GET').length).toBeGreaterThan(reads);
+  expect(store.task.value).toMatchObject({ status: 'planning', cycle: 2 });
+  expect(FakeEventSource.last.url).toBe('/api/tasks/task-1/events?after=3');
+});
+
+test('a cycle continued elsewhere and already finished: a re-read with newer steps opens the stream again', async () => {
+  let card = taskDetail({ status: 'done', lastSeq: 3 });
+  const { store } = followUpSetup({ card: () => card });
+  await endedAt(store, 3);
+  expect(FakeEventSource.all).toHaveLength(1);
+  card = taskDetail({ status: 'done', cycle: 2, lastSeq: 9 });
+  await store.refresh();
+  expect(FakeEventSource.all).toHaveLength(2);
+  expect(FakeEventSource.last.url).toBe('/api/tasks/task-1/events?after=3');
+  // Поток снова закрылся, а шагов больше не пришло: тот же lastSeq второй раз поток не открывает.
+  FakeEventSource.last.emit('end', { status: 'done' });
+  await tick();
+  await tick();
+  expect(FakeEventSource.all).toHaveLength(2);
+});
+
 test('an unknown task ends in an error and opens no stream', async () => {
   const { store } = setup([]);
   await store.start();
