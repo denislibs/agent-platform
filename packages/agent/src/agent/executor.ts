@@ -11,7 +11,6 @@ import {
   type SubtaskRepository,
   type Task,
   type TaskRepository,
-  type UnitOfWork,
 } from '@agent/core';
 import type { Config, SubtaskReport } from '@agent/shared';
 import { z } from 'zod';
@@ -59,7 +58,6 @@ export class ExecutorStage {
       tasks: TaskRepository;
       subtasks: SubtaskRepository;
       steps: StepLog;
-      uow: UnitOfWork;
       sandboxes: SandboxProvider;
       search: SearchProvider;
       clock: Clock;
@@ -71,13 +69,8 @@ export class ExecutorStage {
     },
   ) {}
 
-  async run(taskId: string): Promise<StageOutcome> {
-    const startedAt = this.deps.clock.now();
-    try {
-      return await this.loop(taskId);
-    } finally {
-      await this.deps.guard.addActiveTime(taskId, startedAt);
-    }
+  run(taskId: string): Promise<StageOutcome> {
+    return this.deps.guard.timed(taskId, () => this.loop(taskId));
   }
 
   private async loop(taskId: string): Promise<StageOutcome> {
@@ -87,6 +80,7 @@ export class ExecutorStage {
     if (first.kind === 'finalizing') return { next: 'finalize' };
     if (first.kind === 'limit') return guard.stopForLimitOrStop(first.task, first.reason);
     let task = first.task;
+    const { cycle } = task;
     if (task.status === 'waiting_user') {
       // Пауза другой стадии (планирования или проверки) или ответа ещё нет: этот job устарел или повторён.
       // wait_user ничего не ставит в очередь — нужную стадию поставит пришедший ответ (API, план 4).
@@ -103,7 +97,7 @@ export class ExecutorStage {
     const sub = picked;
     let sandbox = await this.deps.sandboxes.create(task.id);
     for (let i = 0; i < config.limits.stepsPerJob; i++) {
-      const verdict = await guard.check(taskId);
+      const verdict = await guard.check(taskId, cycle);
       if (verdict.kind === 'stop') return { next: 'stop' };
       if (verdict.kind === 'finalizing') return { next: 'finalize' };
       if (verdict.kind === 'limit') return guard.stopForLimitOrStop(verdict.task, verdict.reason);
@@ -124,12 +118,10 @@ export class ExecutorStage {
     if (task.currentKind === 'review') return { next: 'review' };
     const pending = subs.find(s => s.status === 'pending');
     if (!pending) {
-      const moved = await this.deps.guard.unlessStopped(task.id, () =>
-        this.deps.guard.toFinalizing(task.id, 'running'),
-      );
+      const moved = await this.deps.guard.unlessStopped(task.id, () => this.deps.guard.toFinalizing(task, 'running'));
       return moved ? { next: 'finalize' } : { next: 'stop' };
     }
-    return this.deps.uow.run(async tx => {
+    return this.deps.guard.write(task, async tx => {
       const started = await tx.subtasks.transition(pending.id, 'running', {}, { expectedFrom: 'pending' });
       await tx.steps.append({
         taskId: task.id,
@@ -191,7 +183,7 @@ export class ExecutorStage {
   }
 
   private async step(task: Task, sub: Subtask, sandbox: Sandbox): Promise<Step1> {
-    const { gateway, compactor, steps, config } = this.deps;
+    const { gateway, compactor, guard, steps, config } = this.deps;
     const history = await this.history(task, sub);
     const unapplied = unappliedControl(history, 'executor', ExecutorControlSchema);
     if (unapplied) return { outcome: await this.applyControl(task, sub, unapplied), sandbox };
@@ -227,12 +219,14 @@ export class ExecutorStage {
         };
         return { outcome: await this.toReview(task, sub, 'reviewing', report), sandbox };
       }
-      await steps.append({
-        taskId: task.id,
-        subtaskId: sub.id,
-        agent: 'system',
-        payload: { type: 'message', role: 'user', text: PROMPTS.useATool, kind: 'note' },
-      });
+      await guard.write(task, tx =>
+        tx.steps.append({
+          taskId: task.id,
+          subtaskId: sub.id,
+          agent: 'system',
+          payload: { type: 'message', role: 'user', text: PROMPTS.useATool, kind: 'note' },
+        }),
+      );
       return { sandbox };
     }
 
@@ -281,7 +275,7 @@ export class ExecutorStage {
     to: 'reviewing' | 'failed',
     report: SubtaskReport,
   ): Promise<StageOutcome> {
-    const moved = await this.deps.uow.run(async tx => {
+    const moved = await this.deps.guard.write(task, async tx => {
       const current = await tx.tasks.get(task.id);
       if (current?.status !== 'running') return false;
       await tx.subtasks.transition(sub.id, to, { report }, { expectedFrom: 'running' });

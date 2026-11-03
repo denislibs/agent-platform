@@ -11,7 +11,7 @@ import {
 import { isTerminalTask } from '@agent/shared';
 import type { ExecutorStage } from './executor';
 import type { Finalizer } from './finalizer';
-import type { TaskGuard } from './guard';
+import { StaleJobError, type TaskGuard } from './guard';
 import { jobKey, kindForStatus, sandboxIdFor } from './jobs';
 import type { StageOutcome } from './outcome';
 import type { PlannerStage } from './planner';
@@ -51,15 +51,23 @@ export class JobRunner {
 
   /** Выполнить стадию job и действовать по исходу. Повторяемые ошибки пробрасываются (BullMQ повторит). */
   async run(job: AgentJob): Promise<StageOutcome> {
+    // Цикл на старте job: ни исход, ни сбой этой попытки не должны тронуть цикл, начатый после неё.
+    const cycle = (await this.deps.tasks.get(job.taskId))?.cycle;
     let outcome: StageOutcome;
     try {
       outcome = await this.dispatch(job);
     } catch (err) {
-      if (!(err instanceof LlmError) || err.retryable) throw err;
-      outcome = await this.modelFailed(job.taskId);
+      if (err instanceof StaleJobError || (await this.cycleChanged(job.taskId, cycle))) outcome = { next: 'stop' };
+      else if (!(err instanceof LlmError) || err.retryable) throw err;
+      else outcome = await this.modelFailed(job.taskId);
     }
-    await this.follow(job.taskId, outcome);
+    await this.follow(job.taskId, outcome, cycle);
     return outcome;
+  }
+
+  private async cycleChanged(taskId: string, cycle: number | undefined): Promise<boolean> {
+    const task = await this.deps.tasks.get(taskId);
+    return task !== undefined && task.cycle !== cycle;
   }
 
   /**
@@ -118,7 +126,7 @@ export class JobRunner {
   }
 
   /** Задача читается после стадии: ключ следующего job — по её lastSeq, уже с шагами этого job. */
-  private async follow(taskId: string, outcome: StageOutcome): Promise<void> {
+  private async follow(taskId: string, outcome: StageOutcome, cycle: number | undefined): Promise<void> {
     const task = await this.deps.tasks.get(taskId);
     switch (outcome.next) {
       case 'wait_user':
@@ -130,7 +138,8 @@ export class JobRunner {
         if (!task || isTerminalTask(task.status)) await this.destroySandbox(taskId);
         return;
       default:
-        if (task)
+        // В другом цикле задачу ведёт job, поставленный при открытии: второй цепочке там делать нечего.
+        if (task?.cycle === cycle && task)
           await this.deps.queue.enqueue({ taskId, kind: outcome.next }, jobKey(taskId, outcome.next, task.lastSeq));
     }
   }

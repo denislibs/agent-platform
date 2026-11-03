@@ -142,7 +142,7 @@ export class Finalizer {
 
     // Отмена во время выгрузки: задача уже не наша, песочницу уберёт сборщик.
     const done = await this.deps.guard.unlessStopped(taskId, () =>
-      this.deps.uow.run(async tx => {
+      this.deps.guard.write(task, async tx => {
         await tx.tasks.transition(
           taskId,
           'done',

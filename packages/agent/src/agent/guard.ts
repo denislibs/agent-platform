@@ -32,6 +32,17 @@ export function answeredAfterLastPause(steps: readonly Step[]): boolean {
   return steps.slice(pausedAt + 1).some(s => s.agent === 'user' && s.payload.type === 'message');
 }
 
+/**
+ * Job потерял задачу: её открыли заново, пока он работал, или она закончилась, а job хочет поднять песочницу. Запись
+ * такого job'а откатывается, а JobRunner завершает его без повторов: задачу ведёт новый job.
+ */
+export class StaleJobError extends Error {
+  constructor(taskId: string) {
+    super(`task ${taskId} is no longer led by this job`);
+    this.name = 'StaleJobError';
+  }
+}
+
 /** Откат перехода по условию `unless` в toFinalizing; наружу не выходит. */
 class TransitionVetoed extends Error {}
 
@@ -50,15 +61,30 @@ export class TaskGuard {
     },
   ) {}
 
-  async check(taskId: string): Promise<GuardVerdict> {
+  /** cycle — цикл, в котором начал работать job: задача в другом цикле для него то же, что остановленная. */
+  async check(taskId: string, cycle?: number): Promise<GuardVerdict> {
     const task = await this.deps.tasks.get(taskId);
-    if (!task || isTerminalTask(task.status)) return { kind: 'stop' };
+    if (!task || isTerminalTask(task.status) || (cycle !== undefined && task.cycle !== cycle)) return { kind: 'stop' };
     if (task.status === 'finalizing') return { kind: 'finalizing' };
     const { taskTokenBudget, taskWallTimeMs } = this.deps.config.limits;
     if (task.tokensUsed >= taskTokenBudget * BUDGET_SHARE) return { kind: 'limit', task, reason: 'token_budget' };
     if (task.activeMs >= taskWallTimeMs) return { kind: 'limit', task, reason: 'wall_time' };
     if ((await this.deps.ledger.balance(task.userId)) <= 0) return { kind: 'limit', task, reason: 'credits' };
     return { kind: 'ok', task };
+  }
+
+  /**
+   * Единственный путь записи job'а. Строка задачи блокируется и цикл сверяется в той же транзакции: открытие задачи
+   * заново либо уже закоммичено, и запись откатится со StaleJobError, либо ждёт блокировку и пойдёт после неё.
+   * Проверки check между записями этого не заменяют: между ними идут минуты вызова модели или команды.
+   * Задачи нет — решает act: запись в удалённую задачу даёт NotFoundError, как и раньше.
+   */
+  async write<T>(task: Pick<Task, 'id' | 'cycle'>, act: (tx: TxRepositories) => Promise<T>): Promise<T> {
+    return this.deps.uow.run(async tx => {
+      const current = await tx.lockTask(task.id);
+      if (current && current.cycle !== task.cycle) throw new StaleJobError(task.id);
+      return act(tx);
+    });
   }
 
   /**
@@ -77,7 +103,7 @@ export class TaskGuard {
   /** planning|running|waiting_user → finalizing, partial = true, stopReason; шаг status. */
   async stopForLimit(task: Task, reason: StopReason): Promise<void> {
     await this.toFinalizing(
-      task.id,
+      task,
       ['planning', 'running', 'waiting_user'],
       { partial: true, stopReason: reason },
       reason,
@@ -97,14 +123,15 @@ export class TaskGuard {
    * и увидит finalizing. Условие истинно — всё откатывается. Результат — совершён ли переход.
    */
   async toFinalizing(
-    taskId: string,
+    task: Pick<Task, 'id' | 'cycle'>,
     from: TaskStatus | readonly TaskStatus[],
     patch: TaskPatch = {},
     reason?: string,
     opts: { unless?: (tx: TxRepositories) => Promise<boolean> } = {},
   ): Promise<boolean> {
+    const taskId = task.id;
     try {
-      return await this.deps.uow.run(async tx => {
+      return await this.write(task, async tx => {
         const before = await tx.tasks.get(taskId);
         if (!before) return false;
         await tx.tasks.transition(taskId, 'finalizing', { ...patch, currentKind: 'finalize' }, { expectedFrom: from });
@@ -124,7 +151,7 @@ export class TaskGuard {
 
   /** ask_user: задача ждёт пользователя; currentKind — стадия, к которой вернуться (спецификация 4.2). */
   async pause(task: Task, kind: JobKind): Promise<void> {
-    await this.deps.uow.run(async tx => {
+    await this.write(task, async tx => {
       await tx.tasks.transition(task.id, 'waiting_user', { currentKind: kind }, { expectedFrom: task.status });
       await tx.steps.append({
         taskId: task.id,
@@ -145,7 +172,7 @@ export class TaskGuard {
   /** Ответ пользователя пришёл: обратно в planning или running, и заметка для модели. */
   async resume(task: Task): Promise<Task> {
     const to = task.currentKind === 'plan' ? 'planning' : 'running';
-    return this.deps.uow.run(async tx => {
+    return this.write(task, async tx => {
       const resumed = await tx.tasks.transition(task.id, to, {}, { expectedFrom: 'waiting_user' });
       await tx.steps.append({
         taskId: task.id,
@@ -161,11 +188,22 @@ export class TaskGuard {
     });
   }
 
-  /** tasks.activeMs += now − startedAt. */
-  async addActiveTime(taskId: string, startedAt: Date): Promise<void> {
+  /** tasks.activeMs += now − startedAt; если cycle задан и задача уже в другом цикле, это время не её. */
+  async addActiveTime(taskId: string, startedAt: Date, cycle?: number): Promise<void> {
     const elapsed = Math.max(0, this.deps.clock.now().getTime() - startedAt.getTime());
     const task = await this.deps.tasks.get(taskId);
-    if (!task || elapsed === 0) return;
+    if (!task || elapsed === 0 || (cycle !== undefined && task.cycle !== cycle)) return;
     await this.deps.tasks.update(taskId, { activeMs: task.activeMs + elapsed });
+  }
+
+  /** Стадия job'а: её время идёт в activeMs того цикла, в котором она началась. */
+  async timed<T>(taskId: string, stage: () => Promise<T>): Promise<T> {
+    const startedAt = this.deps.clock.now();
+    const cycle = (await this.deps.tasks.get(taskId))?.cycle;
+    try {
+      return await stage();
+    } finally {
+      await this.addActiveTime(taskId, startedAt, cycle);
+    }
   }
 }

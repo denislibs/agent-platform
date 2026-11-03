@@ -11,7 +11,7 @@ import {
   type UnitOfWork,
 } from '@agent/core';
 import { isTerminalTask, type Config, type JobKind } from '@agent/shared';
-import { answeredAfterLastPause, type TaskGuard } from './guard';
+import { answeredAfterLastPause, StaleJobError, type TaskGuard } from './guard';
 import { jobKey, kindForStatus } from './jobs';
 
 /** Итог одного прохода: сколько обработано и сколько элементов упало с ошибкой. */
@@ -105,7 +105,7 @@ export class Sweeper {
         // переход откатывается; ответ после нашего коммита перечитает статус, увидит finalizing и получит 409.
         // Если задачу тем временем возобновили или отменили, переход не пройдёт (InvalidTransitionError).
         const finalizing = await guard.toFinalizing(
-          task.id,
+          task,
           'waiting_user',
           { partial: true, stopReason: 'wait_timeout' },
           'wait_timeout',
@@ -119,7 +119,7 @@ export class Sweeper {
         result.count++;
       } catch (err) {
         // Задачу уже ведёт другой job — это не сбой.
-        if (err instanceof InvalidTransitionError) continue;
+        if (err instanceof InvalidTransitionError || err instanceof StaleJobError) continue;
         result.failed++;
         this.deps.logger.warn('sweeper could not time out a waiting task', {
           taskId: task.id,

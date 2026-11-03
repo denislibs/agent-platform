@@ -357,9 +357,9 @@ describe('ExecutorStage — a task cancelled mid-run', () => {
     await c.subtasks.transition(sub.id, 'reviewing', { report: { summary: 's', files: [], issues: [] } });
     await c.subtasks.transition(sub.id, 'accepted');
     const toFinalizing = c.guard.toFinalizing.bind(c.guard);
-    c.guard.toFinalizing = async (id, ...rest) => {
-      await c.tasks.transition(id, 'cancelled');
-      return toFinalizing(id, ...rest);
+    c.guard.toFinalizing = async (target, ...rest) => {
+      await c.tasks.transition(target.id, 'cancelled');
+      return toFinalizing(target, ...rest);
     };
     expect(await c.executorStage.run(task.id)).toEqual({ next: 'stop' });
     expect((await c.tasks.get(task.id))?.status).toBe('cancelled');

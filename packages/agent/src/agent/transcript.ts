@@ -1,6 +1,7 @@
-import type { ChatMessage, Role, Step, StepLog, Task } from '@agent/core';
+import type { ChatMessage, Role, Step, Task } from '@agent/core';
 import type { Config } from '@agent/shared';
 import type { ModelGateway } from './gateway';
+import type { TaskGuard } from './guard';
 import { PROMPTS } from './prompts';
 
 export const COMPACT_AT = 0.6;
@@ -125,7 +126,7 @@ function render(steps: readonly Step[]): string {
 
 /** Сжатие истории (спецификация 7): при 60 % окна старые шаги, кроме последних 6, заменяет конспект. */
 export class Compactor {
-  constructor(private readonly deps: { gateway: ModelGateway; steps: StepLog; config: Config }) {}
+  constructor(private readonly deps: { gateway: ModelGateway; guard: TaskGuard; config: Config }) {}
 
   async compact(input: {
     task: Task;
@@ -162,18 +163,20 @@ export class Compactor {
     if (!text) return history;
     // Конспект пишется от роли, которая сжимала: проверка планировщика идёт с тем же subtaskId, что и
     // исполнитель, и только по agent её конспект отделяется от истории исполнителя.
-    const summaryStep = await this.deps.steps.append({
-      taskId: task.id,
-      subtaskId,
-      agent: role,
-      payload: {
-        type: 'message',
-        role: 'assistant',
-        text,
-        kind: 'summary',
-        coversUpToSeq: old.at(-1)!.seq,
-      },
-    });
+    const summaryStep = await this.deps.guard.write(task, tx =>
+      tx.steps.append({
+        taskId: task.id,
+        subtaskId,
+        agent: role,
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          text,
+          kind: 'summary',
+          coversUpToSeq: old.at(-1)!.seq,
+        },
+      }),
+    );
     return [summaryStep, ...active.slice(cut)];
   }
 }

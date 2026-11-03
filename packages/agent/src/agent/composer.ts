@@ -19,6 +19,7 @@ import {
   WORKSPACE_HINT_FILES,
 } from './deliverables';
 import type { ModelGateway } from './gateway';
+import type { TaskGuard } from './guard';
 import { PROMPTS } from './prompts';
 import type { ToolExecutor } from './tool-executor';
 
@@ -86,6 +87,7 @@ export class ResultComposer {
       steps: StepLog;
       sandboxes: SandboxProvider;
       gateway: ModelGateway;
+      guard: TaskGuard;
       toolExecutor: ToolExecutor;
     },
   ) {}
@@ -161,8 +163,9 @@ export class ResultComposer {
     const named = [...new Set([...result.files, ...outputs, ...unreadable].map(normalise))];
     // Никто не назвал файлов и outputs/ пуста: проект мог быть собран вне неё, отчёты подзадач знают настоящие пути.
     const files = named.length > 0 ? named : [...new Set((await reportedFiles()).map(normalise))];
-    await this.deps.tasks.update(task.id, { result: result.answer });
-    return { answer: result.answer, files, partial: task.partial };
+    const answer = result.answer;
+    await this.deps.guard.write(task, tx => tx.tasks.update(task.id, { result: answer }));
+    return { answer, files, partial: task.partial };
   }
 
   /** Один вызов модели с finish. rejection — текст отказа, если вызов был, но не прошёл проверку. */

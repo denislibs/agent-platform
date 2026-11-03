@@ -14,7 +14,6 @@ import {
   type SubtaskRepository,
   type Task,
   type TxRepositories,
-  type UnitOfWork,
 } from '@agent/core';
 import { SubtaskContractSchema, type Config } from '@agent/shared';
 import { z } from 'zod';
@@ -119,7 +118,6 @@ type PlannerDeps = {
   subtasks: SubtaskRepository;
   files: FileRepository;
   fileStore: FileStore;
-  uow: UnitOfWork;
   sandboxes: SandboxProvider;
   clock: Clock;
   config: Config;
@@ -134,13 +132,8 @@ type PlanStep = { outcome?: StageOutcome; sandbox: Sandbox };
 export class PlannerStage {
   constructor(private readonly deps: PlannerDeps) {}
 
-  async plan(taskId: string): Promise<StageOutcome> {
-    const startedAt = this.deps.clock.now();
-    try {
-      return await this.planLoop(taskId);
-    } finally {
-      await this.deps.guard.addActiveTime(taskId, startedAt);
-    }
+  plan(taskId: string): Promise<StageOutcome> {
+    return this.deps.guard.timed(taskId, () => this.planLoop(taskId));
   }
 
   private async planLoop(taskId: string): Promise<StageOutcome> {
@@ -159,6 +152,7 @@ export class PlannerStage {
       return guard.stopForLimitOrStop(limited, first.reason);
     }
     let task = first.task;
+    const { cycle } = task;
     if (task.status === 'waiting_user') {
       // Пауза другой стадии или ответа ещё нет: этот job устарел или повторён (как у исполнителя).
       if (task.currentKind !== 'plan') return { next: 'wait_user' };
@@ -187,7 +181,7 @@ export class PlannerStage {
     if (!(await this.history(task)).some(s => s.payload.type === 'llm_call')) await this.copyInputs(task, sandbox);
 
     for (let i = 0; i < config.limits.stepsPerJob; i++) {
-      const verdict = await guard.check(taskId);
+      const verdict = await guard.check(taskId, cycle);
       if (verdict.kind === 'stop') return { next: 'stop' };
       if (verdict.kind === 'finalizing') return { next: 'finalize' };
       if (verdict.kind === 'limit') return guard.stopForLimitOrStop(verdict.task, verdict.reason);
@@ -215,7 +209,7 @@ export class PlannerStage {
   }
 
   private async step(task: Task, sandbox: Sandbox): Promise<PlanStep> {
-    const { steps } = this.deps;
+    const { guard } = this.deps;
     const history = await this.history(task);
     const unapplied = unappliedControl(history, 'planner', PlanControlSchema);
     if (unapplied) return { outcome: await this.applyControl(task, unapplied, sandbox), sandbox };
@@ -225,11 +219,13 @@ export class PlannerStage {
     if (result.toolCalls.length === 0) {
       if (trailingSilent([...history, llmStep]) >= SILENT_LIMIT)
         return { outcome: await this.failNoPlan(task), sandbox };
-      await steps.append({
-        taskId: task.id,
-        agent: 'system',
-        payload: { type: 'message', role: 'user', text: PROMPTS.planNudge, kind: 'note' },
-      });
+      await guard.write(task, tx =>
+        tx.steps.append({
+          taskId: task.id,
+          agent: 'system',
+          payload: { type: 'message', role: 'user', text: PROMPTS.planNudge, kind: 'note' },
+        }),
+      );
       return { sandbox };
     }
 
@@ -251,13 +247,13 @@ export class PlannerStage {
 
   /** create_plan: подзадачи и planning → running одной транзакцией, затем plan.md; ask_user: пауза. */
   private async applyControl(task: Task, control: PlanControl, sandbox: Sandbox): Promise<StageOutcome> {
-    const { guard, uow } = this.deps;
+    const { guard } = this.deps;
     if (control.kind === 'ask_user') {
       const paused = await guard.unlessStopped(task.id, () => guard.pause(task, 'plan'));
       return paused ? { next: 'wait_user' } : { next: 'stop' };
     }
     const created = await guard.unlessStopped(task.id, () =>
-      uow.run(async tx => {
+      guard.write(task, async tx => {
         const subs = await tx.subtasks.insertMany(task.id, control.subtasks);
         await tx.tasks.transition(task.id, 'running', { currentKind: 'execute' }, { expectedFrom: 'planning' });
         await tx.steps.append({
@@ -276,7 +272,7 @@ export class PlannerStage {
   /** Третий ответ без инструментов подряд: planning → failed, stopReason = no_plan. */
   private async failNoPlan(task: Task): Promise<StageOutcome> {
     await this.deps.guard.unlessStopped(task.id, () =>
-      this.deps.uow.run(async tx => {
+      this.deps.guard.write(task, async tx => {
         await tx.tasks.transition(
           task.id,
           'failed',
@@ -296,7 +292,7 @@ export class PlannerStage {
   /** queued → planning (currentKind = 'plan') и шаг status одной транзакцией; undefined — задачу отменили. */
   private async start(task: Task): Promise<Task | undefined> {
     const started = await this.deps.guard.unlessStopped(task.id, () =>
-      this.deps.uow.run(async tx => {
+      this.deps.guard.write(task, async tx => {
         const planning = await tx.tasks.transition(
           task.id,
           'planning',
@@ -329,13 +325,8 @@ export class PlannerStage {
     ];
   }
 
-  async review(taskId: string): Promise<StageOutcome> {
-    const startedAt = this.deps.clock.now();
-    try {
-      return await this.reviewLoop(taskId);
-    } finally {
-      await this.deps.guard.addActiveTime(taskId, startedAt);
-    }
+  review(taskId: string): Promise<StageOutcome> {
+    return this.deps.guard.timed(taskId, () => this.reviewLoop(taskId));
   }
 
   private async reviewLoop(taskId: string): Promise<StageOutcome> {
@@ -345,6 +336,7 @@ export class PlannerStage {
     if (first.kind === 'finalizing') return { next: 'finalize' };
     if (first.kind === 'limit') return guard.stopForLimitOrStop(first.task, first.reason);
     let task = first.task;
+    const { cycle } = task;
     if (task.status === 'waiting_user') {
       // Пауза другой стадии или ответа ещё нет: этот job устарел или повторён (как у исполнителя и планирования).
       if (task.currentKind !== 'review') return { next: 'wait_user' };
@@ -368,7 +360,7 @@ export class PlannerStage {
         : reviewTools({ canRevise: sub.attempts < config.limits.maxRevisions, canReplan });
 
     for (let i = 0; i < config.limits.stepsPerJob; i++) {
-      const verdict = await guard.check(taskId);
+      const verdict = await guard.check(taskId, cycle);
       if (verdict.kind === 'stop') return { next: 'stop' };
       if (verdict.kind === 'finalizing') return { next: 'finalize' };
       if (verdict.kind === 'limit') return guard.stopForLimitOrStop(verdict.task, verdict.reason);
@@ -426,12 +418,14 @@ export class PlannerStage {
       if (trailingSilent([...history, llmStep]) >= SILENT_LIMIT) {
         return { outcome: await this.noDecision(task, sub), sandbox };
       }
-      await this.deps.steps.append({
-        taskId: task.id,
-        subtaskId: sub.id,
-        agent: 'planner',
-        payload: { type: 'message', role: 'user', text: PROMPTS.decide, kind: 'note' },
-      });
+      await this.deps.guard.write(task, tx =>
+        tx.steps.append({
+          taskId: task.id,
+          subtaskId: sub.id,
+          agent: 'planner',
+          payload: { type: 'message', role: 'user', text: PROMPTS.decide, kind: 'note' },
+        }),
+      );
       return { sandbox };
     }
 
@@ -485,7 +479,7 @@ export class PlannerStage {
   private async noDecision(task: Task, sub: Subtask): Promise<StageOutcome> {
     if (sub.status === 'reviewing') return this.accept(task, sub);
     const { guard } = this.deps;
-    const moved = await guard.unlessStopped(task.id, () => guard.toFinalizing(task.id, 'running'));
+    const moved = await guard.unlessStopped(task.id, () => guard.toFinalizing(task, 'running'));
     return moved ? { next: 'finalize' } : { next: 'stop' };
   }
 
@@ -526,7 +520,9 @@ export class PlannerStage {
    */
   private async commit(task: Task, act: (tx: TxRepositories) => Promise<StageOutcome>): Promise<StageOutcome> {
     const done = await this.deps.guard.unlessStopped(task.id, () =>
-      this.deps.uow.run(async tx => ((await tx.tasks.get(task.id))?.status === 'running' ? act(tx) : undefined)),
+      this.deps.guard.write(task, async tx =>
+        (await tx.tasks.get(task.id))?.status === 'running' ? act(tx) : undefined,
+      ),
     );
     return done?.value ?? { next: 'stop' };
   }
