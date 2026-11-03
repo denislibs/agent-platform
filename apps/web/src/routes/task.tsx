@@ -17,6 +17,7 @@ import {
   StepGroup,
   Thinking,
   UserMessage,
+  prefersReducedMotion,
   useToast,
 } from '@agent/ui';
 import { isTerminalTask, splitCycles, type FileDto, type StepDto, type TaskDetail } from '@agent/shared';
@@ -146,6 +147,14 @@ export function TaskScreen({ id }: { id: string }) {
   const [retrying, setRetrying] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
   const [stopping, setStopping] = useState(false);
+  // Лента и подвал: к запросу нового цикла прокручивается лента, а поле сообщения ищется в подвале.
+  const feed = useRef<HTMLDivElement>(null);
+  const foot = useRef<HTMLDivElement>(null);
+  // Цикл, который экран уже видел (первое чтение задачи только запоминает его), и цикл, к запросу которого ещё надо прокрутить.
+  const [seenCycle, setSeenCycle] = useState<number | null>(null);
+  const [scrollTo, setScrollTo] = useState<number | null>(null);
+  // Отправка отказана: когда поле снова станет доступным, фокус вернётся в него.
+  const [refocus, setRefocus] = useState(false);
   const task = store.task.value;
   const steps = store.steps.value;
   usePage(task ? taskTitle(task.prompt) : 'Task');
@@ -171,6 +180,34 @@ export function TaskScreen({ id }: { id: string }) {
   // Лента по циклам работы: статус, план, шаги и итог на экране — только последнего, остальные показаны как были.
   const cycles = useMemo(() => splitCycles(steps), [steps]);
   const current = cycles.at(-1)!;
+  // Начался новый цикл (отсюда или из другой вкладки): запрос и план могут оказаться ниже экрана — показать их
+  // и раскрыть шаги. Открытие задачи с несколькими циклами не прокручивает: цикл запоминается без реакции.
+  const taskCycle = task?.cycle;
+  useEffect(() => {
+    if (taskCycle === undefined) return;
+    if (seenCycle === null) setSeenCycle(taskCycle);
+    else if (taskCycle > seenCycle) {
+      setSeenCycle(taskCycle);
+      setStepsOpen(true);
+      setScrollTo(taskCycle);
+    }
+  }, [taskCycle, seenCycle]);
+  // Карточка может обогнать ленту: прокрутка ждёт, пока в ленте появится сам цикл.
+  const shown = cycles.length;
+  useEffect(() => {
+    if (scrollTo === null || shown < scrollTo) return;
+    setScrollTo(null);
+    // Запрос текущего цикла — последнее сообщение пользователя среди прямых потомков ленты (ответы лежат глубже).
+    const request = Array.from(feed.current?.children ?? []).findLast(el => el.classList.contains('ui-msg-user'));
+    request?.scrollIntoView?.({ block: 'start', behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+  }, [scrollTo, shown]);
+  // Поле на время отправки недоступно и теряет фокус; после отказа клавиатурный пользователь правит текст и повторяет.
+  useEffect(() => {
+    if (!refocus || sending) return;
+    foot.current?.querySelector('textarea')?.focus();
+    setRefocus(false);
+  }, [refocus, sending]);
+
   const elapsed = useElapsed(task, cycleStart(current));
   const allEntries = useMemo(() => toolEntries(steps), [steps]);
   const entries = useMemo(() => toolEntries(current), [current]);
@@ -264,11 +301,11 @@ export function TaskScreen({ id }: { id: string }) {
     try {
       await store.followUp(text);
       setMessage('');
-      setStepsOpen(true);
       // Поле становится недоступным: фокус не должен пропасть вместе с ним (как в usePage).
       document.getElementById(MAIN_ID)?.focus({ preventScroll: true });
     } catch (err) {
       // Стор при отказе уже перечитал карточку: экран догоняет её сам.
+      setRefocus(true);
       if (isConflict(err)) toast.show({ tone: 'info', title: 'The task has changed', description: errorText(err) });
       else toast.show({ tone: 'danger', title: 'The message was not sent', description: errorText(err) });
     } finally {
@@ -321,7 +358,7 @@ export function TaskScreen({ id }: { id: string }) {
   return (
     <Shell computer={<TaskComputer entries={computerEntries(allEntries)} />}>
       {statusRegion}
-      <div class="ui-shell__body">
+      <div class="ui-shell__body" ref={feed}>
         <h1 class="ui-sr-only">{taskTitle(task.prompt)}</h1>
         {/* Задача пропала или стала чужой, пока экран открыт: поток закрыт навсегда — сказать, а не замереть. */}
         {error && (
@@ -449,7 +486,7 @@ export function TaskScreen({ id }: { id: string }) {
       </div>
       {/* Задачи больше нет: продолжать нечего, это уже сказал Alert выше. */}
       {!(finished && error) && (
-        <div class="ui-shell__foot">
+        <div class="ui-shell__foot" ref={foot}>
           {finished ? (
             <Composer
               value={message}
