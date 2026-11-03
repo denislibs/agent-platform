@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { SandboxError } from '@agent/core';
+import { currentCycle } from '@agent/shared';
 import { PROMPTS, type StageOutcome } from '../../src';
 import { calls, seedTask, setupAgent } from './fixtures';
 
@@ -276,6 +277,48 @@ describe('a follow-up on a finished task', () => {
 
     await expect(c.runner.run(c.queue.next()!)).rejects.toThrow('docker exec failed');
     expect(c.logger.entries).toEqual([]);
+  });
+
+  test('a restore that exhausts its attempts drops the sandbox, so the next message restores every file', async () => {
+    const c = setupAgent({ SANDBOX_RETENTION_MS: String(RETENTION_MS) });
+    const task = await firstCycle(c);
+    c.clock.advance(RETENTION_MS);
+    await c.sweeper.sweep();
+    await c.intake.reopen({ taskId: task.id, userId: task.userId, text: 'More' });
+    const job = c.queue.next()!;
+    // Хранилище недоступно на всех попытках: в песочнице остаётся неполная рабочая папка.
+    const getBytes = c.fileStore.getBytes.bind(c.fileStore);
+    c.fileStore.getBytes = () => Promise.reject(new Error('S3 is down'));
+    await expect(c.runner.run(job)).rejects.toThrow('S3 is down');
+    await expect(c.runner.run(job)).rejects.toThrow('S3 is down');
+    await c.runner.onExhausted(job, new Error('S3 is down'));
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'failed', cycle: 2 });
+    expect(await c.sandboxes.list()).toEqual([]);
+
+    // Хранилище вернулось; следующее сообщение внутри срока хранения.
+    c.fileStore.getBytes = getBytes;
+    await c.intake.reopen({ taskId: task.id, userId: task.userId, text: 'Try again' });
+    c.llm.push(calls(['create_plan', { subtasks: [{ goal: 'more', done_criteria: 'x' }] }]));
+    expect(await c.runner.run(c.queue.next()!)).toEqual({ next: 'execute' });
+
+    const sandbox = await c.sandboxes.create(task.id);
+    expect(TEXT.decode(await sandbox.readFile('inputs/data.csv'))).toBe('a,b');
+    expect(TEXT.decode(await sandbox.readFile('outputs/report.md'))).toBe('first version');
+    const notes = currentCycle(await c.steps.list(task.id)).filter(
+      s => s.payload.type === 'message' && s.payload.text === PROMPTS.workspaceRestored,
+    );
+    expect(notes).toHaveLength(1);
+  });
+
+  test('a plan job exhausted without a restore in progress only stops the sandbox', async () => {
+    const c = setupAgent({ SANDBOX_RETENTION_MS: String(RETENTION_MS) });
+    const task = await firstCycle(c);
+    await c.intake.reopen({ taskId: task.id, userId: task.userId, text: 'More' });
+
+    await c.runner.onExhausted(c.queue.next()!, new Error('model is down'));
+
+    expect(await c.tasks.get(task.id)).toMatchObject({ status: 'failed', cycle: 2 });
+    expect(await c.sandboxes.list()).toMatchObject([{ taskId: task.id, running: false }]);
   });
 
   test('a question and an answer work in the second cycle, and so does stopping it', async () => {

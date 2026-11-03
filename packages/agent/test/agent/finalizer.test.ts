@@ -407,7 +407,7 @@ describe('Finalizer — a later cycle', () => {
 });
 
 describe('Finalizer — delivered earlier list', () => {
-  test('a long list of earlier files is cut at the hint limit, with a note', async () => {
+  test('a long list of earlier files keeps the newest up to the hint limit, with a note', async () => {
     const c = setupAgent();
     const task = await secondCycle(c, []);
     const total = WORKSPACE_HINT_FILES + 5;
@@ -417,6 +417,10 @@ describe('Finalizer — delivered earlier list', () => {
     const prompt = c.llm.calls[0]!.messages.map(m => m.content ?? '').join('\n');
     const section = prompt.slice(prompt.indexOf('Delivered earlier'));
     expect(section.match(/^- old\//gm)).toHaveLength(WORKSPACE_HINT_FILES);
+    // Файлы идут от старых к новым: отрезаются первые пять, последний остаётся.
+    expect(section).not.toContain('- old/f004.md');
+    expect(section).toContain('- old/f005.md');
+    expect(section).toContain(`- old/f${total - 1}.md`);
     expect(section).toContain(`(the list is cut at ${WORKSPACE_HINT_FILES} files; more exist)`);
   });
 

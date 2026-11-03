@@ -5,6 +5,7 @@ import {
   type Clock,
   type JobQueue,
   type SandboxProvider,
+  type StepLog,
   type TaskRepository,
   type UnitOfWork,
 } from '@agent/core';
@@ -14,7 +15,7 @@ import type { Finalizer } from './finalizer';
 import { StaleJobError, type TaskGuard } from './guard';
 import { jobKey, kindForStatus, sandboxIdFor } from './jobs';
 import type { StageOutcome } from './outcome';
-import type { PlannerStage } from './planner';
+import { plannerHistory, restoreIncomplete, type PlannerStage } from './planner';
 
 /** Сколько символов сообщения ошибки попадает в шаг status при failed. */
 const REASON_LIMIT = 200;
@@ -39,6 +40,7 @@ export class JobRunner {
     private readonly deps: {
       tasks: TaskRepository;
       sandboxes: SandboxProvider;
+      steps: StepLog;
       queue: JobQueue;
       uow: UnitOfWork;
       clock: Clock;
@@ -108,7 +110,11 @@ export class JobRunner {
       if (err instanceof InvalidTransitionError || err instanceof StaleJobError) return;
       throw err;
     }
-    await this.stopSandbox(task.id);
+    // Возврат файлов не закончен: песочница неполна, а следующий цикл заметки не увидит и возврат пропустит. Нет
+    // песочницы — следующее открытие вернёт всё заново.
+    if (job.kind === 'plan' && cycle > 1 && restoreIncomplete(plannerHistory(await this.deps.steps.list(task.id))))
+      await this.destroySandbox(task.id);
+    else await this.stopSandbox(task.id);
   }
 
   private dispatch(job: AgentJob): Promise<StageOutcome> {

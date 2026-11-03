@@ -186,6 +186,17 @@ type PlanStep = { outcome?: StageOutcome; sandbox: Sandbox };
 const isRestoredNote = (s: Step) =>
   s.payload.type === 'message' && s.payload.kind === 'note' && s.payload.text === PROMPTS.workspaceRestored;
 
+/** Шаги планировщика в текущем цикле: без шагов подзадач и без статусов. */
+export const plannerHistory = (steps: readonly Step[]): Step[] =>
+  currentCycle(steps).filter(s => s.subtaskId === null && s.payload.type !== 'status');
+
+/**
+ * Возврат файлов начат и не закончен: заметка о пустой рабочей папке записана, а модель планировщика ещё не вызывалась.
+ * Такую песочницу нужно заполнить заново целиком; по одной заметке этого не видно, если песочница уже есть.
+ */
+export const restoreIncomplete = (history: readonly Step[]): boolean =>
+  history.some(isRestoredNote) && !history.some(s => s.payload.type === 'llm_call');
+
 /** Файл не вернуть и повтор не поможет: объекта нет в хранилище или песочница отказала в самом файле. */
 const unrestorable = (err: unknown) =>
   (err instanceof NotFoundError && err.entity === 'object') ||
@@ -265,9 +276,7 @@ export class PlannerStage {
 
   /** Шаги планирования этого цикла: уровень задачи (subtaskId = null), без шагов status. */
   private async history(task: Task): Promise<Step[]> {
-    return currentCycle(await this.deps.steps.list(task.id)).filter(
-      s => s.subtaskId === null && s.payload.type !== 'status',
-    );
+    return plannerHistory(await this.deps.steps.list(task.id));
   }
 
   private async step(task: Task, sandbox: Sandbox): Promise<PlanStep> {
@@ -400,7 +409,7 @@ export class PlannerStage {
       );
     }
     const sandbox = await sandboxes.create(task.id);
-    if (gone || (noted && !called)) await this.restoreFiles(task, sandbox);
+    if (gone || restoreIncomplete(history)) await this.restoreFiles(task, sandbox);
     return sandbox;
   }
 
