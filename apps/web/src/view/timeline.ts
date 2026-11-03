@@ -1,4 +1,4 @@
-import type { StepDto } from '@agent/shared';
+import { isReopenStep, type StepDto } from '@agent/shared';
 
 /** Вызов инструмента в ленте: аргументы из llm_call, результат из tool_result (их связывает toolCallId). */
 export interface ToolEntry {
@@ -170,9 +170,49 @@ export interface DialogueItem {
   text: string;
 }
 
-/** Переписка после запроса: вопросы агента (ask_user) и ответы пользователя по порядку ленты. */
+/** Запрос цикла работы: его первое сообщение пользователя. */
+export function requestOf(steps: readonly StepDto[]): string | null {
+  const first = steps.find(isUserMessage);
+  return first?.payload.type === 'message' ? first.payload.text : null;
+}
+
+export interface CycleAnswer {
+  text: string;
+  /** Пути файлов, выданных в этом цикле. */
+  files: string[];
+}
+
+/** Итоговый ответ цикла; null — цикл не дошёл до ответа или шаг записан ещё до плана 9. */
+export function answerOf(steps: readonly StepDto[]): CycleAnswer | null {
+  const step = steps.findLast(s => s.payload.type === 'message' && s.payload.kind === 'answer');
+  return step?.payload.type === 'message' ? { text: step.payload.text, files: step.payload.files ?? [] } : null;
+}
+
+/** Цикл закончился без ответа: сбой с причиной или остановка пользователем. */
+export function cycleEnd(steps: readonly StepDto[]): { status: 'failed' | 'cancelled'; reason: string | null } | null {
+  const step = steps.findLast(
+    s => s.payload.type === 'status' && (s.payload.to === 'failed' || s.payload.to === 'cancelled'),
+  );
+  if (step?.payload.type !== 'status' || (step.payload.to !== 'failed' && step.payload.to !== 'cancelled')) return null;
+  return { status: step.payload.to, reason: step.payload.reason ?? null };
+}
+
+/** Секунды работы законченного цикла: от первого шага до последнего. */
+export function cycleSeconds(steps: readonly StepDto[]): number {
+  const first = steps.at(0);
+  const last = steps.at(-1);
+  return first && last ? Math.max(0, (Date.parse(last.createdAt) - Date.parse(first.createdAt)) / 1000) : 0;
+}
+
+/** Когда начался цикл: время его шага открытия; у первого цикла такого шага нет, и его начало — создание задачи. */
+export function cycleStart(steps: readonly StepDto[]): string | null {
+  const first = steps.at(0);
+  return first && isReopenStep(first) ? first.createdAt : null;
+}
+
+/** Переписка цикла после запроса: вопросы агента (ask_user) и ответы пользователя по порядку ленты. */
 export function conversation(steps: readonly StepDto[]): DialogueItem[] {
-  // Первое сообщение пользователя — сам запрос: его показывает UserMessage с prompt задачи.
+  // Первое сообщение пользователя — сам запрос: его показывает экран отдельно.
   const prompt = steps.find(isUserMessage)?.seq;
   return steps.flatMap((s): DialogueItem[] => {
     const question = askOf(s);

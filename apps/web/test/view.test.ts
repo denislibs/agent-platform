@@ -11,11 +11,16 @@ import {
   workingLabel,
 } from '../src/view/status.ts';
 import {
+  answerOf,
   computerEntries,
   conversation,
+  cycleEnd,
+  cycleSeconds,
+  cycleStart,
   describeTool,
   failureReason,
   pendingQuestion,
+  requestOf,
   summarize,
   toolEntries,
 } from '../src/view/timeline.ts';
@@ -174,6 +179,39 @@ describe('timeline', () => {
       askSeq: null,
       question: 'The agent needs your input to continue.',
     });
+  });
+
+  test('a cycle has its own request, dialogue and answer', () => {
+    const user = { agent: 'user', subtaskId: null } as const;
+    const reopen = { ...status(5, 'done', 'planning'), createdAt: '2026-11-02T11:00:00.000Z' };
+    const cycle = [
+      reopen,
+      step(6, { type: 'message', role: 'user', text: 'Add a filter' }, user),
+      ...toolStep(7, 'ask_user', { question: 'Which?' }, { control: { kind: 'ask_user', question: 'Which?' } }),
+      status(9, 'running', 'waiting_user'),
+      step(10, { type: 'message', role: 'user', text: 'Dates' }, user),
+      step(11, { type: 'message', role: 'assistant', text: 'Filtered', kind: 'answer', files: ['outputs/a.md'] }),
+      { ...status(12, 'finalizing', 'done'), createdAt: '2026-11-02T11:00:30.000Z' },
+    ];
+    expect(requestOf(cycle)).toBe('Add a filter');
+    expect(conversation(cycle)).toEqual([
+      { seq: 8, role: 'agent', text: 'Which?' },
+      { seq: 10, role: 'user', text: 'Dates' },
+    ]);
+    expect(answerOf(cycle)).toEqual({ text: 'Filtered', files: ['outputs/a.md'] });
+    expect(cycleEnd(cycle)).toBeNull();
+    expect(cycleSeconds(cycle)).toBe(30);
+    expect(cycleStart(cycle)).toBe('2026-11-02T11:00:00.000Z');
+  });
+
+  test('a cycle without an answer: how it ended; the first cycle has no reopen step', () => {
+    expect(answerOf([status(2, 'running', 'failed', 'boom')])).toBeNull();
+    expect(cycleEnd([status(2, 'running', 'failed', 'boom')])).toEqual({ status: 'failed', reason: 'boom' });
+    expect(cycleEnd([status(2, 'running', 'cancelled')])).toEqual({ status: 'cancelled', reason: null });
+    expect(cycleStart([status(1, 'queued', 'planning')])).toBeNull();
+    expect(cycleStart([])).toBeNull();
+    expect(cycleSeconds([])).toBe(0);
+    expect(requestOf([])).toBeNull();
   });
 
   test('the failure reason comes from the status step', () => {
