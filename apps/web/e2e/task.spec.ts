@@ -69,6 +69,24 @@ test('sign in with a magic link, run a task that asks a question, read the answe
   // Вложение действительно лежит в S3 байт в байт (недогруженный файл API отдал бы 409 upload_incomplete).
   expect(await downloadText(/^names\.csv/, 'names.csv')).toBe('name\nAda\n');
 
+  // Продолжение беседы: та же задача, новый план, тот же файл в новой версии; прошлый ответ остаётся в ленте.
+  const followUp = page.getByRole('textbox', { name: 'Message' });
+  await followUp.fill('Make it shorter');
+  await followUp.press('Enter');
+  await expect(page.getByText('Make it shorter')).toBeVisible();
+  await expect(page.getByText('shorter', { exact: true })).toHaveJSProperty('tagName', 'STRONG');
+  await expect(page.getByText('your file')).toBeVisible();
+  await expect(page.getByText('Task completed')).toHaveCount(1);
+  await expect(page.getByRole('list', { name: 'Plan' }).getByRole('listitem')).toContainText('Shorten the greeting');
+  const nav = page.getByRole('navigation', { name: 'Tasks' });
+  await expect(nav.getByRole('link', { name: /Write a greeting/ })).toContainText('completed');
+  const latest = page.waitForEvent('download');
+  await page
+    .getByRole('link', { name: /^hello\.md Document/ })
+    .last()
+    .click();
+  expect(await readFile(await (await latest).path(), 'utf8')).toBe('# Hi');
+
   // Library показывает результат задачи; удаление задачи возвращает на главную и убирает его файлы.
   await page.getByRole('link', { name: 'Library' }).click();
   await expect(page.getByRole('link', { name: 'Download hello.md' })).toBeVisible();

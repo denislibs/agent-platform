@@ -19,9 +19,9 @@ import {
   UserMessage,
   useToast,
 } from '@agent/ui';
-import { isTerminalTask, type TaskDetail } from '@agent/shared';
+import { isTerminalTask, splitCycles, type FileDto, type StepDto, type TaskDetail } from '@agent/shared';
 import { ApiRequestError } from '../api/client.ts';
-import { usePage } from '../layout/page.ts';
+import { MAIN_ID, usePage } from '../layout/page.ts';
 import { Shell, taskTitle } from '../layout/shell.tsx';
 import { useApp } from '../state/app.ts';
 import { createTaskStore } from '../state/task.ts';
@@ -30,17 +30,22 @@ import { baseName, fileMeta } from '../view/format.ts';
 import { Markdown } from '../view/markdown.tsx';
 import { filesLost, isWorking, planItems, statusAnnouncement, stopReasonText, workingLabel } from '../view/status.ts';
 import {
+  answerOf,
   computerEntries,
   conversation,
+  cycleEnd,
+  cycleSeconds,
+  cycleStart,
   failureReason,
   pendingQuestion,
+  requestOf,
   summarize,
   toolEntries,
 } from '../view/timeline.ts';
 import { TaskComputer } from './computer.tsx';
 
-/** Секунды работы: от создания до конца (или до сейчас, пока задача жива), тикает раз в секунду. */
-function useElapsed(task: TaskDetail | null): number {
+/** Секунды работы цикла: от его начала до конца (или до сейчас, пока задача жива), тикает раз в секунду. */
+function useElapsed(task: TaskDetail | null, startedAt: string | null): number {
   const [now, setNow] = useState(() => Date.now());
   const live = task !== null && !isTerminalTask(task.status);
   useEffect(() => {
@@ -50,7 +55,7 @@ function useElapsed(task: TaskDetail | null): number {
   }, [live]);
   if (!task) return 0;
   const end = task.finishedAt ? Date.parse(task.finishedAt) : now;
-  return Math.max(0, (end - Date.parse(task.createdAt)) / 1000);
+  return Math.max(0, (end - Date.parse(startedAt ?? task.createdAt)) / 1000);
 }
 
 /** 409 conflict: задача уже не в том состоянии, на которое рассчитывал запрос (вопрос сменился, задача закончилась). */
@@ -59,7 +64,67 @@ const isConflict = (err: unknown): boolean => err instanceof ApiRequestError && 
 /** Чужая или несуществующая задача: экран говорит «не найдена», не раскрывая, есть ли она у другого. */
 const isMissing = (err: ApiRequestError): boolean => err.status === 404 || err.status === 403;
 
-/** Экран задачи (спецификация 12, эталон — экран задачи на витрине): диалог, план, шаги, ответ, компьютер. */
+/** Отметка в inflight для следующего сообщения: seq паузы не бывает отрицательным. */
+const FOLLOW_UP = -1;
+
+const fileCard = (f: FileDto) => (
+  <FileCard key={f.id} name={baseName(f.path)} meta={fileMeta(f.path, f.size)} href={f.url} />
+);
+
+/** Прошлый цикл работы: запрос, свёрнутые шаги, переписка, а дальше ответ с файлами или как цикл закончился. */
+function EarlierCycle(props: {
+  steps: readonly StepDto[];
+  request: string | null;
+  inputs: readonly FileDto[];
+  outputs: readonly FileDto[];
+}) {
+  const { steps, request, inputs, outputs } = props;
+  const entries = useMemo(() => toolEntries(steps), [steps]);
+  const answer = answerOf(steps);
+  const end = cycleEnd(steps);
+  return (
+    <>
+      {request !== null && <UserMessage>{request}</UserMessage>}
+      {inputs.map(fileCard)}
+      <AgentMessage working={false} elapsed={cycleSeconds(steps)} mark={<span class="ui-mark ui-mark--sm" />}>
+        {entries.length > 0 && (
+          <StepGroup summary={summarize(entries)} defaultExpanded={false}>
+            {entries.map(e => (
+              <Step key={e.seq} tool={e.tool} error={!e.ok}>
+                {e.label}
+              </Step>
+            ))}
+          </StepGroup>
+        )}
+        {conversation(steps).map(m =>
+          m.role === 'agent' ? (
+            <AgentText key={m.seq}>{m.text}</AgentText>
+          ) : (
+            <UserMessage key={m.seq}>{m.text}</UserMessage>
+          ),
+        )}
+        {answer && (
+          <AgentText>
+            <Markdown text={answer.text} />
+          </AgentText>
+        )}
+        {answer && outputs.filter(f => answer.files.includes(f.path)).map(fileCard)}
+        {end?.status === 'failed' && (
+          <Alert tone="danger" title="This request failed">
+            {end.reason ?? 'Something went wrong on our side.'}
+          </Alert>
+        )}
+        {end?.status === 'cancelled' && (
+          <div class="ui-agent__actions">
+            <Badge icon={OctagonX}>Stopped</Badge>
+          </div>
+        )}
+      </AgentMessage>
+    </>
+  );
+}
+
+/** Экран задачи (спецификация 12, эталон — экран задачи на витрине): диалог по циклам, план, шаги, ответ, компьютер. */
 export function TaskScreen({ id }: { id: string }) {
   const app = useApp();
   const toast = useToast();
@@ -71,7 +136,10 @@ export function TaskScreen({ id }: { id: string }) {
   // Ответ, который не ушёл, возвращается в поле: key пересоздаёт AskCard с этим текстом.
   const [draft, setDraft] = useState({ key: 0, text: '' });
   const [sending, setSending] = useState(false);
-  // Паузы, ответ на которые в полёте: отметка ставится синхронно, до await (два Enter в одном такте), state — для поля.
+  // Следующее сообщение на законченной задаче; при отказе API остаётся в поле.
+  const [message, setMessage] = useState('');
+  // Паузы (и сообщение на законченной задаче — FOLLOW_UP), ответ на которые в полёте: отметка ставится синхронно,
+  // до await (два Enter в одном такте), state — для поля.
   const inflight = useRef(new Set<number>());
   // Пауза, на которую ответ уже принят (202): до эха в ленте задача ещё waiting_user, но вопрос закрыт.
   const [answered, setAnswered] = useState<number | null>(null);
@@ -100,11 +168,15 @@ export function TaskScreen({ id }: { id: string }) {
     }
   }, [app, store, status]);
 
-  const elapsed = useElapsed(task);
-  const entries = useMemo(() => toolEntries(steps), [steps]);
-  const pending = task?.status === 'waiting_user' ? pendingQuestion(steps) : null;
+  // Лента по циклам работы: статус, план, шаги и итог на экране — только последнего, остальные показаны как были.
+  const cycles = useMemo(() => splitCycles(steps), [steps]);
+  const current = cycles.at(-1)!;
+  const elapsed = useElapsed(task, cycleStart(current));
+  const allEntries = useMemo(() => toolEntries(steps), [steps]);
+  const entries = useMemo(() => toolEntries(current), [current]);
+  const pending = task?.status === 'waiting_user' ? pendingQuestion(current) : null;
   const question = pending && pending.pauseSeq !== answered ? pending : null;
-  const dialogue = useMemo(() => conversation(steps), [steps]);
+  const dialogue = useMemo(() => conversation(current), [current]);
   const error = store.error.value;
   // Недоставленный ответ относится к своей паузе: другой вопрос (или вопрос после перерыва) им не заполняется.
   const pauseSeq = pending?.pauseSeq;
@@ -173,8 +245,37 @@ export function TaskScreen({ id }: { id: string }) {
   }
 
   const working = isWorking(task.status);
+  const finished = isTerminalTask(task.status);
   const outputs = store.files.value.filter(f => f.kind === 'output');
   const inputs = store.files.value.filter(f => f.kind === 'input');
+  const plan = store.subtasks.value.filter(s => s.cycle === task.cycle);
+  const earlier = cycles.slice(0, -1);
+  const answerStep = answerOf(current);
+  // Задача, законченная до плана 9, не записала ответ шагом: её итог и файлы — из карточки.
+  const result = answerStep?.text ?? task.result;
+  const delivered = answerStep ? outputs.filter(f => answerStep.files.includes(f.path)) : outputs;
+
+  const sendMessage = async (text: string) => {
+    // Второй Enter в том же такте: поле ещё не стало недоступным. Стор такой вызов проглотил бы без отправки,
+    // и экран очистил бы поле и фокус зря, поэтому в стор уходит только первый.
+    if (inflight.current.has(FOLLOW_UP)) return;
+    inflight.current.add(FOLLOW_UP);
+    setSending(true);
+    try {
+      await store.followUp(text);
+      setMessage('');
+      setStepsOpen(true);
+      // Поле становится недоступным: фокус не должен пропасть вместе с ним (как в usePage).
+      document.getElementById(MAIN_ID)?.focus({ preventScroll: true });
+    } catch (err) {
+      // Стор при отказе уже перечитал карточку: экран догоняет её сам.
+      if (isConflict(err)) toast.show({ tone: 'info', title: 'The task has changed', description: errorText(err) });
+      else toast.show({ tone: 'danger', title: 'The message was not sent', description: errorText(err) });
+    } finally {
+      inflight.current.delete(FOLLOW_UP);
+      setSending(false);
+    }
+  };
 
   const answer = async (text: string) => {
     if (!question || inflight.current.has(question.pauseSeq)) return;
@@ -218,7 +319,7 @@ export function TaskScreen({ id }: { id: string }) {
   };
 
   return (
-    <Shell computer={<TaskComputer entries={computerEntries(entries)} />}>
+    <Shell computer={<TaskComputer entries={computerEntries(allEntries)} />}>
       {statusRegion}
       <div class="ui-shell__body">
         <h1 class="ui-sr-only">{taskTitle(task.prompt)}</h1>
@@ -244,20 +345,27 @@ export function TaskScreen({ id }: { id: string }) {
             This page may be out of date.
           </Alert>
         )}
-        <UserMessage>{task.prompt}</UserMessage>
-        {inputs.map(f => (
-          <FileCard key={f.id} name={baseName(f.path)} meta={fileMeta(f.path, f.size)} href={f.url} />
+        {earlier.map((cycle, i) => (
+          <EarlierCycle
+            key={cycle[0]?.seq ?? 0}
+            steps={cycle}
+            request={i === 0 ? task.prompt : requestOf(cycle)}
+            inputs={i === 0 ? inputs : []}
+            outputs={outputs}
+          />
         ))}
+        <UserMessage>{earlier.length === 0 ? task.prompt : requestOf(current)}</UserMessage>
+        {earlier.length === 0 && inputs.map(fileCard)}
         <AgentMessage
           working={working}
           elapsed={elapsed}
           mark={<span class="ui-mark ui-mark--sm" />}
           onShowDetails={() => setStepsOpen(true)}
         >
-          {store.subtasks.value.length > 0 && (
+          {plan.length > 0 && (
             <>
               <AgentText>Here's my plan:</AgentText>
-              <PlanList items={planItems(store.subtasks.value)} />
+              <PlanList items={planItems(plan)} />
             </>
           )}
           {entries.length > 0 && (
@@ -307,14 +415,12 @@ export function TaskScreen({ id }: { id: string }) {
                     The agent stopped early because {stopReasonText(task.stopReason)}.
                   </Alert>
                 ))}
-              {task.result && (
+              {result && (
                 <AgentText>
-                  <Markdown text={task.result} />
+                  <Markdown text={result} />
                 </AgentText>
               )}
-              {outputs.map(f => (
-                <FileCard key={f.id} name={baseName(f.path)} meta={fileMeta(f.path, f.size)} href={f.url} />
-              ))}
+              {delivered.map(fileCard)}
               <div class="ui-agent__actions">
                 {filesLost(task) ? (
                   <Badge tone="warning" icon={TriangleAlert}>
@@ -330,7 +436,7 @@ export function TaskScreen({ id }: { id: string }) {
           )}
           {task.status === 'failed' && (
             <Alert tone="danger" title="The task failed">
-              {failureReason(steps) ?? 'Something went wrong on our side.'}
+              {failureReason(current) ?? 'Something went wrong on our side.'}
             </Alert>
           )}
           {task.status === 'cancelled' && (
@@ -339,21 +445,31 @@ export function TaskScreen({ id }: { id: string }) {
             </div>
           )}
         </AgentMessage>
-        {!store.connected.value && !error && !isTerminalTask(task.status) && (
-          <Alert tone="info">Reconnecting to the live feed…</Alert>
-        )}
+        {!store.connected.value && !error && !finished && <Alert tone="info">Reconnecting to the live feed…</Alert>}
       </div>
-      {!isTerminalTask(task.status) && (
+      {/* Задачи больше нет: продолжать нечего, это уже сказал Alert выше. */}
+      {!(finished && error) && (
         <div class="ui-shell__foot">
-          <Composer
-            value=""
-            onValueChange={() => undefined}
-            onSubmit={() => undefined}
-            disabled
-            running
-            onStop={() => setConfirmStop(true)}
-            placeholder={question ? 'Answer the question above' : 'Your agent is on it. Stop it any time.'}
-          />
+          {finished ? (
+            <Composer
+              value={message}
+              onValueChange={setMessage}
+              onSubmit={text => void sendMessage(text)}
+              disabled={sending}
+              label="Message"
+              placeholder="Ask for changes or a follow-up"
+            />
+          ) : (
+            <Composer
+              value=""
+              onValueChange={() => undefined}
+              onSubmit={() => undefined}
+              disabled
+              running
+              onStop={() => setConfirmStop(true)}
+              placeholder={question ? 'Answer the question above' : 'Your agent is on it. Stop it any time.'}
+            />
+          )}
           <small>Agents can make mistakes. Check important results.</small>
         </div>
       )}
@@ -361,7 +477,7 @@ export function TaskScreen({ id }: { id: string }) {
         open={confirmStop}
         onOpenChange={setConfirmStop}
         title="Stop the task?"
-        description="The agent stops where it is. You cannot resume this task."
+        description="The agent stops where it is. You can send it a new message to continue."
         confirmLabel="Stop task"
         icon={OctagonX}
         busy={stopping}

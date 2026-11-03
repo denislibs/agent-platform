@@ -47,6 +47,145 @@ async function open(
   return env;
 }
 
+const user = { agent: 'user', subtaskId: null } as const;
+const answerStep = (seq: number, text: string, files: string[] = []) =>
+  step(seq, { type: 'message', role: 'assistant', text, kind: 'answer', files }, { agent: 'planner', subtaskId: null });
+const doneTask = taskDetail({ status: 'done', result: 'First answer', lastSeq: 3 });
+const reopened = taskDetail({
+  status: 'planning',
+  cycle: 2,
+  lastSeq: 5,
+  updatedAt: '2026-11-02T10:00:05.000Z',
+});
+
+/** Законченная задача с первым циклом в ленте; поток закрыт. */
+async function finished(responses: Array<ReturnType<typeof taskResponse>>, extra: Parameters<typeof setup>[0] = {}) {
+  const env = await open(responses, extra);
+  emit(prompt, answerStep(2, 'First answer'), status(3, 'finalizing', 'done'));
+  act(() => FakeEventSource.last.emit('end', { status: 'done' }));
+  await screen.findByText('Task completed');
+  return env;
+}
+
+const composer = () => screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement;
+
+test('a finished task takes a follow-up: the request shows at once, the stream reopens, focus goes to main', async () => {
+  let card = doneTask;
+  const { calls, state } = await finished([], {
+    'GET /api/tasks/task-1': () => json(taskResponse({ task: card })),
+    'POST /api/tasks/task-1/messages': () => {
+      card = reopened;
+      return json({ task: reopened }, 202);
+    },
+  });
+  expect(composer().placeholder).toBe('Ask for changes or a follow-up');
+  await userEvent.type(composer(), 'Add a date filter{Enter}');
+
+  await screen.findByText('Add a date filter');
+  expect(calls.find(c => c.method === 'POST')?.body).toEqual({ text: 'Add a date filter' });
+  await until(() => FakeEventSource.last.url === '/api/tasks/task-1/events?after=3');
+  // Итог прошлого цикла остаётся в ленте, а статус экрана — уже нового.
+  expect(screen.getByText('First answer')).toBeTruthy();
+  expect(screen.queryByText('Task completed')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy();
+  expect(screen.queryByRole('textbox', { name: 'Message' })).toBeNull();
+  await until(() => document.activeElement?.id === 'main');
+  await until(() => state.tasks.items.value[0]?.status === 'planning');
+});
+
+test('every request stays in the feed with its answer and its files; the plan and the badge are of the last cycle', async () => {
+  const report = fileDto({ id: 'f1', path: 'outputs/report.md' });
+  const chart = fileDto({ id: 'f2', path: 'outputs/chart.png' });
+  await open([
+    taskResponse({
+      task: taskDetail({ status: 'done', result: 'Second answer', cycle: 2, lastSeq: 8 }),
+      files: [report, chart],
+      subtasks: [
+        subtask(0, { goal: 'Old plan', status: 'accepted' }),
+        subtask(1, { goal: 'New plan', status: 'accepted', cycle: 2 }),
+      ],
+    }),
+  ]);
+  emit(
+    prompt,
+    answerStep(2, 'First answer', ['outputs/report.md']),
+    status(3, 'finalizing', 'done'),
+    status(4, 'done', 'planning'),
+    step(5, { type: 'message', role: 'user', text: 'Add a chart' }, user),
+    answerStep(6, 'Second answer', ['outputs/report.md', 'outputs/chart.png']),
+    status(7, 'finalizing', 'done'),
+  );
+  await screen.findByText('Second answer');
+  const main = document.body.textContent ?? '';
+  const order = ['Find three suppliers', 'First answer', 'Add a chart', 'Second answer'].map(t => main.indexOf(t));
+  expect(order).toEqual(order.toSorted((a, b) => a - b));
+  expect(order.every(at => at >= 0)).toBe(true);
+  expect(screen.getAllByRole('link', { name: /^report\.md/ })).toHaveLength(2);
+  expect(screen.getAllByRole('link', { name: /^chart\.png/ })).toHaveLength(1);
+  expect(screen.getAllByText('Task completed')).toHaveLength(1);
+  expect(screen.getByText('New plan')).toBeTruthy();
+  expect(screen.queryByText('Old plan')).toBeNull();
+});
+
+test('an earlier cycle that did not reach an answer says how it ended', async () => {
+  await open([taskResponse({ task: taskDetail({ status: 'running', cycle: 3, lastSeq: 9 }) })]);
+  emit(
+    prompt,
+    status(2, 'running', 'failed', 'the sandbox crashed'),
+    status(3, 'failed', 'planning'),
+    step(4, { type: 'message', role: 'user', text: 'Try again' }, user),
+    status(5, 'planning', 'cancelled'),
+    status(6, 'cancelled', 'planning'),
+    step(7, { type: 'message', role: 'user', text: 'And again' }, user),
+  );
+  await screen.findByText('And again');
+  expect(screen.getByText('the sandbox crashed')).toBeTruthy();
+  expect(screen.getByText('Try again')).toBeTruthy();
+  expect(screen.getByText('Stopped')).toBeTruthy();
+});
+
+test.each([
+  ['insufficient_credits', 402, 'not enough credits to start a task'],
+  ['too_many_active_tasks', 429, 'at most 2 active tasks per user'],
+] as const)('%s keeps the text in the field and says why', async (code, httpStatus, message) => {
+  await finished([taskResponse({ task: doneTask })], {
+    'POST /api/tasks/task-1/messages': json({ error: { code, message } }, httpStatus),
+  });
+  await userEvent.type(composer(), 'More{Enter}');
+  await screen.findByText('The message was not sent');
+  screen.getByText(message);
+  expect(composer().value).toBe('More');
+  expect(composer().disabled).toBe(false);
+  expect(screen.getByText('Task completed')).toBeTruthy();
+});
+
+test('a task that changed meanwhile: 409 says so and the screen catches up', async () => {
+  let card = doneTask;
+  await finished([], {
+    'GET /api/tasks/task-1': () => json(taskResponse({ task: card })),
+    'POST /api/tasks/task-1/messages': () => {
+      card = reopened;
+      return json({ error: { code: 'conflict', message: 'the task is not waiting for an answer' } }, 409);
+    },
+  });
+  await userEvent.type(composer(), 'More{Enter}');
+  await screen.findByText('The task has changed');
+  await screen.findByRole('button', { name: 'Stop' });
+  await until(() => FakeEventSource.last.url === '/api/tasks/task-1/events?after=3');
+});
+
+test.each(['failed', 'cancelled'] as const)('a %s task also offers the composer', async taskStatus => {
+  await open([taskResponse({ task: taskDetail({ status: taskStatus }) })]);
+  expect(composer().disabled).toBe(false);
+});
+
+test('the stop dialog says the task can be continued', async () => {
+  await open([taskResponse({ task: taskDetail({ status: 'running' }) })]);
+  await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
+  const dialog = await screen.findByRole('alertdialog');
+  within(dialog).getByText('The agent stops where it is. You can send it a new message to continue.');
+});
+
 test('a running task shows the plan, the steps as they stream and the latest tool on the computer', async () => {
   await open([
     taskResponse({
