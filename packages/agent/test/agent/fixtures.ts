@@ -29,7 +29,7 @@ export const calls = (...list: Array<[string, unknown]>): ScriptedTurn => ({
   usage: { inputTokens: 100, outputTokens: 10 },
 });
 
-/** Законченный цикл работы: подзадача принята, запись finish, done с результатом. */
+/** Законченный цикл работы: подзадача принята, запись finish, done с результатом, песочница остановлена. */
 export async function finishedCycle(c: AgentTestCradle, goal = 'first goal'): Promise<Task> {
   const task = await planned(c, [goal]);
   const [sub] = await c.subtasks.list(task.id);
@@ -66,6 +66,7 @@ export async function finishedCycle(c: AgentTestCradle, goal = 'first goal'): Pr
     payload: { type: 'status', from: 'running', to: 'finalizing' },
   });
   await c.tasks.transition(task.id, 'done', { finishedAt: c.clock.now() });
+  await (await c.sandboxes.create(task.id)).stop();
   return (await c.tasks.get(task.id))!;
 }
 

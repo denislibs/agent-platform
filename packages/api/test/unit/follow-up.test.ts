@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { jobKey } from '@agent/agent';
 import { ApiErrorSchema, TaskEnvelopeSchema, type TaskStatus } from '@agent/shared';
+import { toolCall } from '@agent/testing';
 import { setupApi, type ApiTest } from './helpers';
 
 const errorCode = async (res: Response) => ApiErrorSchema.parse(await res.json()).error.code;
@@ -198,6 +199,30 @@ describe('POST /api/tasks/:id/messages on a finished task', () => {
     const res = await t.call('DELETE', '/api/me', { headers, body: { email: user.email } });
     expect(res.status).toBe(409);
     expect(ApiErrorSchema.parse(await res.json()).error.message).toContain('running tasks');
+  });
+
+  test('in the second cycle a question is answered through the same route and the task goes on', async () => {
+    const t = setupApi();
+    const { user, headers } = await t.signIn();
+    const task = await finished(t, user.id, 'cancelled');
+    await t.call('POST', `/api/tasks/${task.id}/messages`, { headers, body: { text: 'More' } });
+    t.c.llm.push(
+      { toolCalls: [toolCall('create_plan', { subtasks: [{ goal: 'g', done_criteria: 'd' }] })] },
+      { toolCalls: [toolCall('ask_user', { question: 'Which?' })] },
+    );
+    await t.c.runner.run(t.c.queue.next()!);
+    await t.c.runner.run(t.c.queue.next()!);
+    const paused = (await t.c.tasks.get(task.id))!;
+    expect(paused).toMatchObject({ status: 'waiting_user', cycle: 2 });
+
+    const res = await t.call('POST', `/api/tasks/${task.id}/messages`, {
+      headers,
+      body: { text: 'This one', questionSeq: paused.lastSeq },
+    });
+    expect(res.status).toBe(202);
+    expect(await t.c.tasks.get(task.id)).toMatchObject({ status: 'waiting_user', cycle: 2 });
+    const [job] = t.c.queue.jobs;
+    expect(job).toMatchObject({ kind: 'execute', key: jobKey(task.id, 'execute', paused.lastSeq + 1) });
   });
 
   test('a reopened task can be stopped and cannot be deleted until then', async () => {

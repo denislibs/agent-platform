@@ -1,11 +1,14 @@
 import {
+  errorMessage,
   LlmError,
   NotFoundError,
+  SandboxError,
   type ChatMessage,
   type Clock,
   type FileRecord,
   type FileRepository,
   type FileStore,
+  type Logger,
   type Sandbox,
   type SandboxProvider,
   type Step,
@@ -41,6 +44,7 @@ import {
 } from './turns';
 import type { ModelGateway } from './gateway';
 import type { TaskGuard } from './guard';
+import { sandboxIdFor } from './jobs';
 import type { StageOutcome } from './outcome';
 import { PROMPTS } from './prompts';
 import type { ToolExecutor } from './tool-executor';
@@ -174,9 +178,18 @@ type PlannerDeps = {
   gateway: ModelGateway;
   compactor: Compactor;
   toolExecutor: ToolExecutor;
+  logger: Logger;
 };
 
 type PlanStep = { outcome?: StageOutcome; sandbox: Sandbox };
+
+const isRestoredNote = (s: Step) =>
+  s.payload.type === 'message' && s.payload.kind === 'note' && s.payload.text === PROMPTS.workspaceRestored;
+
+/** Песочница пропала или встала: файл тут ни при чём, job повторится. */
+const sandboxDown = (err: unknown) =>
+  (err instanceof SandboxError && err.code === 'not_running') ||
+  (err instanceof NotFoundError && err.entity === 'sandbox');
 
 export class PlannerStage {
   constructor(private readonly deps: PlannerDeps) {}
@@ -224,10 +237,7 @@ export class PlannerStage {
     }
     if (task.status !== 'planning') return { next: 'stop' };
 
-    let sandbox = await this.deps.sandboxes.create(task.id);
-    // Пока планировщик не вызывал модель, входные файлы (пере)копируются: сбой между переходом
-    // queued → planning и копированием иначе оставил бы /workspace/inputs/ пустой. Запись идемпотентна.
-    if (!(await this.history(task)).some(s => s.payload.type === 'llm_call')) await this.copyInputs(task, sandbox);
+    let sandbox = await this.prepareWorkspace(task);
 
     for (let i = 0; i < config.limits.stepsPerJob; i++) {
       const verdict = await guard.check(taskId, cycle);
@@ -361,9 +371,58 @@ export class PlannerStage {
     return started?.value;
   }
 
+  /**
+   * Песочница для планирования. Пока планировщик не вызывал модель, файлы (пере)копируются: сбой между переходом
+   * и копированием иначе оставил бы /workspace пустой. Запись идемпотентна.
+   * Первый цикл: входные файлы. Новый цикл: остановленная песочница хранит всё сама и просто запускается. Если её нет,
+   * создаётся новая из выданных файлов. Заметка для планировщика пишется до копирования: на повторе job песочница уже
+   * есть, и только заметка говорит, что копирование ещё может быть не закончено.
+   */
+  private async prepareWorkspace(task: Task): Promise<Sandbox> {
+    const { sandboxes, guard } = this.deps;
+    const history = await this.history(task);
+    const called = history.some(s => s.payload.type === 'llm_call');
+    if (task.cycle === 1) {
+      const sandbox = await sandboxes.create(task.id);
+      if (!called) await this.copyInputs(task, sandbox);
+      return sandbox;
+    }
+    const gone = (await sandboxes.get(sandboxIdFor(task.id))) === undefined;
+    const noted = history.some(isRestoredNote);
+    if (gone && !noted) {
+      await guard.write(task, tx =>
+        tx.steps.append({
+          taskId: task.id,
+          agent: 'system',
+          payload: { type: 'message', role: 'user', text: PROMPTS.workspaceRestored, kind: 'note' },
+        }),
+      );
+    }
+    const sandbox = await sandboxes.create(task.id);
+    if (gone || (noted && !called)) await this.restoreFiles(task, sandbox);
+    return sandbox;
+  }
+
   private async copyInputs(task: Task, sandbox: Sandbox): Promise<void> {
     for (const f of await this.deps.files.listForTask(task.id, 'input')) {
       await sandbox.writeFile(`inputs/${inputName(f)}`, await this.deps.fileStore.getBytes(f.storageKey));
+    }
+  }
+
+  /** Входные и выданные файлы — на их прежние пути. Файл, который не вернуть, не мешает остальным. */
+  private async restoreFiles(task: Task, sandbox: Sandbox): Promise<void> {
+    for (const f of await this.deps.files.listForTask(task.id)) {
+      const path = f.kind === 'input' ? `inputs/${inputName(f)}` : f.path;
+      try {
+        await sandbox.writeFile(path, await this.deps.fileStore.getBytes(f.storageKey));
+      } catch (err) {
+        if (sandboxDown(err)) throw err;
+        this.deps.logger.warn('could not restore a file of the task', {
+          taskId: task.id,
+          path,
+          error: errorMessage(err),
+        });
+      }
     }
   }
 
