@@ -1,5 +1,5 @@
 import type { Hono } from 'hono';
-import { ReplyBodySchema, type TaskEnvelope } from '@agent/shared';
+import { isTerminalTask, ReplyBodySchema, type TaskEnvelope } from '@agent/shared';
 import type { ApiDeps, ApiEnv } from '../deps';
 import { toTaskDetail } from '../dto';
 import { parseJson } from '../http';
@@ -10,7 +10,12 @@ export function taskActionRoutes(app: Hono<ApiEnv>, deps: ApiDeps): void {
   app.post('/api/tasks/:id/messages', async c => {
     const task = await ownTask(deps.tasks, c.req.param('id'), c.get('user').id);
     const { text, questionSeq } = await parseJson(c, ReplyBodySchema);
-    const response: TaskEnvelope = { task: toTaskDetail(await replyToTask(deps, task.id, text, questionSeq)) };
+    // Ответ на вопрос (questionSeq) задачу не открывает: она закончилась, пока пользователь писал, и его ждёт 409.
+    const updated =
+      isTerminalTask(task.status) && questionSeq === undefined
+        ? await deps.intake.reopen({ taskId: task.id, userId: task.userId, text })
+        : await replyToTask(deps, task.id, text, questionSeq);
+    const response: TaskEnvelope = { task: toTaskDetail(updated) };
     return c.json(response, 202);
   });
 
