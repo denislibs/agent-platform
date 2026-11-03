@@ -51,24 +51,40 @@ const SILENT_LIMIT = 3;
 /** Сколько символов прошлого ответа видит планировщик: длинные ответы не должны вытеснять работу из окна модели. */
 const EARLIER_ANSWER_CHARS = 4000;
 
+/** Сколько символов прошлого запроса видит планировщик (запрос пользователя может быть в разы длиннее). */
+const EARLIER_REQUEST_CHARS = 2000;
+
+/** Сколько последних прошлых циклов показано полностью: голову нельзя сжать ни сводкой, ни повтором, она должна быть ограничена сама. */
+const EARLIER_CYCLES = 5;
+
 const messageText = (step: Step | undefined): string | undefined =>
   step?.payload.type === 'message' ? step.payload.text : undefined;
 
-/** Прошлые циклы для планировщика: запросы и итоговые ответы по порядку, без истории инструментов. */
+/** Обрезает текст до max символов с многоточием; суррогатная пара не разрезается пополам. */
+function clip(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const high = text.charCodeAt(max - 1);
+  return `${text.slice(0, high >= 0xd800 && high <= 0xdbff ? max - 1 : max)}…`;
+}
+
+/**
+ * Прошлые циклы для планировщика: запросы и итоговые ответы по порядку, без истории инструментов. Полностью — только
+ * последние EARLIER_CYCLES, более старые сворачиваются в одну строку; номера оставшихся сохраняют место в задаче.
+ */
 function earlierWork(steps: readonly Step[]): string[] {
-  return splitCycles(steps)
-    .slice(0, -1)
-    .flatMap((cycle, i) => {
-      const request = messageText(cycle.find(s => s.agent === 'user' && s.payload.type === 'message'));
-      const answer = messageText(cycle.findLast(s => s.payload.type === 'message' && s.payload.kind === 'answer'));
-      const clipped =
-        answer && answer.length > EARLIER_ANSWER_CHARS ? `${answer.slice(0, EARLIER_ANSWER_CHARS)}…` : answer;
-      return [
-        `Request ${i + 1}: ${request ?? ''}`,
-        `Final answer ${i + 1}: ${clipped ?? '(stopped before a final answer)'}`,
-        '',
-      ];
-    });
+  const earlier = splitCycles(steps).slice(0, -1);
+  const omitted = Math.max(0, earlier.length - EARLIER_CYCLES);
+  const summary = omitted ? [`(${omitted} earlier ${omitted === 1 ? 'round' : 'rounds'} omitted)`, ''] : [];
+  const kept = earlier.slice(omitted).flatMap((cycle, i) => {
+    const request = messageText(cycle.find(s => s.agent === 'user' && s.payload.type === 'message'));
+    const answer = messageText(cycle.findLast(s => s.payload.type === 'message' && s.payload.kind === 'answer'));
+    return [
+      `Request ${omitted + i + 1}: ${request === undefined ? '' : clip(request, EARLIER_REQUEST_CHARS)}`,
+      `Final answer ${omitted + i + 1}: ${answer === undefined ? '(stopped before a final answer)' : clip(answer, EARLIER_ANSWER_CHARS)}`,
+      '',
+    ];
+  });
+  return [...summary, ...kept];
 }
 
 export function renderPlan(subtasks: readonly Subtask[]): string {

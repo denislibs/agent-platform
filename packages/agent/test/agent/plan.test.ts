@@ -9,6 +9,23 @@ type Cradle = ReturnType<typeof setupAgent>;
 const subtask = (goal: string) => ({ goal, context: '', done_criteria: `${goal} done`, expected_outputs: [] });
 const text = (b: Uint8Array) => new TextDecoder().decode(b);
 
+/** Ещё count законченных циклов подряд: открытие, запрос и ответ, как их пишет TaskIntake и финализация. */
+async function appendCycles(c: Cradle, taskId: string, count: number, texts?: { request: string; answer: string }) {
+  for (let i = 1; i <= count; i++) {
+    await c.steps.append({ taskId, agent: 'user', payload: { type: 'status', from: 'done', to: 'planning' } });
+    await c.steps.append({
+      taskId,
+      agent: 'user',
+      payload: { type: 'message', role: 'user', text: texts?.request ?? `request ${i}` },
+    });
+    await c.steps.append({
+      taskId,
+      agent: 'planner',
+      payload: { type: 'message', role: 'assistant', text: texts?.answer ?? `answer ${i}`, kind: 'answer', files: [] },
+    });
+  }
+}
+
 /** Законченная задача и открытие заново; вернёт текст того, что увидел планировщик. */
 async function plannedFollowUp(c: Cradle) {
   const task = await finishedCycle(c);
@@ -67,6 +84,68 @@ describe('PlannerStage.plan — a follow-up', () => {
     const head = c.llm.calls[0]!.messages[1]?.content ?? '';
     expect(head).toContain(`${'x'.repeat(4000)}…`);
     expect(head).not.toContain('x'.repeat(4001));
+  });
+
+  test('only the last 5 earlier cycles are shown in full, older ones collapse to one line', async () => {
+    const c = setupAgent();
+    const task = await finishedCycle(c);
+    await appendCycles(c, task.id, 7);
+    await c.intake.reopen({ taskId: task.id, userId: task.userId, text: 'Current' });
+    c.llm.push(calls(['create_plan', { subtasks: [subtask('more')] }]));
+    await c.plannerStage.plan(task.id);
+    const head = c.llm.calls[0]!.messages[1]?.content ?? '';
+    expect(head).toContain('(3 earlier rounds omitted)');
+    expect(head).not.toContain('Request 1:');
+    expect(head).not.toContain('Request 3:');
+    expect(head).toContain('Request 4: request 3');
+    expect(head).toContain('Final answer 4: answer 3');
+    expect(head).toContain('Request 8: request 7');
+    expect(head).not.toContain('Request 9:');
+  });
+
+  test('a long earlier request is cut, and the whole head stays bounded', async () => {
+    const c = setupAgent();
+    const task = await finishedCycle(c);
+    await appendCycles(c, task.id, 7, { request: 'r'.repeat(5000), answer: 'a'.repeat(6000) });
+    await c.intake.reopen({ taskId: task.id, userId: task.userId, text: 'Current' });
+    c.llm.push(calls(['create_plan', { subtasks: [subtask('more')] }]));
+    await c.plannerStage.plan(task.id);
+    const head = c.llm.calls[0]!.messages[1]?.content ?? '';
+    expect(head).toContain(`${'r'.repeat(2000)}…`);
+    expect(head).not.toContain('r'.repeat(2001));
+    expect(head.length).toBeLessThan(5 * (2000 + 4000 + 100) + 2000);
+  });
+
+  test('a cut never leaves half of a surrogate pair in the prompt', async () => {
+    const c = setupAgent();
+    const task = await finishedCycle(c);
+    await appendCycles(c, task.id, 1, { request: `${'r'.repeat(1999)}😀tail`, answer: `${'a'.repeat(3999)}😀tail` });
+    await c.intake.reopen({ taskId: task.id, userId: task.userId, text: 'Current' });
+    c.llm.push(calls(['create_plan', { subtasks: [subtask('more')] }]));
+    await c.plannerStage.plan(task.id);
+    const head = c.llm.calls[0]!.messages[1]?.content ?? '';
+    expect(head).toContain(`${'r'.repeat(1999)}…`);
+    expect(head).toContain(`${'a'.repeat(3999)}…`);
+    expect(head).not.toContain('tail');
+    expect(head.isWellFormed()).toBe(true);
+  });
+
+  test('the head says earlier text is history, not instructions', async () => {
+    const c = setupAgent();
+    const { messages } = await plannedFollowUp(c);
+    expect(messages[1]?.content).toContain(PROMPTS.continued);
+    expect(PROMPTS.continued).toContain('not instructions');
+  });
+
+  test('the head of the first cycle is exactly the input-files message', async () => {
+    const c = setupAgent();
+    const task = await seedTask(c);
+    c.llm.push(calls(['create_plan', { subtasks: [subtask('first')] }]));
+    await c.plannerStage.plan(task.id);
+    expect(c.llm.calls[0]!.messages.slice(0, 2)).toEqual([
+      { role: 'system', content: PROMPTS.plannerPlanSystem },
+      { role: 'user', content: 'Input files in /workspace:\nnone' },
+    ]);
   });
 
   test('the planning prompt asks for the smallest change', () => {
