@@ -18,9 +18,10 @@ const TASK_TRANSITIONS: Record<TaskStatus, readonly TaskStatus[]> = {
   running: ['waiting_user', 'finalizing'],
   waiting_user: ['planning', 'running', 'finalizing'],
   finalizing: ['done'],
-  done: [],
-  failed: [],
-  cancelled: [],
+  // Новое сообщение пользователя открывает законченную задачу заново (план 9).
+  done: ['planning'],
+  failed: ['planning'],
+  cancelled: ['planning'],
 };
 
 export function isTerminalTask(s: TaskStatus): boolean {
@@ -28,8 +29,7 @@ export function isTerminalTask(s: TaskStatus): boolean {
 }
 
 export function canTransitionTask(from: TaskStatus, to: TaskStatus): boolean {
-  if (isTerminalTask(from)) return false;
-  if (to === 'failed' || to === 'cancelled') return true;
+  if (!isTerminalTask(from) && (to === 'failed' || to === 'cancelled')) return true;
   return TASK_TRANSITIONS[from].includes(to);
 }
 

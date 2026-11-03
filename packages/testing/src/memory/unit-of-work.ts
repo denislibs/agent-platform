@@ -44,6 +44,7 @@ export class InMemoryUnitOfWork implements UnitOfWork {
         queue.run(async () => {
           if (!memory.users.has(userId)) throw new NotFoundError('user', userId);
         }),
+      lockTask: taskId => queue.run(async () => structuredClone(memory.tasks.get(taskId))),
     };
     const mark = { active: true, token };
     try {

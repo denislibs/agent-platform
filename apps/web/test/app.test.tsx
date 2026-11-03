@@ -32,7 +32,7 @@ const taskRoutes = (...ids: string[]) =>
     ...ids.map(id => [
       `GET /api/tasks/${id}`,
       json({
-        task: { ...taskSummary({ id, prompt: `Task ${id}` }), result: null, tokensUsed: 0, lastSeq: 1 },
+        task: { ...taskSummary({ id, prompt: `Task ${id}` }), result: null, tokensUsed: 0, lastSeq: 1, cycle: 1 },
         subtasks: [],
         files: [],
       }),
@@ -103,7 +103,7 @@ test('the task route opens the task screen; an unknown path is a not-found page 
       ...signedIn(),
       'GET /api/tasks': json({ tasks: [taskSummary({ id: 't1' })], nextCursor: null }),
       'GET /api/tasks/t1': json({
-        task: { ...taskSummary({ id: 't1' }), result: null, tokensUsed: 0, lastSeq: 1 },
+        task: { ...taskSummary({ id: 't1' }), result: null, tokensUsed: 0, lastSeq: 1, cycle: 1 },
         subtasks: [],
         files: [],
       }),
@@ -223,6 +223,7 @@ const waiting = (id: string) =>
       result: null,
       tokensUsed: 0,
       lastSeq: 6,
+      cycle: 1,
     },
     subtasks: [],
     files: [],

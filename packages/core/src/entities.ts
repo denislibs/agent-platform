@@ -13,13 +13,30 @@ export interface Task {
   activeMs: number;
   lastSeq: number;
   result: string | null;
+  /** Номер цикла работы: 1 при создании, +1 при каждом открытии задачи заново. */
+  cycle: number;
+  /** tokensUsed и activeMs на начало цикла: лимиты TASK_TOKEN_BUDGET и TASK_WALL_TIME_MS считаются от них. */
+  cycleBaseTokens: number;
+  cycleBaseActiveMs: number;
   createdAt: Date;
   updatedAt: Date;
   finishedAt: Date | null;
 }
 
 export type TaskPatch = Partial<
-  Pick<Task, 'currentKind' | 'partial' | 'stopReason' | 'sandboxId' | 'result' | 'finishedAt' | 'activeMs'>
+  Pick<
+    Task,
+    | 'currentKind'
+    | 'partial'
+    | 'stopReason'
+    | 'sandboxId'
+    | 'result'
+    | 'finishedAt'
+    | 'activeMs'
+    | 'cycle'
+    | 'cycleBaseTokens'
+    | 'cycleBaseActiveMs'
+  >
 >;
 
 export interface Step {
@@ -48,6 +65,8 @@ export interface Subtask {
   id: string;
   taskId: string;
   idx: number;
+  /** Цикл работы задачи, в котором подзадача появилась. */
+  cycle: number;
   goal: string;
   context: string;
   doneCriteria: string;

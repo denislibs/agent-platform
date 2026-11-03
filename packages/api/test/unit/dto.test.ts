@@ -140,6 +140,9 @@ const task: Task = {
   activeMs: 99,
   lastSeq: 7,
   result: null,
+  cycle: 2,
+  cycleBaseTokens: 3,
+  cycleBaseActiveMs: 50,
   createdAt: new Date(0),
   updatedAt: new Date(1000),
   finishedAt: null,
@@ -151,6 +154,7 @@ test('toTaskDetail projects the public fields only', () => {
   expect(Object.keys(dto).toSorted()).toEqual(
     [
       'createdAt',
+      'cycle',
       'finishedAt',
       'id',
       'lastSeq',
@@ -170,6 +174,7 @@ test('toSubtaskDto drops taskId, dependsOn and timestamps', () => {
     id: 's1',
     taskId: 'task-1',
     idx: 0,
+    cycle: 2,
     goal: 'g',
     context: 'c',
     doneCriteria: 'd',
@@ -184,6 +189,7 @@ test('toSubtaskDto drops taskId, dependsOn and timestamps', () => {
   const dto = toSubtaskDto(subtask);
   expect(SubtaskDtoSchema.parse(dto)).toEqual(dto);
   expect('taskId' in dto || 'dependsOn' in dto).toBe(false);
+  expect(dto.cycle).toBe(2);
 });
 
 test('toFileDto hides the storage key and the owner and links to the API download', () => {

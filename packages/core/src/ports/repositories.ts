@@ -84,7 +84,7 @@ export interface StepLog {
 
 export interface SubtaskRepository {
   /**
-   * idx продолжает нумерацию задачи с 0 (повторный вызов — это replan).
+   * idx продолжает нумерацию задачи с 0 (повторный вызов — это replan или новый цикл работы); cycle — текущий цикл задачи.
    * Неизвестная задача — NotFoundError('task'); пустой список возвращает [] без проверок.
    */
   insertMany(taskId: string, contracts: SubtaskContract[]): Promise<Subtask[]>;
@@ -125,6 +125,11 @@ export interface CreditLedger {
 export interface FileRepository {
   /** Неизвестный userId — NotFoundError('user'), неизвестный taskId — NotFoundError('task'). */
   insert(input: NewFile): Promise<FileRecord>;
+  /**
+   * Запись выходного файла: storageKey уникален, поэтому файл с тем же ключом обновляется (size, mime), id остаётся,
+   * а createdAt становится временем этой версии. Истории версий нет. Ошибки — как у insert.
+   */
+  upsertOutput(input: Omit<NewFile, 'kind'>): Promise<FileRecord>;
   get(id: string): Promise<FileRecord | undefined>;
   listForTask(taskId: string, kind?: FileKind): Promise<FileRecord[]>;
   /** Все файлы пользователя (входные и результаты), старые первыми: для удаления его данных. */

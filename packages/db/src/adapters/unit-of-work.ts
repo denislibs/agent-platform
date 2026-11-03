@@ -1,7 +1,8 @@
 import { eq, sql } from 'drizzle-orm';
 import { CallQueue, NotFoundError, sequential, type TxRepositories, type UnitOfWork } from '@agent/core';
 import { DEFAULT_LOCK_TIMEOUT_MS, type Db, type DbHandle } from '../client';
-import { user } from '../schema';
+import { tasks, user } from '../schema';
+import { isUuid } from '../uuid';
 import { DrizzleFileRepository } from './files';
 import { DrizzleCreditLedger } from './ledger';
 import { DrizzleStepLog } from './steps';
@@ -48,6 +49,12 @@ export class DrizzleUnitOfWork implements UnitOfWork {
           queue.run(async () => {
             const [row] = await tx.select({ id: user.id }).from(user).where(eq(user.id, userId)).for('update');
             if (!row) throw new NotFoundError('user', userId);
+          }),
+        lockTask: taskId =>
+          queue.run(async () => {
+            if (!isUuid(taskId)) return undefined;
+            const [row] = await tx.select().from(tasks).where(eq(tasks.id, taskId)).for('update');
+            return row;
           }),
       });
     });

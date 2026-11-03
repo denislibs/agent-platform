@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { TASK_STATUSES } from './status';
+import { isTerminalTask, TASK_STATUSES } from './status';
 
 export const STEP_TYPES = ['message', 'llm_call', 'tool_result', 'status'] as const;
 export type StepType = (typeof STEP_TYPES)[number];
@@ -17,10 +17,15 @@ export const StepPayloadSchema = z.discriminatedUnion('type', [
     type: z.literal('message'),
     role: z.enum(['user', 'assistant']),
     text: z.string(),
-    /** summary — конспект старых шагов; note — системная заметка; attempt_start — начало попытки подзадачи. */
-    kind: z.enum(['summary', 'note', 'attempt_start']).optional(),
+    /**
+     * summary — конспект старых шагов; note — системная заметка; attempt_start — начало попытки подзадачи;
+     * answer — итоговый ответ цикла работы.
+     */
+    kind: z.enum(['summary', 'note', 'attempt_start', 'answer']).optional(),
     /** Для summary: последний seq, который конспект заменяет. */
     coversUpToSeq: z.number().int().optional(),
+    /** Для answer: пути файлов, выданных в этом цикле. */
+    files: z.array(z.string()).optional(),
   }),
   z.object({
     type: z.literal('llm_call'),
@@ -48,6 +53,25 @@ export const StepPayloadSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('status'), from: TaskStatusSchema, to: TaskStatusSchema, reason: z.string().optional() }),
 ]);
 export type StepPayload = z.infer<typeof StepPayloadSchema>;
+
+/** Шаг, открывающий законченную задачу заново: граница цикла работы, с него начинается новый цикл. */
+export const isReopenStep = (step: { payload: StepPayload }): boolean =>
+  step.payload.type === 'status' && isTerminalTask(step.payload.from) && step.payload.to === 'planning';
+
+/** Шаги последнего цикла работы; без открытия заново — вся лента. */
+export function currentCycle<T extends { payload: StepPayload }>(steps: readonly T[]): T[] {
+  return steps.slice(Math.max(0, steps.findLastIndex(isReopenStep)));
+}
+
+/** Лента по циклам работы, старые первыми: каждый следующий начинается со своего шага открытия. */
+export function splitCycles<T extends { payload: StepPayload }>(steps: readonly T[]): T[][] {
+  const cycles: T[][] = [[]];
+  for (const step of steps) {
+    if (isReopenStep(step)) cycles.push([]);
+    cycles.at(-1)!.push(step);
+  }
+  return cycles;
+}
 
 export const SubtaskContractSchema = z.object({
   goal: z.string().min(1),
