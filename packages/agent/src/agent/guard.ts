@@ -81,9 +81,17 @@ export class TaskGuard {
    * заново либо уже закоммичено, и запись откатится со StaleJobError, либо ждёт блокировку и пойдёт после неё.
    * Проверки check между записями этого не заменяют: между ними идут минуты вызова модели или команды.
    * Задачи нет — решает act: запись в удалённую задачу даёт NotFoundError, как и раньше.
+   * lockUser — владелец, когда запись ссылается на его строку (внешний ключ files берёт на ней key share): его строка
+   * блокируется раньше задачи, как делает открытие заново. Задача-потом-пользователь шла бы против этого порядка,
+   * и две транзакции могли бы взаимно заблокироваться (40P01). Владельца нет — NotFoundError('user').
    */
-  async write<T>(task: Pick<Task, 'id' | 'cycle'>, act: (tx: TxRepositories) => Promise<T>): Promise<T> {
+  async write<T>(
+    task: Pick<Task, 'id' | 'cycle'>,
+    act: (tx: TxRepositories) => Promise<T>,
+    opts: { lockUser?: string } = {},
+  ): Promise<T> {
     return this.deps.uow.run(async tx => {
+      if (opts.lockUser !== undefined) await tx.lockUser(opts.lockUser);
       const current = await tx.lockTask(task.id);
       if (current && current.cycle !== task.cycle) throw new StaleJobError(task.id);
       return act(tx);

@@ -1,6 +1,7 @@
 import {
   LlmError,
   NotFoundError,
+  type FileRepository,
   type Sandbox,
   type SandboxProvider,
   type Step,
@@ -87,6 +88,7 @@ export class ResultComposer {
       tasks: TaskRepository;
       subtasks: SubtaskRepository;
       steps: StepLog;
+      files: FileRepository;
       sandboxes: SandboxProvider;
       gateway: ModelGateway;
       guard: TaskGuard;
@@ -125,6 +127,8 @@ export class ResultComposer {
 
     if (!result && !attempted) {
       const hint = await workspaceFileHint(sandbox);
+      // Выданный раньше файл обновится, только если его назвать снова: у модели должен быть этот список.
+      const earlier = (await this.deps.files.listForTask(task.id, 'output')).map(f => f.path);
       const context = [
         requestBrief(task, history),
         task.partial ? `The task stopped early (${task.stopReason ?? 'limit'}); answer with what was done.` : '',
@@ -135,6 +139,9 @@ export class ResultComposer {
         'Files in the workspace:',
         ...(hint.files.length ? hint.files.map(path => `- ${path}`) : ['none']),
         ...(hint.truncated ? [`(the list is cut at ${WORKSPACE_HINT_FILES} files; more exist)`] : []),
+        ...(earlier.length
+          ? ['', 'Delivered earlier (name them again if you changed them):', ...earlier.map(path => `- ${path}`)]
+          : []),
       ].join('\n');
       const first = await this.attempt(task, sandbox, context);
       result = first.result;

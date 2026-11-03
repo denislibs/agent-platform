@@ -120,6 +120,40 @@ describe('TaskGuard', () => {
     expect(await c.steps.list(task.id)).toHaveLength(steps.length + 1);
   });
 
+  test('write with lockUser locks the owner before the task, and still rejects a stale cycle', async () => {
+    const c = setupAgent();
+    const task = await seedTask(c);
+    const order: string[] = [];
+    const run = c.uow.run.bind(c.uow);
+    c.uow.run = fn =>
+      run(tx =>
+        fn({
+          ...tx,
+          lockUser: async id => {
+            order.push('user');
+            await tx.lockUser(id);
+          },
+          lockTask: async id => {
+            order.push('task');
+            return tx.lockTask(id);
+          },
+        }),
+      );
+
+    await c.guard.write(task, async () => {}, { lockUser: task.userId });
+    expect(order).toEqual(['user', 'task']);
+
+    order.length = 0;
+    await c.guard.write(task, async () => {});
+    expect(order).toEqual(['task']);
+
+    await c.tasks.update(task.id, { cycle: 2 });
+    await expect(c.guard.write(task, async () => {}, { lockUser: task.userId })).rejects.toBeInstanceOf(StaleJobError);
+    await expect(c.guard.write({ ...task, cycle: 2 }, async () => {}, { lockUser: 'no-such-user' })).rejects.toThrow(
+      'no-such-user',
+    );
+  });
+
   test('hasAnswer: only a user message after the latest pause counts', async () => {
     const c = setupAgent();
     const task = await seedTask(c); // первый шаг — запрос пользователя, он до паузы

@@ -147,11 +147,43 @@ describe('a job still working when its task is reopened', () => {
     await expectNewCycleUntouched(c, task.id);
   });
 
-  test('finalize: a reopen during the upload does not mark the new cycle done', async () => {
+  test('finalize: a reopen during the first of two uploads leaves no row of the old job and no second put', async () => {
     const c = setupAgent();
     const task = await finalizing(c);
     const sandbox = await c.sandboxes.create(task.id);
     await sandbox.writeFile('outputs/a.md', 'a');
+    await sandbox.writeFile('outputs/b.md', 'b');
+    c.llm.push(calls(['finish', { answer: 'answer', files: ['outputs/a.md', 'outputs/b.md'] }]));
+    const put = c.fileStore.put.bind(c.fileStore);
+    const puts: string[] = [];
+    c.fileStore.put = async (key, data, type) => {
+      puts.push(key);
+      await put(key, data, type);
+      await cancelAndReopen(c, task.id);
+    };
+
+    expect(await c.runner.run({ taskId: task.id, kind: 'finalize', cycle: 1 })).toEqual({ next: 'stop' });
+
+    await expectNewCycleUntouched(c, task.id);
+    // Put, уже начатый к моменту открытия заново, мог затереть объект: это окно принято, строки в нём не появляется.
+    expect(puts).toEqual([`tasks/${task.id}/outputs/a.md`]);
+    expect(await c.files.listForTask(task.id)).toEqual([]);
+  });
+
+  test('finalize: a reopen during the upload does not update the row of a file delivered before', async () => {
+    const c = setupAgent();
+    const task = await finalizing(c);
+    const sandbox = await c.sandboxes.create(task.id);
+    await sandbox.writeFile('outputs/a.md', 'changed');
+    const row = await c.files.insert({
+      userId: task.userId,
+      taskId: task.id,
+      kind: 'output',
+      path: 'outputs/a.md',
+      storageKey: `tasks/${task.id}/outputs/a.md`,
+      size: 1,
+      mime: 'text/markdown',
+    });
     c.llm.push(calls(['finish', { answer: 'answer', files: ['outputs/a.md'] }]));
     const put = c.fileStore.put.bind(c.fileStore);
     c.fileStore.put = async (key, data, type) => {
@@ -163,6 +195,7 @@ describe('a job still working when its task is reopened', () => {
     expect(await c.runner.run({ taskId: task.id, kind: 'finalize', cycle: 1 })).toEqual({ next: 'stop' });
 
     await expectNewCycleUntouched(c, task.id);
+    expect(await c.files.listForTask(task.id)).toEqual([row]);
   });
 
   test('a model failure of the old job neither fails nor finalizes the new cycle', async () => {
