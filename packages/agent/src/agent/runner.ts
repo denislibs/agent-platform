@@ -51,15 +51,18 @@ export class JobRunner {
 
   /** Выполнить стадию job и действовать по исходу. Повторяемые ошибки пробрасываются (BullMQ повторит). */
   async run(job: AgentJob): Promise<StageOutcome> {
-    // Цикл на старте job: ни исход, ни сбой этой попытки не должны тронуть цикл, начатый после неё.
-    const cycle = (await this.deps.tasks.get(job.taskId))?.cycle;
+    // Цикл job: ни исход, ни сбой этой попытки не должны тронуть цикл, начатый после неё. Повтор BullMQ приходит
+    // с циклом первой попытки, поэтому свой цикл он по задаче не определяет; job без цикла — до появления циклов.
+    const task = await this.deps.tasks.get(job.taskId);
+    const cycle = job.cycle ?? task?.cycle;
+    if (task && task.cycle !== cycle) return { next: 'stop' };
     let outcome: StageOutcome;
     try {
       outcome = await this.dispatch(job);
     } catch (err) {
       if (err instanceof StaleJobError || (await this.cycleChanged(job.taskId, cycle))) outcome = { next: 'stop' };
       else if (!(err instanceof LlmError) || err.retryable) throw err;
-      else outcome = await this.modelFailed(job.taskId);
+      else outcome = await this.modelFailed(job.taskId, cycle);
     }
     await this.follow(job.taskId, outcome, cycle);
     return outcome;
@@ -77,12 +80,15 @@ export class JobRunner {
   async onExhausted(job: AgentJob, error: unknown): Promise<void> {
     const task = await this.deps.tasks.get(job.taskId);
     if (!task || isTerminalTask(task.status)) return;
+    // Job старого цикла: задачу ведёт новый, и сверка по kind его не отличит. Job без цикла — текущего цикла.
+    const cycle = job.cycle ?? task.cycle;
+    if (task.cycle !== cycle) return;
     // Устаревший job или задача ждёт пользователя: валить её не за что.
     if (kindForStatus(task.status, task.currentKind) !== job.kind) return;
     const reason = reasonOf(error);
     try {
       await this.deps.guard.unlessStopped(task.id, () =>
-        this.deps.uow.run(async tx => {
+        this.deps.guard.write({ id: task.id, cycle }, async tx => {
           await tx.tasks.transition(
             task.id,
             'failed',
@@ -97,8 +103,9 @@ export class JobRunner {
         }),
       );
     } catch (err) {
-      // Задача ушла дальше между чтением и переходом: её ведёт другой job, ни задачу, ни песочницу не трогаем.
-      if (err instanceof InvalidTransitionError) return;
+      // Задача ушла дальше между чтением и переходом (или её открыли заново): её ведёт другой job, ни задачу, ни
+      // песочницу не трогаем.
+      if (err instanceof InvalidTransitionError || err instanceof StaleJobError) return;
       throw err;
     }
     await this.destroySandbox(task.id);
@@ -118,11 +125,17 @@ export class JobRunner {
   }
 
   /** Модель отказала насовсем (bad_request, context_length после сжатия): ответ из того, что успели. */
-  private async modelFailed(taskId: string): Promise<StageOutcome> {
+  private async modelFailed(taskId: string, cycle: number | undefined): Promise<StageOutcome> {
     const task = await this.deps.tasks.get(taskId);
-    if (!task || isTerminalTask(task.status)) return { next: 'stop' };
+    if (!task || isTerminalTask(task.status) || task.cycle !== cycle) return { next: 'stop' };
     if (task.status === 'finalizing') return { next: 'finalize' };
-    return this.deps.guard.stopForLimitOrStop(task, 'model_error');
+    try {
+      // Запись под циклом job'а, а не перечитанным: открытие заново между чтениями откатит её, а не попадёт в новый цикл.
+      return await this.deps.guard.stopForLimitOrStop({ ...task, cycle }, 'model_error');
+    } catch (err) {
+      if (err instanceof StaleJobError) return { next: 'stop' };
+      throw err;
+    }
   }
 
   /** Задача читается после стадии: ключ следующего job — по её lastSeq, уже с шагами этого job. */
@@ -140,7 +153,10 @@ export class JobRunner {
       default:
         // В другом цикле задачу ведёт job, поставленный при открытии: второй цепочке там делать нечего.
         if (task?.cycle === cycle && task)
-          await this.deps.queue.enqueue({ taskId, kind: outcome.next }, jobKey(taskId, outcome.next, task.lastSeq));
+          await this.deps.queue.enqueue(
+            { taskId, kind: outcome.next, cycle: task.cycle },
+            jobKey(taskId, outcome.next, task.lastSeq),
+          );
     }
   }
 

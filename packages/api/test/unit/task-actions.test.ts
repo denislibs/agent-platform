@@ -25,7 +25,9 @@ describe('POST /api/tasks/:id/messages', () => {
     ]);
     // Воркер пропускает первый запуск job, чей seq в ключе не равен lastSeq задачи (склейка дублей плана 3d):
     // ключ по seq до ответа (2) оставил бы задачу висеть навсегда.
-    expect(t.c.queue.jobs).toEqual([{ taskId: task.id, kind: 'execute', key: jobKey(task.id, 'execute', 3) }]);
+    expect(t.c.queue.jobs).toEqual([
+      { taskId: task.id, kind: 'execute', cycle: 1, key: jobKey(task.id, 'execute', 3) },
+    ]);
     expect(t.c.stepEvents.published.at(-1)).toEqual({ taskId: task.id, lastSeq: 3 });
   });
 
@@ -40,7 +42,7 @@ describe('POST /api/tasks/:id/messages', () => {
     });
     const job = t.c.queue.next()!;
     expect(job.key).toBe(jobKey(task.id, 'execute', (await t.c.tasks.get(task.id))!.lastSeq));
-    await t.c.runner.run({ taskId: job.taskId, kind: job.kind });
+    await t.c.runner.run(job);
     expect((await t.c.tasks.get(task.id))?.status).toBe('running');
     const statuses = (await t.c.steps.list(task.id)).filter(s => s.payload.type === 'status').map(s => s.payload);
     expect(statuses).toContainEqual({ type: 'status', from: 'waiting_user', to: 'running' });
@@ -73,7 +75,9 @@ describe('POST /api/tasks/:id/messages', () => {
     t.c.queue.enqueue = enqueue;
     t.c.clock.advance(t.c.config.worker.staleTaskMs + 1000);
     await t.c.sweeper.sweep();
-    expect(t.c.queue.jobs).toEqual([{ taskId: task.id, kind: 'execute', key: jobKey(task.id, 'execute', 3) }]);
+    expect(t.c.queue.jobs).toEqual([
+      { taskId: task.id, kind: 'execute', cycle: 1, key: jobKey(task.id, 'execute', 3) },
+    ]);
   });
 
   test("an empty answer is 400; another user's task is 404", async () => {

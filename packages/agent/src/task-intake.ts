@@ -129,11 +129,13 @@ export class TaskIntake {
 
   /** Шаг записан — теперь job (спецификация 8). Сбой постановки не теряет задачу: сборщик поставит plan сам. */
   private async enqueuePlan(task: Task): Promise<void> {
-    await this.deps.queue.enqueue({ taskId: task.id, kind: 'plan' }, jobKey(task.id, 'plan', task.lastSeq)).catch(err =>
-      this.deps.logger.warn('could not queue the plan job; the sweeper will retry', {
-        taskId: task.id,
-        error: errorMessage(err),
-      }),
-    );
+    await this.deps.queue
+      .enqueue({ taskId: task.id, kind: 'plan', cycle: task.cycle }, jobKey(task.id, 'plan', task.lastSeq))
+      .catch(err =>
+        this.deps.logger.warn('could not queue the plan job; the sweeper will retry', {
+          taskId: task.id,
+          error: errorMessage(err),
+        }),
+      );
   }
 }

@@ -6,7 +6,7 @@ export class InMemoryJobQueue implements JobQueue {
 
   async enqueue(job: AgentJob, key: string): Promise<void> {
     if (this.jobs.some(j => j.key === key)) return;
-    this.jobs.push({ taskId: job.taskId, kind: job.kind, key });
+    this.jobs.push({ taskId: job.taskId, kind: job.kind, cycle: job.cycle, key });
   }
 
   /** Взять следующий job (как воркер); его key освобождается. */

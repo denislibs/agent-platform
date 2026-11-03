@@ -74,7 +74,7 @@ export class Sweeper {
       try {
         const kind = await this.kindToRequeue(task);
         if (!kind) continue;
-        await queue.enqueue({ taskId: task.id, kind }, jobKey(task.id, kind, task.lastSeq));
+        await queue.enqueue({ taskId: task.id, kind, cycle: task.cycle }, jobKey(task.id, kind, task.lastSeq));
         result.count++;
       } catch (err) {
         result.failed++; // подхватит следующий проход
@@ -115,7 +115,10 @@ export class Sweeper {
         // Ключ job — по lastSeq после перехода: в нём уже шаг status.
         const after = await tasks.get(task.id);
         if (!after) continue;
-        await queue.enqueue({ taskId: task.id, kind: 'finalize' }, jobKey(task.id, 'finalize', after.lastSeq));
+        await queue.enqueue(
+          { taskId: task.id, kind: 'finalize', cycle: after.cycle },
+          jobKey(task.id, 'finalize', after.lastSeq),
+        );
         result.count++;
       } catch (err) {
         // Задачу уже ведёт другой job — это не сбой.

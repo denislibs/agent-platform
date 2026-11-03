@@ -56,7 +56,7 @@ export async function replyToTask(
     return { task: after, kind: after.currentKind };
   });
   try {
-    await deps.queue.enqueue({ taskId, kind }, jobKey(taskId, kind, task.lastSeq));
+    await deps.queue.enqueue({ taskId, kind, cycle: task.cycle }, jobKey(taskId, kind, task.lastSeq));
   } catch (err) {
     deps.logger.warn('could not queue the job after a reply; the sweeper will retry', {
       taskId,

@@ -188,12 +188,20 @@ export class TaskGuard {
     });
   }
 
-  /** tasks.activeMs += now − startedAt; если cycle задан и задача уже в другом цикле, это время не её. */
+  /**
+   * tasks.activeMs += now − startedAt; если cycle задан и задача уже в другом цикле, это время не её.
+   * Чтение, сверка цикла и запись идут под блокировкой строки задачи: открытие заново между ними записало бы время
+   * старого job'а в новый цикл. Цикл не совпал — это не ошибка (StaleJobError не бросается): finally стадии не должен
+   * подменять её исход.
+   */
   async addActiveTime(taskId: string, startedAt: Date, cycle?: number): Promise<void> {
     const elapsed = Math.max(0, this.deps.clock.now().getTime() - startedAt.getTime());
-    const task = await this.deps.tasks.get(taskId);
-    if (!task || elapsed === 0 || (cycle !== undefined && task.cycle !== cycle)) return;
-    await this.deps.tasks.update(taskId, { activeMs: task.activeMs + elapsed });
+    if (elapsed === 0) return;
+    await this.deps.uow.run(async tx => {
+      const task = await tx.lockTask(taskId);
+      if (!task || (cycle !== undefined && task.cycle !== cycle)) return;
+      await tx.tasks.update(taskId, { activeMs: task.activeMs + elapsed });
+    });
   }
 
   /** Стадия job'а: её время идёт в activeMs того цикла, в котором она началась. */

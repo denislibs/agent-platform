@@ -29,6 +29,12 @@ export class ToolExecutor {
     private readonly deps: { guard: TaskGuard; sandboxes: SandboxProvider; search: SearchProvider; config: Config },
   ) {}
 
+  /** Для job'а задачи `task` стоп вызван только тем, что задачу открыли заново: без цикла check её не останавливает. */
+  private async reopened(task: Task): Promise<boolean> {
+    const { guard } = this.deps;
+    return (await guard.check(task.id, task.cycle)).kind === 'stop' && (await guard.check(task.id)).kind !== 'stop';
+  }
+
   /** Если execute бросит ошибку посреди хода, записанные результаты остаются; вызовы без ответа чинит toMessages (`[no result recorded]`), а job повторит план 3d. */
   async execute(input: {
     task: Task;
@@ -58,6 +64,9 @@ export class ToolExecutor {
           search: this.deps.search,
           limits: this.deps.config.limits,
         });
+        // Задачу открыли заново, пока шли прошлые вызовы хода: новая команда может идти до 30 минут. Остановку без
+        // открытия (отмену) стадия разбирает сама, как и раньше: стоп из-за одного цикла виден по второй проверке.
+        if (await this.reopened(task)) throw new StaleJobError(task.id);
         try {
           outcome = await runToolCall(tools, call, ctx());
         } catch (err) {

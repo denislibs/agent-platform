@@ -24,6 +24,25 @@ describe('Sweeper', () => {
     expect(c.queue.jobs.some(j => j.taskId === fresh.id)).toBe(false);
   });
 
+  test('a re-queued job carries the cycle of its task', async () => {
+    const c = setupAgent(env);
+    const task = await planned(c);
+    await c.tasks.update(task.id, { cycle: 3 });
+    c.clock.advance(121_000);
+    await c.sweeper.sweep();
+    expect(c.queue.jobs).toMatchObject([{ taskId: task.id, kind: 'execute', cycle: 3 }]);
+  });
+
+  test('the finalize job of a timed-out wait carries the cycle of its task', async () => {
+    const c = setupAgent({ ...env, WAIT_USER_TIMEOUT_MS: '60000' });
+    const task = await planned(c);
+    await c.tasks.update(task.id, { cycle: 3 });
+    await c.guard.pause({ ...task, cycle: 3 }, 'execute');
+    c.clock.advance(61_000);
+    await c.sweeper.sweep();
+    expect(c.queue.jobs).toMatchObject([{ taskId: task.id, kind: 'finalize', cycle: 3 }]);
+  });
+
   test('a second sweep does not duplicate a pending job', async () => {
     const c = setupAgent(env);
     await planned(c);
@@ -49,7 +68,7 @@ describe('Sweeper', () => {
     const after = await c.tasks.get(answered.id);
     expect(r.requeued).toBe(1);
     expect(c.queue.jobs).toEqual([
-      { taskId: answered.id, kind: 'execute', key: jobKey(answered.id, 'execute', after!.lastSeq) },
+      { taskId: answered.id, kind: 'execute', cycle: 1, key: jobKey(answered.id, 'execute', after!.lastSeq) },
     ]);
     expect(after?.status).toBe('waiting_user');
   });
@@ -171,7 +190,7 @@ describe('Sweeper', () => {
     const after = await c.tasks.get(task.id);
     expect(after).toMatchObject({ status: 'finalizing', partial: true, stopReason: 'wait_timeout' });
     expect(c.queue.jobs).toEqual([
-      { taskId: task.id, kind: 'finalize', key: jobKey(task.id, 'finalize', after!.lastSeq) },
+      { taskId: task.id, kind: 'finalize', cycle: 1, key: jobKey(task.id, 'finalize', after!.lastSeq) },
     ]);
     const steps = await c.steps.list(task.id);
     expect(steps.at(-1)?.payload).toEqual({

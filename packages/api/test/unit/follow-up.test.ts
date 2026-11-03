@@ -58,7 +58,9 @@ describe('POST /api/tasks/:id/messages on a finished task', () => {
         { agent: 'user', payload: { type: 'status', from: status, to: 'planning' } },
         { agent: 'user', payload: { type: 'message', role: 'user', text: 'Add a filter' } },
       ]);
-      expect(t.c.queue.jobs).toEqual([{ taskId: task.id, kind: 'plan', key: jobKey(task.id, 'plan', after.lastSeq) }]);
+      expect(t.c.queue.jobs).toEqual([
+        { taskId: task.id, kind: 'plan', cycle: 2, key: jobKey(task.id, 'plan', after.lastSeq) },
+      ]);
     },
   );
 
@@ -129,7 +131,9 @@ describe('POST /api/tasks/:id/messages on a finished task', () => {
     t.c.clock.advance(121_000);
     await t.c.sweeper.sweep();
     const { lastSeq } = (await t.c.tasks.get(task.id))!;
-    expect(t.c.queue.jobs).toEqual([{ taskId: task.id, kind: 'plan', key: jobKey(task.id, 'plan', lastSeq) }]);
+    expect(t.c.queue.jobs).toEqual([
+      { taskId: task.id, kind: 'plan', cycle: 2, key: jobKey(task.id, 'plan', lastSeq) },
+    ]);
   });
 
   test('subtasks the last cycle left open are closed; finished ones stay; the numbering goes on', async () => {

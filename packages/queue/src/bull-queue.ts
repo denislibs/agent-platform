@@ -25,7 +25,7 @@ export class BullJobQueue implements JobQueue {
   }
 
   async enqueue(job: AgentJob, key: string): Promise<void> {
-    await this.queue.add(job.kind, { taskId: job.taskId, kind: job.kind }, { jobId: key });
+    await this.queue.add(job.kind, { taskId: job.taskId, kind: job.kind, cycle: job.cycle }, { jobId: key });
   }
 
   /**
