@@ -12,6 +12,7 @@ import { toFileDto, toSubtaskDto, toTaskDetail, toTaskSummary } from '../dto';
 import { ApiError } from '../errors';
 import { parseJson, parseQuery } from '../http';
 import { ownTask } from '../ownership';
+import { taskPreview } from '../preview/handler';
 
 export function taskRoutes(app: Hono<ApiEnv>, deps: ApiDeps): void {
   app.post('/api/tasks', async c => {
@@ -61,6 +62,8 @@ export function taskRoutes(app: Hono<ApiEnv>, deps: ApiDeps): void {
       task: toTaskDetail(task),
       subtasks: subtasks.map(toSubtaskDto),
       files: files.map(toFileDto),
+      // Адрес несёт доступ к сайту, поэтому он только здесь: ownTask уже отказал всем, кроме владельца.
+      preview: taskPreview(deps.config, task.id, files, deps.clock.now()),
     };
     return c.json(response);
   });

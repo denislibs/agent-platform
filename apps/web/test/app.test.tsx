@@ -35,6 +35,7 @@ const taskRoutes = (...ids: string[]) =>
         task: { ...taskSummary({ id, prompt: `Task ${id}` }), result: null, tokensUsed: 0, lastSeq: 1, cycle: 1 },
         subtasks: [],
         files: [],
+        preview: null,
       }),
     ]),
   ]);
@@ -106,6 +107,7 @@ test('the task route opens the task screen; an unknown path is a not-found page 
         task: { ...taskSummary({ id: 't1' }), result: null, tokensUsed: 0, lastSeq: 1, cycle: 1 },
         subtasks: [],
         files: [],
+        preview: null,
       }),
     },
     '/nowhere',
@@ -227,6 +229,7 @@ const waiting = (id: string) =>
     },
     subtasks: [],
     files: [],
+    preview: null,
   });
 /** Шаги из потока последней открытой задачи. */
 const emit = (...steps: StepDto[]) =>
