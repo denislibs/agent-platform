@@ -31,6 +31,7 @@ const env: Record<string, string> = {
   APP_ORIGIN: ORIGIN,
   APP_HOST: 'localhost',
   APP_PORT: String(APP_PORT),
+  PREVIEW_HOST: `preview.localhost:${APP_PORT}`,
   BETTER_AUTH_SECRET: randomBytes(32).toString('base64'),
   LITELLM_BASE_URL: 'http://127.0.0.1:9/v1',
   LITELLM_API_KEY: 'smoke',
@@ -97,22 +98,22 @@ function check(name: string, ok: boolean, detail = ''): void {
   if (!ok) failures++;
 }
 
-/** Запрос с чужим Host напрямую в сокет: fetch Host не подменяет. true — nginx закрыл соединение без ответа (444). */
-async function closedWithoutResponse(host: string): Promise<boolean> {
+/** Запрос с любым Host напрямую в сокет (fetch Host не подменяет): весь ответ, пустая строка — соединение закрыто без него. */
+async function rawGet(host: string, path = '/'): Promise<string> {
   let received = '';
   await new Promise<void>((resolve, reject) => {
     Bun.connect({
       hostname: '127.0.0.1',
       port: APP_PORT,
       socket: {
-        open: s => void s.write(`GET / HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`),
+        open: s => void s.write(`GET ${path} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`),
         data: (_s, chunk) => void (received += new TextDecoder().decode(chunk)),
         close: () => resolve(),
         error: (_s, err) => reject(err),
       },
     }).catch(reject);
   });
-  return received === '';
+  return received;
 }
 
 /** Убрать стек вместе с томами и папку с секретами; один раз — и из finally, и по Ctrl+C. */
@@ -172,7 +173,14 @@ try {
     (health.headers.get('content-security-policy') ?? '').startsWith("default-src 'none'"),
   );
 
-  check('a foreign Host gets no response (444)', await closedWithoutResponse('attacker.example'));
+  check('a foreign Host gets no response (444)', (await rawGet('attacker.example')) === '');
+
+  // Хост превью идёт в API, и там ему доступно только превью: ни маршрутов приложения, ни CSP приложения поверх.
+  const previewHost = `nope.preview.localhost:${APP_PORT}`;
+  const previewApi = await rawGet(previewHost, '/api/health');
+  check('/api/health on a preview host is 404', previewApi.startsWith('HTTP/1.1 404'), previewApi.slice(0, 80));
+  check('a preview host answers with the CSP of the API', previewApi.includes(`frame-ancestors ${ORIGIN}`));
+  check('a preview host carries no X-Frame-Options', !/x-frame-options/i.test(previewApi));
 
   await fetch(`${ORIGIN}/api/auth/magic-link/verify?token=SMOKE-SECRET-TOKEN`);
   const logs = (await run([...compose, 'logs', 'nginx'])).out;

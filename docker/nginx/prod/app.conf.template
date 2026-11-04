@@ -1,5 +1,6 @@
 # Шаблон: envsubst подставляет ${APP_HOST} (публичное имя приложения). CSP страниц — /tmp/nginx/csp.conf из
-# csp.conf.template, который пишет сборка образа (хэш скрипта темы) с ${S3_PUBLIC_ORIGIN} в connect-src.
+# csp.conf.template, который пишет сборка образа (хэш скрипта темы) с ${S3_PUBLIC_ORIGIN} в connect-src и
+# ${PREVIEW_FRAME_SRC} во frame-src.
 
 # Чужой Host (DNS rebinding, сканеры по IP) — соединение закрывается без ответа. /healthz — для healthcheck
 # контейнера, он ходит на 127.0.0.1.
@@ -13,6 +14,35 @@ server {
 
   location / {
     return 444;
+  }
+}
+
+# Превью сайтов (план 10): без PREVIEW_HOST имя ничему не совпадает. Только чтение: файлы отдаёт API, он же ставит все
+# заголовки, поэтому add_header здесь нет, как и error_page: ответы API, в том числе 503 при исчерпанном бюджете памяти,
+# проходят как есть. Host без порта: API сравнивает только имя. Хост, не подошедший регулярному server_name
+# (вложенная метка, лишние символы), попадает в default_server и закрывается.
+server {
+  listen 8080;
+  server_name ~^[0-9a-z-]+\.${PREVIEW_SERVER_NAME}$;
+  # Тело не нужно никому: большое отклоняется, остальное не уходит в API.
+  client_max_body_size 1;
+
+  location / {
+    limit_except GET {
+      deny all;
+    }
+    limit_req zone=preview burst=200 nodelay;
+    limit_conn previewconn 20;
+    proxy_pass http://api;
+    proxy_http_version 1.1;
+    proxy_set_header Connection '';
+    proxy_set_header Host $host;
+    proxy_set_header Cookie '';
+    proxy_set_header Authorization '';
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length '';
+    # Файл до 50 МиБ идёт клиенту потоком, а не через tmpfs.
+    proxy_buffering off;
   }
 }
 

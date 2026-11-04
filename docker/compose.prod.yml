@@ -134,6 +134,9 @@ services:
       SMTP_URL: ${SMTP_URL:-}
       MAIL_FROM: ${MAIL_FROM:-}
       UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-}
+      # Превью сайтов: пусто — выключены. Хост — на отдельном регистрируемом домене (docs/beta-checklist.md).
+      PREVIEW_HOST: ${PREVIEW_HOST:-}
+      PREVIEW_SECRET: ${PREVIEW_SECRET:-}
     expose: ['3000']
     depends_on:
       migrate: { condition: service_completed_successfully }
@@ -211,6 +214,9 @@ services:
       APP_HOST: ${APP_HOST:?set APP_HOST}
       # Для connect-src CSP образ берёт только origin (scheme://host[:port]) — docker/nginx/prod/s3-public-origin.envsh.
       S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:?set S3_PUBLIC_ENDPOINT}
+      # Для frame-src в CSP и server_name превью — docker/nginx/prod/preview-host.envsh.
+      PREVIEW_HOST: ${PREVIEW_HOST:-}
+      APP_ORIGIN: ${APP_ORIGIN:?set APP_ORIGIN}
     ports: ['127.0.0.1:${APP_PORT:-8080}:8080']
     depends_on:
       api: { condition: service_healthy, restart: true }
