@@ -32,17 +32,17 @@ import { Button, ToastProvider, useTheme } from '@agent/ui';
 
 ## What is inside
 
-| Group             | Components                                                                                                                                                                                                            |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Actions           | `Button`, `IconButton`, `ButtonGroup`, `Chip`, `Tag`                                                                                                                                                                  |
-| Fields            | `Field`, `Input`, `Textarea`, `NativeSelect`, `Select`, `Stepper`, `OtpInput`, `TagInput`, `Dropzone`, `ShortcutInput`                                                                                                |
-| Choice            | `Checkbox`, `Switch` (controlled), `RadioGroup`, `Slider`, `SegmentedControl`, `ChoiceGroup`                                                                                                                          |
-| Navigation        | `Tabs`                                                                                                                                                                                                                |
-| Overlays          | `Menu`, `Popover`, `Tooltip`, `Dialog`, `ConfirmDialog`, `Sheet`, `CommandPalette` (with a status region), `ToastProvider` + `useToast`                                                                               |
-| Feedback and data | `Alert`, `Banner`, `Progress`, `Spinner`, `Skeleton`, `StatusDot`, `EmptyState`, `Badge`, `Avatar`, `AvatarGroup`, `Kbd`, `KbdCombo`                                                                                  |
-| Agent             | `Composer` (trims the text), `Attachment`, `UserMessage`, `AgentMessage`, `AgentText`, `Thinking`, `AskCard`, `FileCard`, `Suggestion`, `PlanList`, `StepGroup`, `Step`, `TaskItem`, `ComputerPanel`, `CreditBalance` |
-| Effects           | `DotField` (`mountDotField` for plain DOM)                                                                                                                                                                            |
-| Hooks             | `useTheme`, `useHotkey` (`mod`, `shift`, `alt`), `useFloating`, `useDismiss`, `useFocusTrap`, `useScrollLock`, `usePresence`, `useReducedMotion`                                                                      |
+| Group             | Components                                                                                                                                                                                                                            |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Actions           | `Button`, `IconButton`, `ButtonGroup`, `Chip`, `Tag`                                                                                                                                                                                  |
+| Fields            | `Field`, `Input`, `Textarea`, `NativeSelect`, `Select`, `Stepper`, `OtpInput`, `TagInput`, `Dropzone`, `ShortcutInput`                                                                                                                |
+| Choice            | `Checkbox`, `Switch` (controlled), `RadioGroup`, `Slider`, `SegmentedControl`, `ChoiceGroup`                                                                                                                                          |
+| Navigation        | `Tabs`                                                                                                                                                                                                                                |
+| Overlays          | `Menu`, `Popover`, `Tooltip`, `Dialog`, `ConfirmDialog`, `Sheet`, `CommandPalette` (with a status region), `ToastProvider` + `useToast`                                                                                               |
+| Feedback and data | `Alert`, `Banner`, `Progress`, `Spinner`, `Skeleton`, `StatusDot`, `EmptyState`, `Badge`, `Avatar`, `AvatarGroup`, `Kbd`, `KbdCombo`                                                                                                  |
+| Agent             | `Composer` (trims the text), `Attachment`, `UserMessage`, `AgentMessage`, `AgentText`, `Thinking`, `AskCard`, `FileCard`, `Suggestion`, `PlanList`, `StepGroup`, `Step`, `TaskItem`, `ComputerPanel`, `OpenInNewTab`, `CreditBalance` |
+| Effects           | `DotField` (`mountDotField` for plain DOM)                                                                                                                                                                                            |
+| Hooks             | `useTheme`, `useHotkey` (`mod`, `shift`, `alt`), `useFloating`, `useDismiss`, `useFocusTrap`, `useScrollLock`, `usePresence`, `useReducedMotion`                                                                                      |
 
 Purely visual pieces stay CSS classes used as markup: cards, lists and rows, tables, description lists, dividers,
 code blocks, accordions, breadcrumbs, pagination and side navigation. The showcase shows each of them.

@@ -3,6 +3,7 @@ import { themeBootScript } from '@agent/ui/theme';
 import {
   contentSecurityPolicy,
   nginxCspTemplate,
+  previewFrameSource,
   productionContentSecurityPolicy,
   scriptHash,
   themeBoot,
@@ -67,4 +68,37 @@ test('the nginx template carries the hash of the theme script and leaves the S3 
   expect(template.trimEnd().endsWith('" always;')).toBe(true);
   // Внутри значения нет двойных кавычек: иначе nginx оборвал бы строку.
   expect(template.match(/"/g)).toHaveLength(2);
+});
+
+test('frames: only the preview hosts, with the scheme of the app; without previews no frames at all', () => {
+  expect(directive('frame-src')).toBe("frame-src 'none'");
+  expect(previewFrameSource(undefined, 'http://localhost:8080')).toBe("'none'");
+  expect(previewFrameSource('', 'http://localhost:8080')).toBe("'none'");
+  expect(previewFrameSource('Preview.Localhost:8080', 'http://localhost:8080')).toBe('http://*.preview.localhost:8080');
+  expect(previewFrameSource('previews.example.net', 'https://app.example.com')).toBe('https://*.previews.example.net');
+  const dev = contentSecurityPolicy({
+    s3Endpoint: 'http://localhost:53900',
+    hmrOrigin: 'ws://localhost:8080',
+    frames: 'http://*.preview.localhost:8080',
+  });
+  expect(dev).toContain('frame-src http://*.preview.localhost:8080;');
+  // Сама страница приложения по-прежнему не встраивается никуда.
+  expect(dev).toContain("frame-ancestors 'none'");
+});
+
+test('the nginx template leaves the frame sources to envsubst', () => {
+  expect(nginxCspTemplate()).toContain('frame-src ${PREVIEW_FRAME_SRC};');
+});
+
+test('frames: PREVIEW_HOST that is not host[:port] never reaches the policy', () => {
+  for (const host of [
+    'x; script-src *',
+    'a b',
+    '*.example.net',
+    'https://previews.example.net',
+    'previews.example.net/x',
+    "x 'unsafe-inline'",
+    'a.example.net,b.example.net',
+  ])
+    expect(() => previewFrameSource(host, 'https://app.example.com')).toThrow('PREVIEW_HOST');
 });

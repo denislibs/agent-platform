@@ -86,7 +86,7 @@ export function fileDto(overrides: Partial<FileDto> = {}): FileDto {
 }
 
 export function taskResponse(overrides: Partial<TaskResponse> = {}): TaskResponse {
-  return { task: taskDetail(), subtasks: [], files: [], ...overrides };
+  return { task: taskDetail(), subtasks: [], files: [], preview: null, ...overrides };
 }
 
 export function me(overrides: Partial<MeResponse['user']> = {}, millicredits = 12_500): MeResponse {

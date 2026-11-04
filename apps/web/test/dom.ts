@@ -3,7 +3,8 @@
 import { afterEach } from 'bun:test';
 import { GlobalRegistrator } from '@happy-dom/global-registrator';
 
-GlobalRegistrator.register({ url: 'http://localhost/' });
+// Фреймы не загружаются: тестам нужен сам элемент, а не сеть.
+GlobalRegistrator.register({ url: 'http://localhost/', settings: { disableIframePageLoading: true } });
 
 // Автоочистка @testing-library/preact подписывается на afterEach только в первом файле процесса — хук из preload
 // глобальный. Библиотека импортируется после регистрации: @testing-library/dom читает document при загрузке.

@@ -1,7 +1,17 @@
 import type { ComponentChildren } from 'preact';
-import { Maximize2, Monitor, Play, SkipBack, SkipForward, Sparkles, X } from 'lucide-preact';
+import { ExternalLink, Maximize2, Monitor, Play, SkipBack, SkipForward, Sparkles, X } from 'lucide-preact';
 import { Button, IconButton } from '../components/button.tsx';
 import { Progress } from '../components/display.tsx';
+import { absoluteWebUrl } from '../lib/url.ts';
+
+export interface ComputerFrame {
+  /** Абсолютный адрес `http(s)`; иначе (`absoluteWebUrl`) фрейма нет, и панель остаётся обычной. */
+  src: string;
+  /** Доступное имя фрейма. */
+  title: string;
+  /** Другой ключ — новый фрейм: сайт загружается заново. */
+  reloadKey: string;
+}
 
 export interface ComputerPanelProps {
   title?: string;
@@ -20,6 +30,33 @@ export interface ComputerPanelProps {
   onJumpToLive?(): void;
   onExpand?(): void;
   onClose?(): void;
+  /** Содержимое шапки справа от заголовка: переключатель вида, ссылки. */
+  actions?: ComponentChildren;
+  /** Сайт во фрейме вместо снимка, строки состояния и таймлайна. */
+  frame?: ComputerFrame;
+}
+
+/** Ссылка на сайт агента: новая вкладка без opener и Referer; адрес не `http(s)` абсолютный — ссылки нет. */
+export function OpenInNewTab({ href, children = 'Open in new tab' }: { href: string; children?: ComponentChildren }) {
+  const safe = absoluteWebUrl(href);
+  if (!safe) return null;
+  return (
+    <a class="ui-btn ui-btn--ghost ui-btn--xs" href={safe} target="_blank" rel="noopener noreferrer">
+      <ExternalLink aria-hidden="true" />
+      {children}
+    </a>
+  );
+}
+
+/**
+ * Родительское имя хоста превью: у `метка.preview.localhost` это `preview.localhost`. Адрес-IP и имя из одной метки
+ * остаются как есть: отрезать у них первую часть значит исказить адрес.
+ */
+function parentHost(src: string): string {
+  const { hostname } = new URL(src);
+  if (hostname.startsWith('[') || /^\d+(?:\.\d+){3}$/.test(hostname)) return hostname;
+  const dot = hostname.indexOf('.');
+  return dot < 0 ? hostname : hostname.slice(dot + 1);
 }
 
 /** Панель «компьютера агента»: вкладка, строка состояния, снимок и таймлайн перемотки. */
@@ -35,9 +72,12 @@ export function ComputerPanel({
   onJumpToLive,
   onExpand,
   onClose,
+  actions,
+  frame,
 }: ComputerPanelProps) {
   // NaN — это «нет данных»: показываем конец ленты, а не ломаем aria-valuenow.
   const value = Number.isNaN(position) ? 100 : Math.min(Math.max(position, 0), 100);
+  const frameSrc = absoluteWebUrl(frame?.src);
   return (
     <section class="ui-computer" aria-label={title}>
       <div class="ui-computer__tabs">
@@ -46,43 +86,72 @@ export function ComputerPanel({
           {title}
         </div>
         <span class="ui-spacer" />
+        {actions}
         {onExpand && <IconButton icon={Maximize2} label="Expand" onClick={onExpand} />}
         {onClose && <IconButton icon={X} label="Close" onClick={onClose} />}
       </div>
-      {activity && (
-        <div class="ui-computer__status">
-          <b>{activity}</b>
-          {detail}
-        </div>
+      {frame && frameSrc ? (
+        <>
+          {/* Строка снаружи фрейма: сайт агента не может её нарисовать, и всегда видно, что он чужой. */}
+          <div class="ui-computer__notice">
+            <span class="ui-computer__origin">{parentHost(frameSrc)}</span> Built by the agent. Not part of this app. Do
+            not enter passwords.
+          </div>
+          {/*
+           * allow-same-origin намеренно: без него localStorage бросает исключение, и обычное React-приложение падает. Здесь
+           * это безопасно: origin сайта — отдельный хост задачи и никогда не origin приложения, поэтому сайт получает доступ
+           * только к самому себе. Без allow-top-navigation и allow-popups: сайт не уводит вкладку и не открывает окна. Без
+           * allow-modals: страница, которую агент мог написать под влиянием чужого текста, не рисует блокирующий диалог
+           * поверх вкладки приложения (alert() сайта теперь ничего не делает).
+           */}
+          <iframe
+            key={frame.reloadKey}
+            class="ui-computer__frame"
+            src={frameSrc}
+            title={frame.title}
+            // oxlint-disable-next-line react/iframe-missing-sandbox
+            sandbox="allow-scripts allow-same-origin allow-forms"
+            referrerpolicy="no-referrer"
+          />
+        </>
+      ) : (
+        <>
+          {activity && (
+            <div class="ui-computer__status">
+              <b>{activity}</b>
+              {detail}
+            </div>
+          )}
+          {/* Прокручиваемая область должна быть доступна с клавиатуры. */}
+          {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
+          <div class="ui-computer__body" role="region" aria-label={`${title}: screen`} tabIndex={0}>
+            {children}
+          </div>
+          <div class="ui-computer__foot">
+            <IconButton icon={SkipBack} label="Previous step" size="xs" disabled={!onPrevious} onClick={onPrevious} />
+            <IconButton icon={SkipForward} label="Next step" size="xs" disabled={!onNext} onClick={onNext} />
+            <div
+              class="ui-timeline-bar"
+              role="progressbar"
+              aria-label="Replay position"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(value)}
+            >
+              <i style={{ '--val': `${value}%` }} />
+            </div>
+            {live ? (
+              <span class="ui-live">Live</span>
+            ) : (
+              onJumpToLive && (
+                <Button variant="ghost" size="xs" icon={Play} onClick={onJumpToLive}>
+                  Jump to live
+                </Button>
+              )
+            )}
+          </div>
+        </>
       )}
-      {/* Прокручиваемая область должна быть доступна с клавиатуры. */}
-      {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
-      <div class="ui-computer__body" role="region" aria-label={`${title}: screen`} tabIndex={0}>
-        {children}
-      </div>
-      <div class="ui-computer__foot">
-        <IconButton icon={SkipBack} label="Previous step" size="xs" disabled={!onPrevious} onClick={onPrevious} />
-        <IconButton icon={SkipForward} label="Next step" size="xs" disabled={!onNext} onClick={onNext} />
-        <div
-          class="ui-timeline-bar"
-          role="progressbar"
-          aria-label="Replay position"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={Math.round(value)}
-        >
-          <i style={{ '--val': `${value}%` }} />
-        </div>
-        {live ? (
-          <span class="ui-live">Live</span>
-        ) : (
-          onJumpToLive && (
-            <Button variant="ghost" size="xs" icon={Play} onClick={onJumpToLive}>
-              Jump to live
-            </Button>
-          )
-        )}
-      </div>
     </section>
   );
 }

@@ -11,6 +11,7 @@ import {
   Attachment,
   Composer,
   ComputerPanel,
+  OpenInNewTab,
   CreditBalance,
   FileCard,
   fileKind,
@@ -453,4 +454,103 @@ test('FileCard and TaskItem drop unsafe hrefs instead of rendering them as links
   render(<TaskItem title="Bad task" status="idle" href="data:text/html,x" />);
   expect(screen.queryByRole('link', { name: /Bad task/ })).toBeNull();
   expect(screen.getByText('Bad task')).toBeTruthy();
+});
+
+const FRAME = { src: 'https://site.preview.test/', title: 'Site preview', reloadKey: 'a' };
+
+test('ComputerPanel with a frame shows the site instead of the screen, the status and the replay', () => {
+  render(
+    <ComputerPanel activity="Using Browser" frame={FRAME} actions={<button type="button">Switch</button>}>
+      body
+    </ComputerPanel>,
+  );
+  const frame = screen.getByTitle('Site preview');
+  expect(frame.tagName).toBe('IFRAME');
+  expect(frame.getAttribute('src')).toBe(FRAME.src);
+  expect(frame.getAttribute('class')).toBe('ui-computer__frame');
+  expect(frame.getAttribute('referrerpolicy')).toBe('no-referrer');
+  expect(screen.queryByText('Using Browser')).toBeNull();
+  expect(screen.queryByRole('region', { name: "Agent's computer: screen" })).toBeNull();
+  expect(screen.queryByRole('progressbar')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Switch' })).toBeTruthy();
+});
+
+test('the frame is sandboxed: scripts, its own origin and forms; no modals, no top navigation, no popups', () => {
+  render(<ComputerPanel frame={FRAME} />);
+  expect(screen.getByTitle('Site preview').getAttribute('sandbox')).toBe('allow-scripts allow-same-origin allow-forms');
+});
+
+test('a notice outside the frame says whose site it is, with the host shortened to its parent', () => {
+  render(<ComputerPanel frame={{ ...FRAME, src: 'http://abc123-mac.preview.localhost:8080/' }} />);
+  const notice = document.querySelector('.ui-computer__notice')!;
+  expect(notice.textContent).toBe(
+    'preview.localhost Built by the agent. Not part of this app. Do not enter passwords.',
+  );
+  expect(notice.querySelector('.ui-computer__origin')?.textContent).toBe('preview.localhost');
+  // Строка рядом с фреймом, а не внутри: сайт не может её нарисовать или перекрыть своей версткой.
+  const frame = screen.getByTitle('Site preview');
+  expect(notice.contains(frame)).toBe(false);
+  expect(notice.nextElementSibling).toBe(frame);
+});
+
+test.each([
+  ['https://x1.previews.example.net/', 'previews.example.net'],
+  ['https://x1.localhost/', 'localhost'],
+  ['https://localhost/', 'localhost'],
+  ['http://127.0.0.1:8080/', '127.0.0.1'],
+  ['http://[::1]:8080/', '[::1]'],
+])('the notice names the parent host of %s: %s', (src, host) => {
+  render(<ComputerPanel frame={{ ...FRAME, src }} />);
+  expect(document.querySelector('.ui-computer__origin')?.textContent).toBe(host);
+});
+
+test('without a frame, or with a refused address, there is no notice', () => {
+  const { rerender } = render(<ComputerPanel activity="Using Browser" />);
+  expect(document.querySelector('.ui-computer__notice')).toBeNull();
+  rerender(<ComputerPanel activity="Using Browser" frame={{ ...FRAME, src: 'javascript:alert(1)' }} />);
+  expect(document.querySelector('.ui-computer__notice')).toBeNull();
+});
+
+test('a new reloadKey creates a new frame, the same key keeps it', () => {
+  const { rerender } = render(<ComputerPanel frame={FRAME} />);
+  const first = screen.getByTitle('Site preview');
+  rerender(<ComputerPanel frame={{ ...FRAME }} />);
+  expect(screen.getByTitle('Site preview')).toBe(first);
+  rerender(<ComputerPanel frame={{ ...FRAME, reloadKey: 'b' }} />);
+  expect(screen.getByTitle('Site preview')).not.toBe(first);
+});
+
+test('an unsafe frame address is dropped: the panel stays as it was', () => {
+  render(<ComputerPanel activity="Using Browser" frame={{ ...FRAME, src: 'javascript:alert(1)' }} />);
+  expect(screen.queryByTitle('Site preview')).toBeNull();
+  expect(screen.getByText('Using Browser')).toBeTruthy();
+});
+
+test.each(['mailto:a@b.c', '/', '//evil.example', 'relative/path', 'javascript:alert(1)'])(
+  'the frame and the link take only an absolute web address: %s is refused',
+  src => {
+    render(<ComputerPanel activity="Using Browser" frame={{ ...FRAME, src }} actions={<OpenInNewTab href={src} />} />);
+    expect(screen.queryByTitle('Site preview')).toBeNull();
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(screen.getByText('Using Browser')).toBeTruthy();
+  },
+);
+
+test('without a frame nothing changes, and actions sit in the head of the panel', () => {
+  render(<ComputerPanel activity="Using Browser" actions={<a href="/x">Open</a>} />);
+  expect(screen.getByRole('link', { name: 'Open' }).closest('.ui-computer__tabs')).toBeTruthy();
+  expect(document.querySelector('iframe')).toBeNull();
+  expect(screen.getByRole('progressbar')).toBeTruthy();
+});
+
+test('OpenInNewTab opens without an opener and a referrer; an unsafe address renders nothing', () => {
+  const { rerender } = render(<OpenInNewTab href="https://site.preview.test/" />);
+  const link = screen.getByRole('link', { name: 'Open in new tab' });
+  expect(link.getAttribute('href')).toBe('https://site.preview.test/');
+  expect(link.getAttribute('target')).toBe('_blank');
+  expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+  rerender(<OpenInNewTab href="https://site.preview.test/">Open preview</OpenInNewTab>);
+  expect(screen.getByRole('link', { name: 'Open preview' })).toBeTruthy();
+  rerender(<OpenInNewTab href="javascript:alert(1)" />);
+  expect(screen.queryByRole('link')).toBeNull();
 });

@@ -198,6 +198,8 @@ export const TaskResponseSchema = z.object({
   task: TaskDetailSchema,
   subtasks: z.array(SubtaskDtoSchema),
   files: z.array(FileDtoSchema),
+  /** Адрес превью сайта (план 10); null — нет точки входа среди выданных файлов или превью выключены. */
+  preview: z.object({ url: z.string() }).nullable(),
 });
 export const TaskListResponseSchema = z.object({
   tasks: z.array(TaskSummarySchema),

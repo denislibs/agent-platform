@@ -15,6 +15,56 @@ function oauthApp(name: string, clientId: string | undefined, clientSecret: stri
   return { clientId, clientSecret };
 }
 
+/** host[:port] без схемы и пути; регистр не важен (имена хостов его не различают). */
+export const PREVIEW_HOST_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:\d{1,5})?$/i;
+
+/** Метка задачи на хосте превью — до 62 символов (packages/api/src/preview/token.ts); имя целиком — до 253. */
+const PREVIEW_LABEL_MAX = 62;
+const DNS_NAME_MAX = 253;
+
+/**
+ * Годный PREVIEW_HOST: форма host[:port] (PREVIEW_HOST_PATTERN) и то, чего форма не ловит. Метка DNS — до 63 символов;
+ * порт — до 65535; имя из цифр и точек (127.0.0.1, example.123) браузер читает как IP-адрес, а не как имя, и поддомены
+ * под ним невозможны; после хоста остаётся место для метки задачи в пределах 253 символов.
+ */
+export function isPreviewHost(host: string): boolean {
+  if (!PREVIEW_HOST_PATTERN.test(host)) return false;
+  const [name = '', port] = host.split(':');
+  if (port !== undefined && (Number(port) < 1 || Number(port) > 65_535)) return false;
+  const labels = name.split('.');
+  if (labels.some(label => label.length > 63)) return false;
+  if (/^\d+$/.test(labels.at(-1)!)) return false;
+  return name.length + 1 + PREVIEW_LABEL_MAX <= DNS_NAME_MAX;
+}
+
+const isUnder = (name: string, parent: string) => name === parent || name.endsWith(`.${parent}`);
+
+/**
+ * Превью сайтов включены, только если задан PREVIEW_HOST и есть из чего вывести ключ подписи. Приложение не может жить
+ * на этом хосте или под ним: API отдал бы превью вместо приложения. Поддомен приложения тоже отказ: cookie родительского
+ * домена дошли бы до чужого кода. localhost — исключение для разработки: *.localhost не видит cookie хоста localhost.
+ */
+function previewConfig(
+  host: string | undefined,
+  secret: string | undefined,
+  authSecret: string | undefined,
+  appUrl: string,
+) {
+  if (!host) return null;
+  // Сообщения не называют значения: ключи в журнал не попадают.
+  if (secret && secret === authSecret)
+    throw new Error('Invalid environment: PREVIEW_SECRET must differ from BETTER_AUTH_SECRET');
+  if (!secret && !authSecret)
+    throw new Error('Invalid environment: PREVIEW_HOST needs PREVIEW_SECRET or BETTER_AUTH_SECRET');
+  const lower = host.toLowerCase();
+  const hostname = lower.split(':', 1)[0]!;
+  // Имя с точкой на конце (app.example.com.) — то же имя: без среза проверка «выше хоста превью» его бы пропустила.
+  const app = new URL(appUrl).hostname.replace(/\.+$/, '');
+  if (isUnder(app, hostname) || (app !== 'localhost' && isUnder(hostname, app)))
+    throw new Error('Invalid environment: PREVIEW_HOST and BETTER_AUTH_URL must not share the same host');
+  return { host: lower, hostname, secret: secret ?? null };
+}
+
 const EnvSchema = z.object({
   DATABASE_URL: required,
   VALKEY_URL: required,
@@ -96,6 +146,22 @@ const EnvSchema = z.object({
   GOOGLE_CLIENT_SECRET: optionalText,
   GITHUB_CLIENT_ID: optionalText,
   GITHUB_CLIENT_SECRET: optionalText,
+  /** Хост превью сайтов: host[:port], задача открывается на <метка>.<хост>, схема — как у BETTER_AUTH_URL. Пусто — выключено. */
+  PREVIEW_HOST: z.preprocess(
+    blankAsUnset,
+    z
+      .string()
+      .refine(
+        isPreviewHost,
+        'expected host[:port]: a DNS name (labels up to 63 characters, not an IP address), port up to 65535',
+      )
+      .optional(),
+  ),
+  /** Ключ подписи адресов превью; не задан — выводится из BETTER_AUTH_SECRET (packages/api/src/preview/token.ts). */
+  PREVIEW_SECRET: z.preprocess(
+    blankAsUnset,
+    z.string().min(32, 'at least 32 characters (openssl rand -hex 32)').optional(),
+  ),
   /** Почта magic link: smtp(s)://user:password@host:port. Без него письма пишутся в журнал API (LogMailer). */
   SMTP_URL: z.preprocess(blankAsUnset, z.url({ protocol: /^smtps?$/ }).optional()),
   /** Отправитель писем: обязателен вместе с SMTP_URL. */
@@ -189,6 +255,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       google: oauthApp('GOOGLE', e.GOOGLE_CLIENT_ID, e.GOOGLE_CLIENT_SECRET),
       github: oauthApp('GITHUB', e.GITHUB_CLIENT_ID, e.GITHUB_CLIENT_SECRET),
     },
+    preview: previewConfig(e.PREVIEW_HOST, e.PREVIEW_SECRET, e.BETTER_AUTH_SECRET, e.BETTER_AUTH_URL),
     mail: mailConfig(e.SMTP_URL, e.MAIL_FROM),
   };
 }

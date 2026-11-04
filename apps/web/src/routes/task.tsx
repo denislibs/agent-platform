@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { CircleCheck, OctagonX, SearchX, TriangleAlert } from 'lucide-preact';
 import {
+  absoluteWebUrl,
   AgentMessage,
   AgentText,
   Alert,
@@ -11,6 +12,7 @@ import {
   ConfirmDialog,
   EmptyState,
   FileCard,
+  OpenInNewTab,
   PlanList,
   Spinner,
   Step,
@@ -43,7 +45,7 @@ import {
   summarize,
   toolEntries,
 } from '../view/timeline.ts';
-import { TaskComputer } from './computer.tsx';
+import { previewReloadKey, TaskComputer } from './computer.tsx';
 
 /** Секунды работы цикла: от его начала до конца (или до сейчас, пока задача жива), тикает раз в секунду. */
 function useElapsed(task: TaskDetail | null, startedAt: string | null): number {
@@ -291,6 +293,8 @@ export function TaskScreen({ id }: { id: string }) {
   // Задача, законченная до плана 9, не записала ответ шагом: её итог и файлы — из карточки.
   const result = answerStep?.text ?? task.result;
   const delivered = answerStep ? outputs.filter(f => answerStep.files.includes(f.path)) : outputs;
+  const site = store.preview.value;
+  const preview = site && { url: site.url, reloadKey: previewReloadKey(task.cycle, outputs) };
 
   const sendMessage = async (text: string) => {
     // Второй Enter в том же такте: поле ещё не стало недоступным. Стор такой вызов проглотил бы без отправки,
@@ -356,7 +360,7 @@ export function TaskScreen({ id }: { id: string }) {
   };
 
   return (
-    <Shell computer={<TaskComputer entries={computerEntries(allEntries)} />}>
+    <Shell computer={<TaskComputer entries={computerEntries(allEntries)} preview={preview} finished={finished} />}>
       {statusRegion}
       <div class="ui-shell__body" ref={feed}>
         <h1 class="ui-sr-only">{taskTitle(task.prompt)}</h1>
@@ -479,6 +483,12 @@ export function TaskScreen({ id }: { id: string }) {
           {task.status === 'cancelled' && (
             <div class="ui-agent__actions">
               <Badge icon={OctagonX}>Stopped</Badge>
+            </div>
+          )}
+          {/* Панель скрыта на средней ширине экрана: сайт законченного цикла (любого исхода) остаётся доступен отсюда. */}
+          {finished && preview && absoluteWebUrl(preview.url) && (
+            <div class="ui-agent__actions">
+              <OpenInNewTab href={preview.url}>Open preview</OpenInNewTab>
             </div>
           )}
         </AgentMessage>

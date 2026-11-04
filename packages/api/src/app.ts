@@ -5,6 +5,7 @@ import { requireUser } from './auth/middleware';
 import type { ApiDeps, ApiEnv } from './deps';
 import { errorLogFields, mapError } from './errors';
 import { OpenStreams } from './open-streams';
+import { ByteBudget, PREVIEW_INFLIGHT_BYTES, isPreviewGate, servePreview } from './preview/handler';
 import { configRoutes } from './routes/config';
 import { eventRoutes } from './routes/events';
 import { fileRoutes } from './routes/files';
@@ -40,6 +41,19 @@ export function createApp(deps: ApiDeps, opts: { streams?: OpenStreams } = {}): 
     return c.json(body, status);
   });
   app.notFound(c => c.json({ error: { code: 'not_found', message: 'no such route' } }, 404));
+
+  /*
+   * Хост превью изолирован раньше всего остального: на нём выполняется код агента, поэтому ни охрана, ни маршруты
+   * приложения там недостижимы, cookie не читаются. Без PREVIEW_HOST ветки нет.
+   */
+  const { preview } = deps.config;
+  if (preview) {
+    // Бюджет у экземпляра приложения, а не у модуля: тесты и несколько приложений в одном процессе не делят его.
+    const budget = new ByteBudget(PREVIEW_INFLIGHT_BYTES);
+    app.use((c, next) =>
+      isPreviewGate(preview, c.req.header('host')) ? servePreview(deps, c.req.raw, budget) : next(),
+    );
+  }
 
   // Охрана регистрируется раньше всех маршрутов: маршрут, добавленный позже, не окажется без неё.
   const authenticated = requireUser(deps.auth);

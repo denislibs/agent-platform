@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { safeHref } from '../src/index.ts';
+import { absoluteWebUrl, safeHref } from '../src/index.ts';
 
 test('safeHref keeps relative URLs and http, https and mailto', () => {
   for (const href of [
@@ -42,4 +42,25 @@ test('safeHref treats empty and missing values as no link', () => {
   expect(safeHref(undefined)).toBeUndefined();
   expect(safeHref('')).toBeUndefined();
   expect(safeHref('   ')).toBeUndefined();
+});
+
+test('absoluteWebUrl accepts only an absolute http or https address', () => {
+  expect(absoluteWebUrl('https://site.preview.test/')).toBe('https://site.preview.test/');
+  expect(absoluteWebUrl('http://site.preview.test/a?b=1')).toBe('http://site.preview.test/a?b=1');
+  for (const href of [
+    'mailto:a@b.c',
+    '/',
+    '//evil.example',
+    'relative/path',
+    '?q=1',
+    'javascript:alert(1)',
+    'java\tscript:alert(1)',
+    'data:text/html,x',
+    'file:///etc/passwd',
+    '',
+    '   ',
+  ]) {
+    expect(absoluteWebUrl(href)).toBeUndefined();
+  }
+  expect(absoluteWebUrl(undefined)).toBeUndefined();
 });

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Plugin } from 'vite';
+import { isPreviewHost } from '@agent/shared';
 import { themeBootScript } from '@agent/ui/theme';
 
 /** Источник CSP для inline-скрипта: `'sha256-<base64>'` от его текста ровно в том виде, в каком он стоит в HTML. */
@@ -20,10 +21,31 @@ export interface CspOptions {
   s3Endpoint: string;
   /** WebSocket HMR dev-сервера, как его видит браузер: ws://localhost:5173 или ws://localhost:8080 за nginx. */
   hmrOrigin: string;
+  /** Источник frame-src: previewFrameSource; не задан — фреймов нет. */
+  frames?: string;
 }
 
-/** Общие директивы CSP приложения; отличаются только соединения и inline-стили. */
-function policy({ connect, inlineStyles }: { connect: readonly string[]; inlineStyles: boolean }): string {
+/**
+ * Источник frame-src для превью сайтов: все хосты задач под PREVIEW_HOST со схемой приложения. Сам PREVIEW_HOST не нужен:
+ * задача всегда открывается на своём хосте. Без PREVIEW_HOST — 'none': встраивать нечего. Значение попадает в заголовок
+ * CSP как есть, поэтому проверяется той же функцией, что и конфиг API: «;» или пробел не добавят директиву.
+ */
+export function previewFrameSource(previewHost: string | undefined, appOrigin: string): string {
+  if (previewHost && !isPreviewHost(previewHost))
+    throw new Error(`PREVIEW_HOST must be host[:port], got '${previewHost}'`);
+  return previewHost ? `${new URL(appOrigin).protocol}//*.${previewHost.toLowerCase()}` : "'none'";
+}
+
+/** Общие директивы CSP приложения; отличаются только соединения, inline-стили и фреймы превью. */
+function policy({
+  connect,
+  inlineStyles,
+  frames,
+}: {
+  connect: readonly string[];
+  inlineStyles: boolean;
+  frames: string;
+}): string {
   return [
     "default-src 'self'",
     `script-src 'self' ${scriptHash(themeBootScript)}`,
@@ -31,6 +53,7 @@ function policy({ connect, inlineStyles }: { connect: readonly string[]; inlineS
     "img-src 'self' data:",
     "font-src 'self'",
     `connect-src 'self' ${connect.join(' ')}`,
+    `frame-src ${frames}`,
     "object-src 'none'",
     "base-uri 'none'",
     "form-action 'none'",
@@ -43,20 +66,22 @@ function policy({ connect, inlineStyles }: { connect: readonly string[]; inlineS
  * соединения — свой origin, S3 и HMR. `style-src 'unsafe-inline'` нужен dev-серверу Vite (CSS приходит тегами
  * <style>); стили, которые ставят Floating UI и Preact через element.style, CSP не ограничивает.
  */
-export function contentSecurityPolicy({ s3Endpoint, hmrOrigin }: CspOptions): string {
-  return policy({ connect: [new URL(s3Endpoint).origin, hmrOrigin], inlineStyles: true });
+export function contentSecurityPolicy({ s3Endpoint, hmrOrigin, frames = "'none'" }: CspOptions): string {
+  return policy({ connect: [new URL(s3Endpoint).origin, hmrOrigin], inlineStyles: true, frames });
 }
 
 /**
  * CSP продакшен-сборки (nginx, план 7): сборка отдаёт CSS файлами, поэтому без 'unsafe-inline'; HMR нет.
- * s3Origin — origin S3 для браузера или переменная шаблона nginx (S3_ORIGIN_VARIABLE).
+ * s3Origin и frames — значения или переменные шаблона nginx (S3_ORIGIN_VARIABLE, PREVIEW_FRAMES_VARIABLE).
  */
-export function productionContentSecurityPolicy(s3Origin: string): string {
-  return policy({ connect: [s3Origin], inlineStyles: false });
+export function productionContentSecurityPolicy(s3Origin: string, frames = "'none'"): string {
+  return policy({ connect: [s3Origin], inlineStyles: false, frames });
 }
 
 /** Переменная шаблона nginx: origin S3 подставляет envsubst при старте контейнера (docker/nginx/Dockerfile). */
 export const S3_ORIGIN_VARIABLE = '${S3_PUBLIC_ORIGIN}';
+/** Переменная шаблона nginx: источник frame-src выводит docker/nginx/prod/preview-host.envsh. */
+export const PREVIEW_FRAMES_VARIABLE = '${PREVIEW_FRAME_SRC}';
 
 /**
  * Шаблон nginx с CSP продакшена (csp.conf.template): его пишет apps/web/nginx-csp.ts при сборке образа, поэтому
@@ -65,7 +90,7 @@ export const S3_ORIGIN_VARIABLE = '${S3_PUBLIC_ORIGIN}';
 export function nginxCspTemplate(): string {
   return [
     '# Сгенерировано apps/web/nginx-csp.ts при сборке образа: хэш скрипта темы — из его текста.',
-    `add_header Content-Security-Policy "${productionContentSecurityPolicy(S3_ORIGIN_VARIABLE)}" always;`,
+    `add_header Content-Security-Policy "${productionContentSecurityPolicy(S3_ORIGIN_VARIABLE, PREVIEW_FRAMES_VARIABLE)}" always;`,
     '',
   ].join('\n');
 }

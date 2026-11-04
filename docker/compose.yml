@@ -108,6 +108,8 @@ services:
       # Presigned URL открывает браузер на хосте: опубликованный порт Garage.
       S3_PUBLIC_ENDPOINT: http://localhost:53900
       BETTER_AUTH_URL: http://localhost:8080
+      # Превью сайтов: хост под nginx; ключ подписи выводится из BETTER_AUTH_SECRET (.env).
+      PREVIEW_HOST: preview.localhost:8080
       # Внутри контейнера — на всех интерфейсах сети compose (по умолчанию API слушает только loopback).
       API_HOST: 0.0.0.0
       API_PORT: '3000'
@@ -169,6 +171,8 @@ services:
       # Браузер открывает приложение через nginx: оттуда же идёт HMR, этот же origin в CSP.
       WEB_PUBLIC_ORIGIN: http://localhost:8080
       S3_PUBLIC_ENDPOINT: http://localhost:53900
+      # Для frame-src в CSP страницы: тот же хост, что у API.
+      PREVIEW_HOST: preview.localhost:8080
       VITE_CACHE_DIR: /tmp/vite
       # WEB_WATCH_POLL: '1' # если правки не доходят до HMR через bind-mount (Docker Desktop)
     # Исходники для HMR — только для чтения; зависимости остаются из образа.

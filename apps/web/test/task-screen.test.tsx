@@ -792,3 +792,143 @@ test.each([
   act(() => FakeEventSource.last.fail(2));
   expect(screen.queryByText(RECONNECTING)).toBeNull();
 });
+
+const PREVIEW = { url: 'https://site.preview.test/' };
+const panel = () => screen.getByRole('region', { name: "Agent's computer" });
+const switchTo = (name: string) => within(panel()).getByRole('button', { name });
+const pressed = (name: string) => switchTo(name).getAttribute('aria-pressed');
+const siteFile = (createdAt = '2026-11-02T10:00:00.000Z') =>
+  fileDto({ path: 'outputs/index.html', mime: 'text/html', createdAt });
+const donePreview = (overrides: Partial<ReturnType<typeof taskDetail>> = {}, files = [siteFile()]) =>
+  taskResponse({ task: { ...doneTask, ...overrides }, files, preview: PREVIEW });
+
+/** Экран задачи, чья карточка — текущее значение card; поток открыт, поэтому шаг status перечитывает карточку. */
+async function openCard(first: ReturnType<typeof taskResponse>) {
+  let card = first;
+  const env = await open([first], { 'GET /api/tasks/task-1': () => json(card) });
+  const reads = () => env.calls.filter(c => c.path === '/api/tasks/task-1').length;
+  let seq = 100;
+  /** Новая карточка: экран перечитал её и отрисовал. */
+  const update = async (next: ReturnType<typeof taskResponse>) => {
+    card = next;
+    const before = reads();
+    emit(status((seq += 1), 'running', 'finalizing'));
+    await until(() => reads() > before);
+    // Ответ чтения и отрисовка идут после вызова fetch.
+    await act(() => new Promise(resolve => setTimeout(resolve, 0)));
+  };
+  await until(() => document.title === 'Find three suppliers · agent');
+  return { update };
+}
+
+test('without a preview there is no switch and no frame', async () => {
+  await openCard(taskResponse({ task: doneTask }));
+  expect(within(panel()).queryByRole('button', { name: 'Preview' })).toBeNull();
+  expect(screen.queryByTitle('Site preview')).toBeNull();
+  expect(screen.queryByRole('link', { name: 'Open preview' })).toBeNull();
+});
+
+test('a finished task with a preview opens on it; the links open a new tab without an opener', async () => {
+  await openCard(donePreview());
+  const frame = await screen.findByTitle('Site preview');
+  expect(frame.getAttribute('src')).toBe(PREVIEW.url);
+  expect(pressed('Preview')).toBe('true');
+  // Над сайтом агента всегда строка панели: чей он и что в него нельзя вводить.
+  expect(
+    within(panel()).getByText(/Built by the agent\. Not part of this app\. Do not enter passwords\./),
+  ).toBeTruthy();
+  const newTab = within(panel()).getByRole('link', { name: 'Open in new tab' });
+  expect(newTab.getAttribute('href')).toBe(PREVIEW.url);
+  expect(newTab.getAttribute('rel')).toBe('noopener noreferrer');
+  // Панель скрыта на средней ширине экрана: ссылка в ответе остаётся доступной.
+  expect(screen.getByRole('link', { name: 'Open preview' }).getAttribute('rel')).toBe('noopener noreferrer');
+});
+
+test('the switch moves between the site and the activity, and a reread does not move it back', async () => {
+  const { update } = await openCard(donePreview());
+  await userEvent.click(await screen.findByRole('button', { name: 'Activity' }));
+  expect(screen.queryByTitle('Site preview')).toBeNull();
+  expect(within(panel()).queryByText(/Built by the agent/)).toBeNull();
+  expect(pressed('Activity')).toBe('true');
+  await update(donePreview());
+  expect(pressed('Activity')).toBe('true');
+  await userEvent.click(switchTo('Preview'));
+  expect(screen.getByTitle('Site preview')).toBeTruthy();
+});
+
+test('during a run the panel stays on Activity; when the cycle finishes it opens the preview by itself', async () => {
+  const running = taskResponse({
+    task: taskDetail({ status: 'running', cycle: 2 }),
+    files: [siteFile()],
+    preview: PREVIEW,
+  });
+  const { update } = await openCard(running);
+  // Сайт прошлого цикла можно открыть, но сам экран на него не переходит.
+  expect(pressed('Activity')).toBe('true');
+  expect(screen.queryByTitle('Site preview')).toBeNull();
+  await update(running);
+  expect(pressed('Activity')).toBe('true');
+  await update(donePreview({ cycle: 2 }, [siteFile('2026-11-02T10:05:00.000Z')]));
+  expect(screen.getByTitle('Site preview')).toBeTruthy();
+  expect(pressed('Preview')).toBe('true');
+});
+
+test('a preview that appears during the run does not interrupt it', async () => {
+  const { update } = await openCard(taskResponse({ task: taskDetail({ status: 'running' }) }));
+  expect(within(panel()).queryByRole('button', { name: 'Preview' })).toBeNull();
+  await update(taskResponse({ task: taskDetail({ status: 'finalizing' }), files: [siteFile()], preview: PREVIEW }));
+  expect(pressed('Activity')).toBe('true');
+  expect(screen.queryByTitle('Site preview')).toBeNull();
+});
+
+test('a new cycle goes back to Activity', async () => {
+  const { update } = await openCard(donePreview());
+  await screen.findByTitle('Site preview');
+  await update(taskResponse({ task: reopened, files: [siteFile()], preview: PREVIEW }));
+  expect(screen.queryByTitle('Site preview')).toBeNull();
+  expect(pressed('Activity')).toBe('true');
+});
+
+test('the frame reloads when the delivered files or the cycle change, and only then', async () => {
+  const { update } = await openCard(donePreview());
+  const later = '2026-11-02T10:05:00.000Z';
+  const first = await screen.findByTitle('Site preview');
+  await update(donePreview());
+  expect(screen.getByTitle('Site preview')).toBe(first);
+  await update(donePreview({}, [siteFile(later)]));
+  const second = screen.getByTitle('Site preview');
+  expect(second).not.toBe(first);
+  await update(donePreview({ cycle: 2 }, [siteFile(later)]));
+  expect(screen.getByTitle('Site preview')).not.toBe(second);
+});
+
+test('a preview that goes away takes the switch with it', async () => {
+  const { update } = await openCard(donePreview());
+  await screen.findByTitle('Site preview');
+  await update(taskResponse({ task: doneTask }));
+  expect(screen.queryByTitle('Site preview')).toBeNull();
+  expect(within(panel()).queryByRole('button', { name: 'Preview' })).toBeNull();
+});
+
+test('a preview with an address that is not absolute http(s) is treated as no preview', async () => {
+  await openCard(taskResponse({ task: doneTask, files: [siteFile()], preview: { url: '/' } }));
+  expect(within(panel()).queryByRole('button', { name: 'Preview' })).toBeNull();
+  expect(screen.queryByTitle('Site preview')).toBeNull();
+  expect(screen.queryByRole('link', { name: 'Open preview' })).toBeNull();
+  expect(within(panel()).queryByRole('link', { name: 'Open in new tab' })).toBeNull();
+});
+
+test.each(['failed', 'cancelled'] as const)(
+  'a %s task with a preview opens it in the panel and keeps the link in the answer',
+  async taskStatus => {
+    await openCard(donePreview({ status: taskStatus }));
+    await screen.findByTitle('Site preview');
+    expect(pressed('Preview')).toBe('true');
+    expect(screen.getByRole('link', { name: 'Open preview' }).getAttribute('rel')).toBe('noopener noreferrer');
+  },
+);
+
+test('a running task with a preview has no link in the answer', async () => {
+  await openCard(taskResponse({ task: taskDetail({ status: 'running' }), files: [siteFile()], preview: PREVIEW }));
+  expect(screen.queryByRole('link', { name: 'Open preview' })).toBeNull();
+});

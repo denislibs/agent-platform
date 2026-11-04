@@ -1,6 +1,6 @@
 import { preact } from '@preact/preset-vite';
 import { defineConfig } from 'vite';
-import { contentSecurityPolicy, themeBoot } from './csp.ts';
+import { contentSecurityPolicy, previewFrameSource, themeBoot } from './csp.ts';
 
 // Веб-приложение: `bun run web:dev` (http://localhost:5173, /api → API на :3000) или сервис web в Docker за nginx
 // (http://localhost:8080). Better Auth сверяет Origin с BETTER_AUTH_URL — это адрес, который открывает браузер.
@@ -29,6 +29,7 @@ export default defineConfig({
       'Content-Security-Policy': contentSecurityPolicy({
         s3Endpoint: env.S3_PUBLIC_ENDPOINT || 'http://localhost:53900',
         hmrOrigin,
+        frames: previewFrameSource(env.PREVIEW_HOST, publicOrigin.origin),
       }),
     },
     // Bind-mount в Docker на macOS может не доносить события файловой системы: WEB_WATCH_POLL=1 включает опрос.

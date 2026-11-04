@@ -31,3 +31,18 @@ export function safeHref(href: string | undefined): string | undefined {
   if (scheme === undefined) return href;
   return SAFE_SCHEMES.has(scheme.toLowerCase()) ? href : undefined;
 }
+
+/**
+ * Абсолютный адрес `http:` или `https:` или `undefined`. Строже `safeHref`: относительные адреса, `//host` и `mailto:`
+ * не проходят. Нужен там, где адрес грузится во фрейм или открывается как чужой сайт: относительный адрес указал бы на
+ * origin самого приложения. Возвращается нормализованная запись адреса.
+ */
+export function absoluteWebUrl(href: string | undefined): string | undefined {
+  if (!href) return undefined;
+  try {
+    const url = new URL(href);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
+}

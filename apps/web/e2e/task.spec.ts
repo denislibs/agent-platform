@@ -13,6 +13,9 @@ test('sign in with a magic link, run a task that asks a question, read the answe
     Object.assign(window, { cspViolations: seen });
     document.addEventListener('securitypolicyviolation', e => seen.push(`${e.violatedDirective} ${e.blockedURI}`));
   });
+  // Ошибки страницы и её фреймов: сайт агента не должен падать на модульном скрипте или таблице стилей.
+  const pageErrors: string[] = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
   const email = `${crypto.randomUUID()}@web-e2e.test.dev`;
 
   await page.goto('/');
@@ -57,6 +60,10 @@ test('sign in with a magic link, run a task that asks a question, read the answe
     page.getByRole('navigation', { name: 'Tasks' }).getByRole('link', { name: /Write a greeting/ }),
   ).toContainText('completed');
 
+  // Первый цикл сайта не выдал: переключателя нет.
+  const computer = page.getByRole('region', { name: "Agent's computer" });
+  await expect(computer.getByRole('button', { name: 'Preview' })).toHaveCount(0);
+
   /** Скачивание по ссылке файла: /api/files/:id → redirect на presigned GET (attachment). */
   const downloadText = async (name: RegExp, filename: string) => {
     const download = page.waitForEvent('download');
@@ -87,6 +94,29 @@ test('sign in with a magic link, run a task that asks a question, read the answe
     .click();
   expect(await readFile(await (await latest).path(), 'utf8')).toBe('# Hi');
 
+  // Превью: второй цикл выдал outputs/index.html, панель открыла сайт сама.
+  await expect(computer.getByRole('button', { name: 'Preview' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.frameLocator('iframe[title="Site preview"]').getByText('Site ready')).toBeVisible();
+  await expect(computer).toContainText('preview.localhost');
+  await expect(computer).toContainText('Built by the agent. Not part of this app. Do not enter passwords.');
+  const site = () => page.frames().find(f => f.url().includes('.preview.localhost:5197/'));
+  // Скрипт выполнился, localStorage работает, окно приложения недоступно (его origin чужой).
+  await expect.poll(() => site()?.title()).toBe('visits-1:top-blocked');
+  expect(await site()?.evaluate(() => document.cookie)).toBe('');
+  // Модульный скрипт и таблица стилей по абсолютным адресам /assets/…: стиль из style.css применён.
+  expect(await site()?.evaluate(() => getComputedStyle(document.querySelector('p')!).color)).toBe('rgb(1, 2, 3)');
+  // Сайт на другом хосте, чем приложение: это и держит его origin чужим.
+  expect(new URL(site()!.url()).host).not.toBe(new URL(page.url()).host);
+  // Хранилище сайта — своё: в приложение его запись не попала, а между загрузками сайта она живёт.
+  expect(await page.evaluate(() => localStorage.getItem('visits'))).toBeNull();
+  const newTab = computer.getByRole('link', { name: 'Open in new tab' });
+  await expect(newTab).toHaveAttribute('rel', 'noopener noreferrer');
+  expect(await newTab.getAttribute('href')).toBe(site()?.url());
+  await computer.getByRole('button', { name: 'Activity' }).click();
+  await expect(computer.locator('iframe')).toHaveCount(0);
+  await computer.getByRole('button', { name: 'Preview' }).click();
+  await expect.poll(() => site()?.title()).toBe('visits-2:top-blocked');
+
   // Library показывает результат задачи; удаление задачи возвращает на главную и убирает его файлы.
   await page.getByRole('link', { name: 'Library' }).click();
   await expect(page.getByRole('link', { name: 'Download hello.md' })).toBeVisible();
@@ -99,4 +129,5 @@ test('sign in with a magic link, run a task that asks a question, read the answe
   await expect(page.getByText('No files yet')).toBeVisible();
 
   expect(await page.evaluate(() => (window as unknown as { cspViolations: string[] }).cspViolations)).toEqual([]);
+  expect(pageErrors).toEqual([]);
 });
