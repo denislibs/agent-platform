@@ -1,12 +1,16 @@
 import type { FileRecord } from '@agent/core';
 
-/** Где искать точку входа сайта: собранная папка раньше исходников, поэтому исходный index.html Vite не откроется. */
+/**
+ * Где искать точку входа сайта. Сначала outputs/ — то, что просит промпт (outputs/dist/index.html) и что агент отдаёт в
+ * finish; корень рабочей папки в конце: там чаще исходный index.html Vite, который статикой не откроется, и устаревшая
+ * копия dist/ не должна перекрывать полную копию под outputs/.
+ */
 const ENTRY_PATHS = [
-  'dist/index.html',
   'outputs/dist/index.html',
-  'build/index.html',
   'outputs/build/index.html',
   'outputs/index.html',
+  'dist/index.html',
+  'build/index.html',
   'index.html',
 ];
 const ENTRY_NAME = 'index.html';
@@ -63,7 +67,20 @@ export function findPreviewSite(files: readonly FileRecord[]): PreviewSite | nul
     const entry = outputs.get(path);
     if (entry) return { entry, root: path.slice(0, -ENTRY_NAME.length), files: outputs };
   }
-  return null;
+  // Известных путей нет: единственный самый мелкий index.html под outputs/ (outputs/site/index.html). Два на одной
+  // глубине — угадывать нельзя, превью нет.
+  let shallowest: FileRecord[] = [];
+  let depth = Infinity;
+  for (const file of outputs.values()) {
+    if (!file.path.startsWith('outputs/') || !file.path.endsWith(`/${ENTRY_NAME}`)) continue;
+    const d = file.path.split('/').length;
+    if (d < depth) [depth, shallowest] = [d, [file]];
+    else if (d === depth) shallowest.push(file);
+  }
+  const [entry] = shallowest;
+  return entry && shallowest.length === 1
+    ? { entry, root: entry.path.slice(0, -ENTRY_NAME.length), files: outputs }
+    : null;
 }
 
 /**
@@ -93,12 +110,15 @@ const hasExtension = (path: string) => /\.[^./]+$/.test(path);
 const isApiPath = (path: string) => path === 'api' || path.startsWith('api/');
 
 /**
- * Файл для пути: точное совпадение под корнем сайта. Неизвестный путь без расширения — точка входа (маршрутизация на
- * клиенте), с расширением или под api/ — нет файла.
+ * Файл для пути: точное совпадение под корнем сайта. Путь без расширения может быть папкой со своим index.html
+ * (/about и /about/ — about/index.html). Неизвестный путь без расширения — точка входа (маршрутизация на клиенте),
+ * с расширением или под api/ — нет файла.
  */
 export function resolvePreviewFile(site: PreviewSite, path: string): FileRecord | null {
   if (path === '') return site.entry;
   const file = site.files.get(site.root + path);
   if (file) return file;
+  const index = !hasExtension(path) && site.files.get(`${site.root}${path}/${ENTRY_NAME}`);
+  if (index) return index;
   return hasExtension(path) || isApiPath(path) ? null : site.entry;
 }

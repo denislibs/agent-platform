@@ -293,14 +293,14 @@ describe('every failure is the same 404', () => {
 });
 
 describe('which files', () => {
-  test('entry order: dist, outputs/dist, build, outputs/build, outputs, the workspace root', async () => {
+  test('entry order: outputs/dist, outputs/build, outputs, then dist, build, the workspace root', async () => {
     const t = await setup();
     const order = [
-      'dist/index.html',
       'outputs/dist/index.html',
-      'build/index.html',
       'outputs/build/index.html',
       'outputs/index.html',
+      'dist/index.html',
+      'build/index.html',
       'index.html',
     ];
     for (let i = 0; i < order.length; i++) {
@@ -308,6 +308,47 @@ describe('which files', () => {
       const task = await t.addTask(files);
       expect(await (await t.get(task.id)).text()).toBe(order[i]!);
     }
+  });
+
+  test('a copy under outputs/dist wins over a stale dist/ named in finish', async () => {
+    const t = await setup();
+    const task = await t.addTask({
+      'dist/index.html': 'stale',
+      'outputs/dist/index.html': '<script src="/assets/app.js"></script>',
+      'outputs/dist/assets/app.js': 'console.log(2)',
+    });
+    expect(await (await t.get(task.id)).text()).toContain('/assets/app.js');
+    expect(await (await t.get(task.id, '/assets/app.js')).text()).toBe('console.log(2)');
+  });
+
+  test('no known entry: the only shallowest index.html under outputs/ is the site, its folder the root', async () => {
+    const t = await setup();
+    const task = await t.addTask({
+      'outputs/site/index.html': '<h1>Site</h1>',
+      'outputs/site/app.js': 'console.log(3)',
+      'outputs/my-app/dist/index.html': 'deeper',
+    });
+    expect(await (await t.get(task.id)).text()).toBe('<h1>Site</h1>');
+    expect(await (await t.get(task.id, '/app.js')).text()).toBe('console.log(3)');
+    const deep = await t.addTask({ 'outputs/my-app/dist/index.html': 'only' });
+    expect(await (await t.get(deep.id)).text()).toBe('only');
+  });
+
+  test('no known entry and a tie at the shallowest depth: no preview', async () => {
+    const t = await setup();
+    const task = await t.addTask({ 'outputs/a/index.html': 'a', 'outputs/b/index.html': 'b' });
+    expect((await t.get(task.id)).status).toBe(404);
+    expect((await t.get(task.id, '/a/index.html')).status).toBe(404);
+  });
+
+  test('the fallback looks only under outputs/ and only at files named index.html', async () => {
+    const t = await setup();
+    const task = await t.addTask({
+      'site/index.html': 'x',
+      'outputs/site/home.html': 'y',
+      'tmp/outputs/z/index.html': 'z',
+    });
+    expect((await t.get(task.id)).status).toBe(404);
   });
 
   test('the folder of the entry is the root: absolute asset paths work, files outside it do not', async () => {
@@ -340,6 +381,14 @@ describe('which files', () => {
       expect(await (await t.get(task.id, path)).text()).toBe('<h1>Home</h1>');
     expect((await t.get(task.id, '/todos/app.js')).status).toBe(404);
     expect((await t.get(task.id, '/favicon.ico')).status).toBe(404);
+  });
+
+  test('a folder with its own index.html is served for the path with and without a trailing slash', async () => {
+    const t = await setup();
+    const task = await t.addTask({ ...SITE, 'dist/about/index.html': '<h1>About</h1>' });
+    for (const path of ['/about', '/about/']) expect(await (await t.get(task.id, path)).text()).toBe('<h1>About</h1>');
+    // Папка без своего index.html — по-прежнему маршрут сайта.
+    expect(await (await t.get(task.id, '/contact/')).text()).toBe('<h1>Home</h1>');
   });
 
   test('a running task still serves what was delivered', async () => {

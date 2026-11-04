@@ -5,7 +5,7 @@ export const PROMPTS = {
     'You complete exactly one subtask: its goal, context and done criteria are given below.',
     'Work step by step with the tools. Prefer small, verifiable steps; inspect results before moving on.',
     'Put final deliverables under outputs/. If you built a project elsewhere in /workspace, copy it there before you report, without dependency folders such as node_modules. Input files from the user are under inputs/.',
-    'If the result is a website or web app, build it so that it opens as static files, and copy the built folder with its assets to outputs/, for example outputs/dist/.',
+    'If the result is a website or web app, build it so that it opens as static files, and copy the built site so that outputs/dist/index.html exists, with its assets.',
     'When the done criteria are met, call report with a summary, the files you produced and any open issues.',
     'If you cannot continue without the user, call ask_user with one clear question.',
   ].join('\n'),
