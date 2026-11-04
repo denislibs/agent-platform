@@ -10,6 +10,7 @@ import {
   Chip,
   Composer,
   ComputerPanel,
+  OpenInNewTab,
   FileCard,
   IconButton,
   PlanList,
@@ -269,6 +270,7 @@ export function TaskScreenSection() {
             detail={current && step >= 0 ? current.detail : 'sandbox'}
             position={(Math.min(step + 1, SCRIPT.length) / SCRIPT.length) * 100}
             live
+            actions={<OpenInNewTab href="https://example.com/" />}
           >
             {current && step >= 0 ? current.body : ''}
           </ComputerPanel>

@@ -11,6 +11,7 @@ import {
   Attachment,
   Composer,
   ComputerPanel,
+  OpenInNewTab,
   CreditBalance,
   FileCard,
   fileKind,
@@ -453,4 +454,64 @@ test('FileCard and TaskItem drop unsafe hrefs instead of rendering them as links
   render(<TaskItem title="Bad task" status="idle" href="data:text/html,x" />);
   expect(screen.queryByRole('link', { name: /Bad task/ })).toBeNull();
   expect(screen.getByText('Bad task')).toBeTruthy();
+});
+
+const FRAME = { src: 'https://site.preview.test/', title: 'Site preview', reloadKey: 'a' };
+
+test('ComputerPanel with a frame shows the site instead of the screen, the status and the replay', () => {
+  render(
+    <ComputerPanel activity="Using Browser" frame={FRAME} actions={<button type="button">Switch</button>}>
+      body
+    </ComputerPanel>,
+  );
+  const frame = screen.getByTitle('Site preview');
+  expect(frame.tagName).toBe('IFRAME');
+  expect(frame.getAttribute('src')).toBe(FRAME.src);
+  expect(frame.getAttribute('class')).toBe('ui-computer__frame');
+  expect(frame.getAttribute('referrerpolicy')).toBe('no-referrer');
+  expect(screen.queryByText('Using Browser')).toBeNull();
+  expect(screen.queryByRole('region', { name: "Agent's computer: screen" })).toBeNull();
+  expect(screen.queryByRole('progressbar')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Switch' })).toBeTruthy();
+});
+
+test('the frame is sandboxed: scripts, its own origin, forms and modals; no top navigation, no popups', () => {
+  render(<ComputerPanel frame={FRAME} />);
+  expect(screen.getByTitle('Site preview').getAttribute('sandbox')).toBe(
+    'allow-scripts allow-same-origin allow-forms allow-modals',
+  );
+});
+
+test('a new reloadKey creates a new frame, the same key keeps it', () => {
+  const { rerender } = render(<ComputerPanel frame={FRAME} />);
+  const first = screen.getByTitle('Site preview');
+  rerender(<ComputerPanel frame={{ ...FRAME }} />);
+  expect(screen.getByTitle('Site preview')).toBe(first);
+  rerender(<ComputerPanel frame={{ ...FRAME, reloadKey: 'b' }} />);
+  expect(screen.getByTitle('Site preview')).not.toBe(first);
+});
+
+test('an unsafe frame address is dropped: the panel stays as it was', () => {
+  render(<ComputerPanel activity="Using Browser" frame={{ ...FRAME, src: 'javascript:alert(1)' }} />);
+  expect(screen.queryByTitle('Site preview')).toBeNull();
+  expect(screen.getByText('Using Browser')).toBeTruthy();
+});
+
+test('without a frame nothing changes, and actions sit in the head of the panel', () => {
+  render(<ComputerPanel activity="Using Browser" actions={<a href="/x">Open</a>} />);
+  expect(screen.getByRole('link', { name: 'Open' }).closest('.ui-computer__tabs')).toBeTruthy();
+  expect(document.querySelector('iframe')).toBeNull();
+  expect(screen.getByRole('progressbar')).toBeTruthy();
+});
+
+test('OpenInNewTab opens without an opener and a referrer; an unsafe address renders nothing', () => {
+  const { rerender } = render(<OpenInNewTab href="https://site.preview.test/" />);
+  const link = screen.getByRole('link', { name: 'Open in new tab' });
+  expect(link.getAttribute('href')).toBe('https://site.preview.test/');
+  expect(link.getAttribute('target')).toBe('_blank');
+  expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+  rerender(<OpenInNewTab href="https://site.preview.test/">Open preview</OpenInNewTab>);
+  expect(screen.getByRole('link', { name: 'Open preview' })).toBeTruthy();
+  rerender(<OpenInNewTab href="javascript:alert(1)" />);
+  expect(screen.queryByRole('link')).toBeNull();
 });

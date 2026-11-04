@@ -450,11 +450,12 @@
   min-height: 0;
 }
 .ui-computer__tabs {
-  height: var(--header-height);
+  min-height: var(--header-height);
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-1);
-  padding: 0 var(--space-2) 0 var(--space-3);
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
   border-bottom: 1px solid var(--border-subtle);
 }
 .ui-computer__tab {
@@ -489,6 +490,14 @@
   font: 13px/20px var(--font-mono);
   color: var(--text-secondary);
   white-space: pre-wrap;
+}
+/* Сайт агента во фрейме: белый фон, потому что страница без своего фона рассчитана на белый. */
+.ui-computer__frame {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: #fff;
 }
 .ui-computer__foot {
   padding: var(--space-2) var(--space-3);

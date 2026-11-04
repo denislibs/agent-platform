@@ -1,5 +1,12 @@
 import { batch, signal } from '@preact/signals';
-import { isTerminalTask, type FileDto, type StepDto, type SubtaskDto, type TaskDetail } from '@agent/shared';
+import {
+  isTerminalTask,
+  type FileDto,
+  type StepDto,
+  type SubtaskDto,
+  type TaskDetail,
+  type TaskResponse,
+} from '@agent/shared';
 import { ApiRequestError, type Api } from '../api/client.ts';
 import { openTaskEvents, type TaskEventsOptions } from '../api/events.ts';
 
@@ -52,6 +59,7 @@ export function createTaskStore(deps: TaskStoreDeps, taskId: string) {
   const task = signal<TaskDetail | null>(null);
   const subtasks = signal<SubtaskDto[]>([]);
   const files = signal<FileDto[]>([]);
+  const preview = signal<TaskResponse['preview']>(null);
   const steps = signal<StepDto[]>([]);
   /** Карточку не показать: первое чтение не удалось, сессии нет (401) или задачи нет (403, 404). */
   const error = signal<ApiRequestError | null>(null);
@@ -109,6 +117,7 @@ export function createTaskStore(deps: TaskStoreDeps, taskId: string) {
       task.value = res.task;
       subtasks.value = res.subtasks;
       files.value = res.files;
+      preview.value = res.preview;
       error.value = null;
       stale.value = null;
     });
@@ -210,6 +219,7 @@ export function createTaskStore(deps: TaskStoreDeps, taskId: string) {
     task,
     subtasks,
     files,
+    preview,
     steps,
     error,
     stale,
