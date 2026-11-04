@@ -251,3 +251,42 @@ describe('blank values', () => {
     expect(() => loadConfig({ ...base, DATABASE_URL: '  ' })).toThrow('DATABASE_URL');
   });
 });
+
+const secret = 'p'.repeat(32);
+const authSecret = 'a'.repeat(32);
+const previewApp = (url: string, host: string) => () =>
+  loadConfig({ ...base, PREVIEW_SECRET: secret, BETTER_AUTH_URL: url, PREVIEW_HOST: host });
+
+describe('preview settings', () => {
+  test('previews are off without PREVIEW_HOST; a blank value is unset', () => {
+    expect(loadConfig(base).preview).toBeNull();
+    expect(loadConfig({ ...base, PREVIEW_HOST: ' ', BETTER_AUTH_SECRET: authSecret }).preview).toBeNull();
+  });
+
+  test('PREVIEW_HOST keeps the port for links and lowercases the name', () => {
+    const c = loadConfig({ ...base, PREVIEW_HOST: 'Preview.LOCALHOST:8080', BETTER_AUTH_SECRET: authSecret });
+    expect(c.preview).toEqual({ host: 'preview.localhost:8080', hostname: 'preview.localhost', secret: null });
+  });
+
+  test('PREVIEW_HOST is a bare host[:port]: no scheme, path or wildcard', () => {
+    for (const host of ['http://preview.localhost', 'preview.localhost/x', '*.preview.localhost', 'a b', 'host:port'])
+      expect(() => loadConfig({ ...base, PREVIEW_HOST: host, PREVIEW_SECRET: secret })).toThrow(/PREVIEW_HOST/);
+  });
+
+  test('previews need a key: PREVIEW_SECRET or BETTER_AUTH_SECRET', () => {
+    expect(() => loadConfig({ ...base, PREVIEW_HOST: 'preview.localhost' })).toThrow(
+      /PREVIEW_HOST needs PREVIEW_SECRET or BETTER_AUTH_SECRET/,
+    );
+    const c = loadConfig({ ...base, PREVIEW_HOST: 'preview.localhost', PREVIEW_SECRET: secret });
+    expect(c.preview?.secret).toBe(secret);
+    expect(() => loadConfig({ ...base, PREVIEW_SECRET: 'short' })).toThrow(/PREVIEW_SECRET/);
+  });
+
+  test('the app can live neither under the preview host nor above it; localhost is the one exception', () => {
+    expect(previewApp('https://app.example.com', 'app.example.com')).toThrow(/same host/);
+    expect(previewApp('https://app.example.com', 'example.com')).toThrow(/same host/);
+    expect(previewApp('https://app.example.com', 'preview.app.example.com')).toThrow(/same host/);
+    expect(previewApp('http://localhost:8080', 'preview.localhost:8080')).not.toThrow();
+    expect(previewApp('https://app.example.com', 'example-usercontent.net')).not.toThrow();
+  });
+});

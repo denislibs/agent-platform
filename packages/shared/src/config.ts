@@ -15,6 +15,33 @@ function oauthApp(name: string, clientId: string | undefined, clientSecret: stri
   return { clientId, clientSecret };
 }
 
+/** host[:port] без схемы и пути; регистр не важен (имена хостов его не различают). */
+const PREVIEW_HOST_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:\d{1,5})?$/i;
+
+const isUnder = (name: string, parent: string) => name === parent || name.endsWith(`.${parent}`);
+
+/**
+ * Превью сайтов включены, только если задан PREVIEW_HOST и есть из чего вывести ключ подписи. Приложение не может жить
+ * на этом хосте или под ним: API отдал бы превью вместо приложения. Поддомен приложения тоже отказ: cookie родительского
+ * домена дошли бы до чужого кода. localhost — исключение для разработки: *.localhost не видит cookie хоста localhost.
+ */
+function previewConfig(
+  host: string | undefined,
+  secret: string | undefined,
+  authSecret: string | undefined,
+  appUrl: string,
+) {
+  if (!host) return null;
+  if (!secret && !authSecret)
+    throw new Error('Invalid environment: PREVIEW_HOST needs PREVIEW_SECRET or BETTER_AUTH_SECRET');
+  const lower = host.toLowerCase();
+  const hostname = lower.split(':', 1)[0]!;
+  const app = new URL(appUrl).hostname;
+  if (isUnder(app, hostname) || (app !== 'localhost' && isUnder(hostname, app)))
+    throw new Error('Invalid environment: PREVIEW_HOST and BETTER_AUTH_URL must not share the same host');
+  return { host: lower, hostname, secret: secret ?? null };
+}
+
 const EnvSchema = z.object({
   DATABASE_URL: required,
   VALKEY_URL: required,
@@ -96,6 +123,13 @@ const EnvSchema = z.object({
   GOOGLE_CLIENT_SECRET: optionalText,
   GITHUB_CLIENT_ID: optionalText,
   GITHUB_CLIENT_SECRET: optionalText,
+  /** Хост превью сайтов: host[:port], задача открывается на <метка>.<хост>, схема — как у BETTER_AUTH_URL. Пусто — выключено. */
+  PREVIEW_HOST: z.preprocess(blankAsUnset, z.string().regex(PREVIEW_HOST_PATTERN, 'expected host[:port]').optional()),
+  /** Ключ подписи адресов превью; не задан — выводится из BETTER_AUTH_SECRET (packages/api/src/preview/token.ts). */
+  PREVIEW_SECRET: z.preprocess(
+    blankAsUnset,
+    z.string().min(32, 'at least 32 characters (openssl rand -hex 32)').optional(),
+  ),
   /** Почта magic link: smtp(s)://user:password@host:port. Без него письма пишутся в журнал API (LogMailer). */
   SMTP_URL: z.preprocess(blankAsUnset, z.url({ protocol: /^smtps?$/ }).optional()),
   /** Отправитель писем: обязателен вместе с SMTP_URL. */
@@ -189,6 +223,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       google: oauthApp('GOOGLE', e.GOOGLE_CLIENT_ID, e.GOOGLE_CLIENT_SECRET),
       github: oauthApp('GITHUB', e.GITHUB_CLIENT_ID, e.GITHUB_CLIENT_SECRET),
     },
+    preview: previewConfig(e.PREVIEW_HOST, e.PREVIEW_SECRET, e.BETTER_AUTH_SECRET, e.BETTER_AUTH_URL),
     mail: mailConfig(e.SMTP_URL, e.MAIL_FROM),
   };
 }
