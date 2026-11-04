@@ -53,7 +53,12 @@ test('a preview server block in dev and prod: GET and HEAD only, its own limits,
     expect(block).toContain('limit_except GET {');
     expect(block).toContain('deny all;');
     expect(block).toContain('limit_req zone=preview');
-    expect(block).toContain('limit_conn previewconn 20;');
+    // По HTTP/2 каждый поток — запрос к API: 20 рвало страницу с десятками модулей. Память держит ByteBudget, не этот предел.
+    expect(block).toContain('limit_conn previewconn 128;');
+    expect(block).not.toContain('limit_conn previewconn 20;');
+    // Отказ по пределу — штатная ситуация: в error_log с меткой хоста на уровне error она не попадает.
+    expect(block).toContain('limit_req_log_level info;');
+    expect(block).toContain('limit_conn_log_level info;');
     expect(block).toContain('client_max_body_size 1;');
     expect(block).toContain('proxy_pass_request_body off;');
     expect(block).toContain("proxy_set_header Content-Length '';");
@@ -98,6 +103,10 @@ test('a preview server name is one label under the preview host; a malformed Hos
   // Всё, что не подошло ни одному server_name, закрывается без ответа.
   expect(dev).toMatch(/listen 8080 default_server;\s*return 444;/);
   expect(app).toMatch(/listen 8080 default_server;[\s\S]*?location \/ \{\s*return 444;/);
+});
+
+test('prod: gzip covers the JavaScript the preview handler sends', () => {
+  expect(prod).toMatch(/gzip_types [^;]*\btext\/javascript\b[^;]*;/);
 });
 
 test('the access log does not carry the host: the MAC of a preview stays out of it', () => {
