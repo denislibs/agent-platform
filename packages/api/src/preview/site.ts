@@ -11,33 +11,41 @@ const ENTRY_PATHS = [
 ];
 const ENTRY_NAME = 'index.html';
 
-const CONTENT_TYPES: Record<string, string> = {
-  html: 'text/html; charset=utf-8',
-  js: 'text/javascript; charset=utf-8',
-  mjs: 'text/javascript; charset=utf-8',
-  css: 'text/css; charset=utf-8',
-  json: 'application/json',
-  svg: 'image/svg+xml',
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  gif: 'image/gif',
-  webp: 'image/webp',
-  ico: 'image/x-icon',
-  woff: 'font/woff',
-  woff2: 'font/woff2',
-  ttf: 'font/ttf',
-  wasm: 'application/wasm',
-  map: 'application/json',
-  txt: 'text/plain; charset=utf-8',
-  xml: 'application/xml',
-};
+/** Map, а не объект: `x.constructor` не должен находить унаследованное свойство Object. */
+const CONTENT_TYPES: ReadonlyMap<string, string> = new Map([
+  ['html', 'text/html; charset=utf-8'],
+  ['htm', 'text/html; charset=utf-8'],
+  ['js', 'text/javascript; charset=utf-8'],
+  ['mjs', 'text/javascript; charset=utf-8'],
+  ['css', 'text/css; charset=utf-8'],
+  ['json', 'application/json'],
+  ['svg', 'image/svg+xml'],
+  ['png', 'image/png'],
+  ['jpg', 'image/jpeg'],
+  ['jpeg', 'image/jpeg'],
+  ['gif', 'image/gif'],
+  ['webp', 'image/webp'],
+  ['avif', 'image/avif'],
+  ['ico', 'image/x-icon'],
+  ['woff', 'font/woff'],
+  ['woff2', 'font/woff2'],
+  ['ttf', 'font/ttf'],
+  ['otf', 'font/otf'],
+  ['wasm', 'application/wasm'],
+  ['map', 'application/json'],
+  ['txt', 'text/plain; charset=utf-8'],
+  ['xml', 'application/xml'],
+  ['mp4', 'video/mp4'],
+  ['webm', 'video/webm'],
+  ['mp3', 'audio/mpeg'],
+  ['pdf', 'application/pdf'],
+]);
 
 /** Тип по расширению. Сохранённому mime верить нельзя: mimeOf финализатора пишет octet-stream для .js. */
 export function previewContentType(path: string): string {
   const name = path.slice(path.lastIndexOf('/') + 1);
   const dot = name.lastIndexOf('.');
-  return (dot > 0 && CONTENT_TYPES[name.slice(dot + 1).toLowerCase()]) || 'application/octet-stream';
+  return (dot > 0 && CONTENT_TYPES.get(name.slice(dot + 1).toLowerCase())) || 'application/octet-stream';
 }
 
 export interface PreviewSite {
@@ -60,7 +68,8 @@ export function findPreviewSite(files: readonly FileRecord[]): PreviewSite | nul
 
 /**
  * Путь запроса без начальной косой, декодированный один раз, или null, если форма запрещена: «..» и «.», пустые сегменты,
- * обратная косая, NUL, закодированная косая. Берётся из сырого адреса: разбор через URL склеил бы «..» раньше проверки.
+ * обратная косая, NUL, закодированная косая. Bun уже нормализует адрес запроса, поэтому защита от «..» держится не на
+ * этом разборе, а на точном поиске файла под корнем сайта (resolvePreviewFile); отказ здесь — второй слой для сырого адреса.
  */
 export function previewRequestPath(url: string): string | null {
   const raw = url.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/i, '').split(/[?#]/, 1)[0] ?? '';

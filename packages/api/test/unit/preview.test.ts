@@ -1,6 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import { TaskResponseSchema } from '@agent/shared';
-import { isPreviewRequest, previewHostname, previewLabel, previewRequestPath, previewSigningKey } from '../../src';
+import {
+  PREVIEW_INFLIGHT_BYTES,
+  isPreviewGate,
+  isPreviewRequest,
+  previewHostname,
+  previewLabel,
+  previewRequestPath,
+  previewSigningKey,
+} from '../../src';
 import { setupApi } from './helpers';
 
 const SECRET = 'p'.repeat(32);
@@ -55,6 +63,7 @@ const SITE: Files = {
   'dist/assets/app.css': 'body{}',
   'dist/logo.png': 'png',
   'outputs/report.csv': 'a,b',
+  'distractor/secret.txt': 'secret',
 };
 
 describe('the preview host is isolated', () => {
@@ -141,7 +150,6 @@ describe('host parsing', () => {
       'a.b.c.preview.test:8080',
       'a.preview.test..',
       'xn--e1afmkfd.preview.test',
-      'пример.preview.test',
     ])
       expect({ host, preview: isPreviewRequest(preview, host) }).toEqual({ host, preview: true });
     for (const host of [
@@ -156,8 +164,59 @@ describe('host parsing', () => {
       'localhost:8080',
       '[::1]:8080',
       'xn--preview.test',
+      'preview.test, app.test',
+      'app.test, preview.test',
+      '[.label.preview.test',
+      '[a]label.preview.test',
+      'label,preview.test',
+      'пример.preview.test',
     ])
       expect({ host, preview: isPreviewRequest(preview, host) }).toEqual({ host, preview: false });
+  });
+
+  test('isPreviewGate: a valid preview host, or a malformed Host that mentions the preview host; never a well-formed other host', () => {
+    for (const host of [
+      'a.preview.test',
+      'preview.test, app.test',
+      'app.test, preview.test',
+      'x.preview.test, app.test',
+      '[.label.preview.test',
+      '[a]label.preview.test',
+      'label,preview.test',
+      'пример.preview.test',
+      'a.preview.test x',
+    ])
+      expect({ host, gate: isPreviewGate(preview, host) }).toEqual({ host, gate: true });
+    for (const host of [
+      undefined,
+      '',
+      'localhost:8080',
+      '[::1]:8080',
+      'notpreview.test',
+      'app-preview.test',
+      'preview.test.evil.example',
+    ])
+      expect({ host, gate: isPreviewGate(preview, host) }).toEqual({ host, gate: false });
+  });
+
+  test('through the app: a malformed Host that mentions the preview host never reaches the app', async () => {
+    const t = await setup();
+    const task = await t.addTask(SITE);
+    const valid = t.hostOf(task.id);
+    for (const host of [
+      'preview.test, localhost',
+      'localhost, preview.test',
+      `${valid}, localhost`,
+      `localhost, ${valid}`,
+      '[.label.preview.test',
+      '[a]label.preview.test',
+      `${valid.split('.')[0]},preview.test`,
+    ]) {
+      const res = await t.app.request('/api/health', { headers: { host } });
+      expect({ host, status: res.status, body: await res.text() }).toEqual({ host, status: 404, body: 'Not found' });
+    }
+    // Хост приложения, в имени которого просто встречается имя хоста превью, остаётся приложением.
+    expect((await t.app.request('/api/health', { headers: { host: 'app-preview.test' } })).status).toBe(200);
   });
 
   test('through the app: odd forms of a preview host are the preview 404, a lookalike is the app', async () => {
@@ -459,6 +518,227 @@ describe('response headers', () => {
   });
 });
 
+const expect503 = (res: Response) => {
+  expect(res.status).toBe(503);
+  expect(res.headers.get('retry-after')).toBe('5');
+  expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+  expect(res.headers.get('cache-control')).toBe('no-cache');
+  expect(res.headers.get('content-security-policy')).toContain('frame-ancestors');
+  expect(res.headers.get('set-cookie')).toBeNull();
+};
+
+const check = async (res: Response, t: Awaited<ReturnType<typeof setup>>, taskId: string) => {
+  expect(res.status).toBe(500);
+  expect(res.headers.get('content-type')).toBe('text/plain; charset=utf-8');
+  expect(await res.text()).toBe('Internal error');
+  expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+  expect(res.headers.get('referrer-policy')).toBe('no-referrer');
+  expect(res.headers.get('cache-control')).toBe('no-cache');
+  expect(res.headers.get('content-security-policy')).toContain('frame-ancestors');
+  expect(res.headers.get('set-cookie')).toBeNull();
+  const entries = t.c.logger.entries.filter(e => e.level === 'error');
+  expect(entries).toHaveLength(1);
+  expect(entries[0]!.message).toBe('unhandled preview error');
+  expect(JSON.stringify(entries[0]!.fields)).toContain('boom');
+  expect(JSON.stringify(entries[0]!)).not.toContain(t.hostOf(taskId).split('.')[0]!);
+};
+
+describe('service workers, inherited names, hostile traversal', () => {
+  test('a Service-Worker: script request is the same 404 even on a valid host', async () => {
+    const t = await setup();
+    const task = await t.addTask({ ...SITE, 'dist/sw.js': 'self.skipWaiting()' });
+    const expected = await failure(await t.get(task.id, '/missing.js'));
+    const res = await t.get(task.id, '/sw.js', { headers: { 'service-worker': 'script' } });
+    expect(await failure(res)).toEqual(expected);
+    expect((await t.get(task.id, '/sw.js')).status).toBe(200);
+  });
+
+  test('an extension that is an inherited property of Object is just an unknown type', async () => {
+    const t = await setup();
+    const names = ['x.constructor', 'x.__proto__', 'x.toString', 'x.hasOwnProperty', 'x.valueOf'];
+    const task = await t.addTask({ 'index.html': 'home', ...Object.fromEntries(names.map(n => [n, 'x'])) });
+    for (const name of names)
+      expect({ name, type: (await t.get(task.id, `/${name}`)).headers.get('content-type') }).toEqual({
+        name,
+        type: 'application/octet-stream',
+      });
+  });
+
+  test('more content types: htm, avif, otf, mp4, webm, mp3, pdf', async () => {
+    const t = await setup();
+    const types: Record<string, string> = {
+      'a.htm': 'text/html; charset=utf-8',
+      'a.avif': 'image/avif',
+      'a.otf': 'font/otf',
+      'a.mp4': 'video/mp4',
+      'a.webm': 'video/webm',
+      'a.mp3': 'audio/mpeg',
+      'a.pdf': 'application/pdf',
+    };
+    const task = await t.addTask({
+      'index.html': 'home',
+      ...Object.fromEntries(Object.keys(types).map(p => [p, 'x'])),
+    });
+    for (const [path, type] of Object.entries(types))
+      expect({ path, type: (await t.get(task.id, `/${path}`)).headers.get('content-type') }).toEqual({ path, type });
+  });
+
+  test('a sibling folder that shares the root prefix is unreachable, with or without an extension', async () => {
+    const t = await setup();
+    const task = await t.addTask(SITE);
+    expect(at('/../distractor/secret.txt')).toBeNull();
+    expect(at('/../distractor/secret')).toBeNull();
+    for (const path of [
+      '/%2e%2e/distractor/secret.txt',
+      '/%2e%2e/distractor/secret',
+      '/..%2fdistractor%2fsecret',
+      '/ractor/secret.txt',
+      '/distractor/secret.txt',
+    ]) {
+      const res = await t.get(task.id, path);
+      expect({ path, body: await res.text() }).not.toEqual({ path, body: 'secret' });
+    }
+    // Bun склеивает «%2e%2e» раньше нас: адрес без расширения становится маршрутом сайта, то есть точкой входа, и не файлом соседней папки.
+    const routed = await t.get(task.id, '/%2e%2e/distractor/secret');
+    expect({ status: routed.status, body: await routed.text() }).toEqual({ status: 200, body: '<h1>Home</h1>' });
+  });
+
+  test('an entry at the workspace root: its own files are served, nothing above it', async () => {
+    const t = await setup();
+    const task = await t.addTask({ 'index.html': 'home', 'app.js': 'js', 'distractor/secret.txt': 'secret' });
+    expect(await (await t.get(task.id, '/app.js')).text()).toBe('js');
+    // Склеенный Bun «..» остаётся под корнем: либо файл корня, либо точка входа; закодированная косая — отказ.
+    const bodies: Record<string, [number, string]> = {
+      '/%2e%2e/etc/passwd': [200, 'home'],
+      '/%2e%2e/app': [200, 'home'],
+      '/a/../app.js': [200, 'js'],
+      '/..%2fapp.js': [404, 'Not found'],
+      '/%2e%2e/distractor/secret.txt': [200, 'secret'],
+    };
+    for (const [path, [status, body]] of Object.entries(bodies)) {
+      const res = await t.get(task.id, path);
+      expect({ path, status: res.status, body: await res.text() }).toEqual({ path, status, body });
+    }
+    expect(at('/../app.js')).toBeNull();
+    expect(at('/a/../app.js')).toBeNull();
+  });
+});
+
+describe('memory is bounded', () => {
+  const MIB = 1024 * 1024;
+  const BIG = 100 * MIB;
+
+  /** Задача, у которой в записи заявлен большой размер (содержимое в тесте маленькое): резервируется заявленное. */
+  async function bigTask(t: Awaited<ReturnType<typeof setup>>, path = 'dist/big.js') {
+    const task = await t.addTask({ 'dist/index.html': 'home', [path]: 'x' });
+    await t.c.files.upsertOutput({
+      userId: t.owner.user.id,
+      taskId: task.id,
+      path,
+      storageKey: `tasks/${task.id}/${path}`,
+      size: BIG,
+      mime: 'application/octet-stream',
+    });
+    return task;
+  }
+  const setupBig = () => setup({ UPLOAD_MAX_BYTES: String(BIG) });
+
+  test('the budget is a named 256 MiB constant', () => {
+    expect(PREVIEW_INFLIGHT_BYTES).toBe(256 * MIB);
+  });
+
+  test('requests past the budget get 503 with the base headers; a read body frees it', async () => {
+    const t = await setupBig();
+    const task = await bigTask(t);
+    const first = await t.get(task.id, '/big.js');
+    const second = await t.get(task.id, '/big.js');
+    expect([first.status, second.status]).toEqual([200, 200]);
+    expect(first.headers.get('content-length')).toBe('1');
+    expect503(await t.get(task.id, '/big.js'));
+    expect503(await t.get(task.id, '/big.js'));
+
+    expect(await first.text()).toBe('x');
+    expect((await t.get(task.id, '/big.js')).status).toBe(200);
+  });
+
+  test('a cancelled body (the client went away) frees the budget', async () => {
+    const t = await setupBig();
+    const task = await bigTask(t);
+    const held = [await t.get(task.id, '/big.js'), await t.get(task.id, '/big.js')];
+    expect503(await t.get(task.id, '/big.js'));
+    await held[0]!.body!.cancel();
+    const next = await t.get(task.id, '/big.js');
+    expect(next.status).toBe(200);
+    await next.body!.cancel();
+    await held[1]!.body!.cancel();
+    await held[0]!.body!.cancel().catch(() => undefined);
+    // Бюджет не уходит в минус от повторной отмены: снова ровно два запроса.
+    const again = [await t.get(task.id, '/big.js'), await t.get(task.id, '/big.js')];
+    expect(again.map(r => r.status)).toEqual([200, 200]);
+    expect503(await t.get(task.id, '/big.js'));
+  });
+
+  test('HEAD and 304 reserve nothing, and a 404 or the entry of a small file does not either', async () => {
+    const t = await setupBig();
+    const task = await bigTask(t);
+    const held = [await t.get(task.id, '/big.js'), await t.get(task.id, '/big.js')];
+    expect503(await t.get(task.id, '/big.js'));
+    const head = await t.get(task.id, '/big.js', { method: 'HEAD' });
+    expect(head.status).toBe(200);
+    const etag = head.headers.get('etag')!;
+    expect((await t.get(task.id, '/big.js', { headers: { 'if-none-match': etag } })).status).toBe(304);
+    expect((await t.get(task.id, '/missing.js')).status).toBe(404);
+    expect(await (await t.get(task.id, '/')).text()).toBe('home');
+    for (const r of held) await r.body!.cancel();
+  });
+
+  test('a getBytes that fails (500 or missing object) frees the reservation', async () => {
+    const t = await setupBig();
+    const task = await bigTask(t);
+    const real = t.c.fileStore.getBytes.bind(t.c.fileStore);
+    let mode: 'boom' | 'gone' | 'ok' = 'boom';
+    t.c.fileStore.getBytes = key => {
+      if (mode === 'boom') return Promise.reject(new Error('boom'));
+      if (mode === 'gone') return real(`${key}-missing`);
+      return real(key);
+    };
+    for (const expected of [500, 500, 500, 500]) expect((await t.get(task.id, '/big.js')).status).toBe(expected);
+    mode = 'gone';
+    for (let i = 0; i < 4; i++) expect((await t.get(task.id, '/big.js')).status).toBe(404);
+    mode = 'ok';
+    const held = [await t.get(task.id, '/big.js'), await t.get(task.id, '/big.js')];
+    expect(held.map(r => r.status)).toEqual([200, 200]);
+    for (const r of held) await r.body!.cancel();
+  });
+
+  test('two apps do not share a budget', async () => {
+    const a = await setupBig();
+    const b = await setupBig();
+    const taskA = await bigTask(a);
+    const taskB = await bigTask(b);
+    const held = [await a.get(taskA.id, '/big.js'), await a.get(taskA.id, '/big.js')];
+    expect503(await a.get(taskA.id, '/big.js'));
+    expect((await b.get(taskB.id, '/big.js')).status).toBe(200);
+    for (const r of held) await r.body!.cancel();
+  });
+});
+
+describe('a failing port is a plain 500 with the base headers', () => {
+  test('FileStore.getBytes throws', async () => {
+    const t = await setup();
+    const task = await t.addTask(SITE);
+    t.c.fileStore.getBytes = () => Promise.reject(new Error('boom'));
+    await check(await t.get(task.id, '/assets/app.js'), t, task.id);
+  });
+
+  test('FileRepository.listForTask throws', async () => {
+    const t = await setup();
+    const task = await t.addTask(SITE);
+    t.c.files.listForTask = () => Promise.reject(new Error('boom'));
+    await check(await t.get(task.id), t, task.id);
+  });
+});
+
 describe('GET /api/tasks/:id', () => {
   test('the owner gets the URL with the scheme of the app and the port of PREVIEW_HOST', async () => {
     const t = await setup();
@@ -507,6 +787,18 @@ describe('GET /api/tasks/:id', () => {
     });
     const res = await off.call('GET', `/api/tasks/${offTask.id}`, { headers: owner.headers });
     expect(TaskResponseSchema.parse(await res.json()).preview).toBeNull();
+  });
+
+  test('an entry above the size limit is no preview: the card never promises what the host refuses', async () => {
+    const t = await setup({ UPLOAD_MAX_BYTES: '4' });
+    const task = await t.addTask({ 'index.html': '<p>home</p>' });
+    const res = await t.call('GET', `/api/tasks/${task.id}`, { headers: t.owner.headers });
+    expect(TaskResponseSchema.parse(await res.json()).preview).toBeNull();
+    expect((await t.get(task.id)).status).toBe(404);
+    const ok = await setup({ UPLOAD_MAX_BYTES: '11' });
+    const small = await ok.addTask({ 'index.html': '<p>home</p>' });
+    const body = await ok.call('GET', `/api/tasks/${small.id}`, { headers: ok.owner.headers });
+    expect(TaskResponseSchema.parse(await body.json()).preview).not.toBeNull();
   });
 
   test('the URL it gives opens the site', async () => {

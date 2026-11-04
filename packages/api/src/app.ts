@@ -5,7 +5,7 @@ import { requireUser } from './auth/middleware';
 import type { ApiDeps, ApiEnv } from './deps';
 import { errorLogFields, mapError } from './errors';
 import { OpenStreams } from './open-streams';
-import { isPreviewRequest, servePreview } from './preview/handler';
+import { ByteBudget, PREVIEW_INFLIGHT_BYTES, isPreviewGate, servePreview } from './preview/handler';
 import { configRoutes } from './routes/config';
 import { eventRoutes } from './routes/events';
 import { fileRoutes } from './routes/files';
@@ -48,7 +48,11 @@ export function createApp(deps: ApiDeps, opts: { streams?: OpenStreams } = {}): 
    */
   const { preview } = deps.config;
   if (preview) {
-    app.use((c, next) => (isPreviewRequest(preview, c.req.header('host')) ? servePreview(deps, c.req.raw) : next()));
+    // Бюджет у экземпляра приложения, а не у модуля: тесты и несколько приложений в одном процессе не делят его.
+    const budget = new ByteBudget(PREVIEW_INFLIGHT_BYTES);
+    app.use((c, next) =>
+      isPreviewGate(preview, c.req.header('host')) ? servePreview(deps, c.req.raw, budget) : next(),
+    );
   }
 
   // Охрана регистрируется раньше всех маршрутов: маршрут, добавленный позже, не окажется без неё.
