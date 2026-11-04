@@ -48,6 +48,17 @@ export function OpenInNewTab({ href, children = 'Open in new tab' }: { href: str
   );
 }
 
+/**
+ * Родительское имя хоста превью: у `метка.preview.localhost` это `preview.localhost`. Адрес-IP и имя из одной метки
+ * остаются как есть: отрезать у них первую часть значит исказить адрес.
+ */
+function parentHost(src: string): string {
+  const { hostname } = new URL(src);
+  if (hostname.startsWith('[') || /^\d+(?:\.\d+){3}$/.test(hostname)) return hostname;
+  const dot = hostname.indexOf('.');
+  return dot < 0 ? hostname : hostname.slice(dot + 1);
+}
+
 /** Панель «компьютера агента»: вкладка, строка состояния, снимок и таймлайн перемотки. */
 export function ComputerPanel({
   title = "Agent's computer",
@@ -80,20 +91,29 @@ export function ComputerPanel({
         {onClose && <IconButton icon={X} label="Close" onClick={onClose} />}
       </div>
       {frame && frameSrc ? (
-        /*
-         * allow-same-origin намеренно: без него localStorage бросает исключение, и обычное React-приложение падает. Здесь
-         * это безопасно: origin сайта — отдельный хост задачи и никогда не origin приложения, поэтому сайт получает доступ
-         * только к самому себе. Без allow-top-navigation и allow-popups: сайт не уводит вкладку и не открывает окна.
-         */
-        <iframe
-          key={frame.reloadKey}
-          class="ui-computer__frame"
-          src={frameSrc}
-          title={frame.title}
-          // oxlint-disable-next-line react/iframe-missing-sandbox
-          sandbox="allow-scripts allow-same-origin allow-forms allow-modals"
-          referrerpolicy="no-referrer"
-        />
+        <>
+          {/* Строка снаружи фрейма: сайт агента не может её нарисовать, и всегда видно, что он чужой. */}
+          <div class="ui-computer__notice">
+            <span class="ui-computer__origin">{parentHost(frameSrc)}</span> Built by the agent. Not part of this app. Do
+            not enter passwords.
+          </div>
+          {/*
+           * allow-same-origin намеренно: без него localStorage бросает исключение, и обычное React-приложение падает. Здесь
+           * это безопасно: origin сайта — отдельный хост задачи и никогда не origin приложения, поэтому сайт получает доступ
+           * только к самому себе. Без allow-top-navigation и allow-popups: сайт не уводит вкладку и не открывает окна. Без
+           * allow-modals: страница, которую агент мог написать под влиянием чужого текста, не рисует блокирующий диалог
+           * поверх вкладки приложения (alert() сайта теперь ничего не делает).
+           */}
+          <iframe
+            key={frame.reloadKey}
+            class="ui-computer__frame"
+            src={frameSrc}
+            title={frame.title}
+            // oxlint-disable-next-line react/iframe-missing-sandbox
+            sandbox="allow-scripts allow-same-origin allow-forms"
+            referrerpolicy="no-referrer"
+          />
+        </>
       ) : (
         <>
           {activity && (

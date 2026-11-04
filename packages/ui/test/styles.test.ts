@@ -65,6 +65,13 @@ test('a long unbroken row title wraps inside its row instead of running under th
   expect(block).toMatch(/overflow-wrap:\s*anywhere/);
 });
 
+test('the notice above a site frame is made of tokens only', () => {
+  const rule = /\.ui-computer__notice\s*\{([^}]*)\}/.exec(styles)?.[1] ?? '';
+  expect(rule).toContain('border-bottom: 1px solid var(--border-subtle)');
+  expect(rule).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(/i);
+  expect(styles).toMatch(/\.ui-computer__origin\s*\{[^}]*font:[^}]*var\(--font-mono\)/);
+});
+
 test('the frame of a site fills the panel without a border and stays usable when the panel stacks under the chat', () => {
   expect(styles).toMatch(/\.ui-computer__frame\s*\{[^}]*flex:\s*1[^}]*border:\s*0/);
   expect(styles).toMatch(/@media \(max-width: 900px\)\s*\{[\s\S]*\.ui-computer__frame\s*\{[^}]*min-height:\s*70svh/);

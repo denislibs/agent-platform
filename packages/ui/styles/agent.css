@@ -491,6 +491,18 @@
   color: var(--text-secondary);
   white-space: pre-wrap;
 }
+/* Строка над сайтом агента: чей он и что вводить в него нельзя. Снаружи фрейма, поэтому сайт её не подделает. */
+.ui-computer__notice {
+  padding: var(--space-2) var(--space-4);
+  font: var(--text-xs)/var(--leading-xs) var(--font-sans);
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+  overflow-wrap: anywhere;
+}
+.ui-computer__origin {
+  font: var(--weight-medium) var(--text-xs)/var(--leading-xs) var(--font-mono);
+  color: var(--text-primary);
+}
 /* Сайт агента во фрейме: белый фон, потому что страница без своего фона рассчитана на белый. */
 .ui-computer__frame {
   flex: 1;

@@ -833,6 +833,10 @@ test('a finished task with a preview opens on it; the links open a new tab witho
   const frame = await screen.findByTitle('Site preview');
   expect(frame.getAttribute('src')).toBe(PREVIEW.url);
   expect(pressed('Preview')).toBe('true');
+  // Над сайтом агента всегда строка панели: чей он и что в него нельзя вводить.
+  expect(
+    within(panel()).getByText(/Built by the agent\. Not part of this app\. Do not enter passwords\./),
+  ).toBeTruthy();
   const newTab = within(panel()).getByRole('link', { name: 'Open in new tab' });
   expect(newTab.getAttribute('href')).toBe(PREVIEW.url);
   expect(newTab.getAttribute('rel')).toBe('noopener noreferrer');
@@ -844,6 +848,7 @@ test('the switch moves between the site and the activity, and a reread does not 
   const { update } = await openCard(donePreview());
   await userEvent.click(await screen.findByRole('button', { name: 'Activity' }));
   expect(screen.queryByTitle('Site preview')).toBeNull();
+  expect(within(panel()).queryByText(/Built by the agent/)).toBeNull();
   expect(pressed('Activity')).toBe('true');
   await update(donePreview());
   expect(pressed('Activity')).toBe('true');

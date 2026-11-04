@@ -475,11 +475,40 @@ test('ComputerPanel with a frame shows the site instead of the screen, the statu
   expect(screen.getByRole('button', { name: 'Switch' })).toBeTruthy();
 });
 
-test('the frame is sandboxed: scripts, its own origin, forms and modals; no top navigation, no popups', () => {
+test('the frame is sandboxed: scripts, its own origin and forms; no modals, no top navigation, no popups', () => {
   render(<ComputerPanel frame={FRAME} />);
-  expect(screen.getByTitle('Site preview').getAttribute('sandbox')).toBe(
-    'allow-scripts allow-same-origin allow-forms allow-modals',
+  expect(screen.getByTitle('Site preview').getAttribute('sandbox')).toBe('allow-scripts allow-same-origin allow-forms');
+});
+
+test('a notice outside the frame says whose site it is, with the host shortened to its parent', () => {
+  render(<ComputerPanel frame={{ ...FRAME, src: 'http://abc123-mac.preview.localhost:8080/' }} />);
+  const notice = document.querySelector('.ui-computer__notice')!;
+  expect(notice.textContent).toBe(
+    'preview.localhost Built by the agent. Not part of this app. Do not enter passwords.',
   );
+  expect(notice.querySelector('.ui-computer__origin')?.textContent).toBe('preview.localhost');
+  // Строка рядом с фреймом, а не внутри: сайт не может её нарисовать или перекрыть своей версткой.
+  const frame = screen.getByTitle('Site preview');
+  expect(notice.contains(frame)).toBe(false);
+  expect(notice.nextElementSibling).toBe(frame);
+});
+
+test.each([
+  ['https://x1.previews.example.net/', 'previews.example.net'],
+  ['https://x1.localhost/', 'localhost'],
+  ['https://localhost/', 'localhost'],
+  ['http://127.0.0.1:8080/', '127.0.0.1'],
+  ['http://[::1]:8080/', '[::1]'],
+])('the notice names the parent host of %s: %s', (src, host) => {
+  render(<ComputerPanel frame={{ ...FRAME, src }} />);
+  expect(document.querySelector('.ui-computer__origin')?.textContent).toBe(host);
+});
+
+test('without a frame, or with a refused address, there is no notice', () => {
+  const { rerender } = render(<ComputerPanel activity="Using Browser" />);
+  expect(document.querySelector('.ui-computer__notice')).toBeNull();
+  rerender(<ComputerPanel activity="Using Browser" frame={{ ...FRAME, src: 'javascript:alert(1)' }} />);
+  expect(document.querySelector('.ui-computer__notice')).toBeNull();
 });
 
 test('a new reloadKey creates a new frame, the same key keeps it', () => {
