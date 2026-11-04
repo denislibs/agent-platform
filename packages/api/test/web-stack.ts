@@ -27,25 +27,29 @@ function testDatabaseUrl(): string {
   return url;
 }
 
-/**
- * Сайт второго цикла: заголовок показывает, что скрипт выполнился, localStorage работает и живёт между загрузками,
- * а окно приложения недоступно. window.top.document бросает исключение, потому что origin сайта чужой.
+/*
+ * Сайт второго цикла, как его собирает Vite: index.html с абсолютными адресами /assets/…, модульный скрипт
+ * (type="module" crossorigin) и таблица стилей. Заголовок показывает, что модуль выполнился, localStorage работает и живёт
+ * между загрузками, а окно приложения недоступно: window.top.document бросает исключение, потому что origin сайта чужой.
+ * Цвет текста из style.css проверяет браузерный тест: таблица действительно загрузилась и применилась.
  */
-const SITE = `<!doctype html>
+const SITE_HTML = `<!doctype html>
 <title>loading</title>
+<link rel="stylesheet" href="/assets/style.css">
 <p>Site ready</p>
-<script>
-  const visits = Number(localStorage.getItem('visits') ?? 0) + 1;
-  localStorage.setItem('visits', String(visits));
-  let app = 'top-open';
-  try {
-    void window.top.document.title;
-  } catch {
-    app = 'top-blocked';
-  }
-  document.title = 'visits-' + visits + ':' + app;
-</script>
+<script type="module" crossorigin src="/assets/app.js"></script>
 `;
+const SITE_JS = `const visits = Number(localStorage.getItem('visits') ?? 0) + 1;
+localStorage.setItem('visits', String(visits));
+let app = 'top-open';
+try {
+  void window.top.document.title;
+} catch {
+  app = 'top-blocked';
+}
+document.title = 'visits-' + visits + ':' + app;
+`;
+const SITE_CSS = 'p { color: rgb(1, 2, 3); }\n';
 
 const calls = (...list: Array<[string, unknown]>): ScriptedTurn => ({
   toolCalls: list.map(([name, args]) => toolCall(name, args)),
@@ -78,7 +82,9 @@ const llm = new ScriptedLlm([
   calls(['finish', { answer: 'Here is **your file**.', files: ['outputs/hello.md'] }]),
   calls(['create_plan', { subtasks: [{ goal: 'Shorten the greeting', done_criteria: 'hello.md is short' }] }]),
   calls(['file_write', { path: 'outputs/hello.md', content: '# Hi' }]),
-  calls(['file_write', { path: 'outputs/index.html', content: SITE }]),
+  calls(['file_write', { path: 'outputs/index.html', content: SITE_HTML }]),
+  calls(['file_write', { path: 'outputs/assets/app.js', content: SITE_JS }]),
+  calls(['file_write', { path: 'outputs/assets/style.css', content: SITE_CSS }]),
   calls(['report', { summary: 'shortened', files: ['outputs/hello.md', 'outputs/index.html'] }]),
   calls(['accept', {}]),
   calls(['finish', { answer: 'Now it is **shorter**.', files: ['outputs/hello.md', 'outputs/index.html'] }]),
