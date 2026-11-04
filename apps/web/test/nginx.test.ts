@@ -58,6 +58,18 @@ test('a preview server block in dev and prod: GET and HEAD only, its own limits,
     expect(block).toContain('proxy_pass_request_body off;');
     expect(block).toContain("proxy_set_header Content-Length '';");
     expect(block).toContain("proxy_set_header Cookie '';");
+    // Пересылаемые заголовки клиента не доходят до API: подделка IP и схемы на хосте превью не удаётся.
+    for (const header of [
+      'X-Real-IP',
+      'X-Forwarded-For',
+      'X-Forwarded-Host',
+      'X-Forwarded-Proto',
+      'X-Forwarded-Port',
+      'X-Forwarded-Prefix',
+      'X-Forwarded-Server',
+      'Forwarded',
+    ])
+      expect(block).toContain(`proxy_set_header ${header} '';`);
     expect(block).toContain('proxy_set_header Host $host;');
     expect(block).toContain('proxy_pass http://api;');
     // Заголовки безопасности сайта ставит API: CSP приложения поверх них сломала бы сайт.
@@ -191,9 +203,47 @@ test('prod: without PREVIEW_HOST no frames and a server name that matches nothin
     expect(previewVars(host, 'https://app.example.com')).toEqual({
       code: 0,
       frames: "'none'",
-      serverName: String.raw`previews-are-off\.invalid`,
+      serverName: '(?!)',
     });
   }
+});
+
+/** Регулярное имя из шаблона prod после envsubst: то, что nginx сопоставит с Host (нижний регистр он делает сам). */
+function renderedServerName(host: string | undefined): RegExp {
+  const template = /server_name ~(\S+);/.exec(app)?.[1] ?? '';
+  const { serverName } = previewVars(host, 'https://app.example.com');
+  return new RegExp(template.replace('${PREVIEW_SERVER_NAME}', serverName!));
+}
+
+test('prod: with previews off the preview server block matches no Host at all, nothing is proxied to the API', () => {
+  for (const host of [undefined, '']) {
+    const re = renderedServerName(host);
+    for (const hostile of [
+      'x.previews-are-off.invalid',
+      'previews-are-off.invalid',
+      'a.b.previews-are-off.invalid',
+      'x.invalid',
+      'a.preview.localhost',
+      'x.localhost',
+      'x.example.com',
+      'localhost',
+      'x',
+      '',
+      '.',
+      'x.',
+    ])
+      expect({ hostile, matches: re.test(hostile) }).toEqual({ hostile, matches: false });
+  }
+  // Контроль: с PREVIEW_HOST то же имя совпадает с одной меткой под ним и ни с чем больше.
+  const on = renderedServerName('previews.example.net');
+  expect(on.test('a-1.previews.example.net')).toBe(true);
+  for (const host of [
+    'previews.example.net',
+    'a.b.previews.example.net',
+    'xpreviews.example.net',
+    'x.previewsXexample.net',
+  ])
+    expect({ host, matches: on.test(host) }).toEqual({ host, matches: false });
 });
 
 test('prod: nginx refuses to start on a PREVIEW_HOST that is not host[:port], or without an http(s) APP_ORIGIN', () => {

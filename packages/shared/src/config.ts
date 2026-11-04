@@ -16,7 +16,7 @@ function oauthApp(name: string, clientId: string | undefined, clientSecret: stri
 }
 
 /** host[:port] без схемы и пути; регистр не важен (имена хостов его не различают). */
-const PREVIEW_HOST_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:\d{1,5})?$/i;
+export const PREVIEW_HOST_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:\d{1,5})?$/i;
 
 const isUnder = (name: string, parent: string) => name === parent || name.endsWith(`.${parent}`);
 

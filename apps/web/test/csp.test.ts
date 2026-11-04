@@ -89,3 +89,16 @@ test('frames: only the preview hosts, with the scheme of the app; without previe
 test('the nginx template leaves the frame sources to envsubst', () => {
   expect(nginxCspTemplate()).toContain('frame-src ${PREVIEW_FRAME_SRC};');
 });
+
+test('frames: PREVIEW_HOST that is not host[:port] never reaches the policy', () => {
+  for (const host of [
+    'x; script-src *',
+    'a b',
+    '*.example.net',
+    'https://previews.example.net',
+    'previews.example.net/x',
+    "x 'unsafe-inline'",
+    'a.example.net,b.example.net',
+  ])
+    expect(() => previewFrameSource(host, 'https://app.example.com')).toThrow('PREVIEW_HOST');
+});

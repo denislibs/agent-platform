@@ -24,7 +24,8 @@ server {
 server {
   listen 8080;
   server_name ~^[0-9a-z-]+\.${PREVIEW_SERVER_NAME}$;
-  # Тело не нужно никому: большое отклоняется, остальное не уходит в API.
+  # Тело не нужно никому: большое отклоняется (413 раньше limit_except: POST с телом получит 413, без тела — 403),
+  # остальное не уходит в API.
   client_max_body_size 1;
 
   location / {
@@ -39,6 +40,15 @@ server {
     proxy_set_header Host $host;
     proxy_set_header Cookie '';
     proxy_set_header Authorization '';
+    # Заголовки пересылки клиента не доходят до API (в отличие от /api/, где nginx ставит свои).
+    proxy_set_header X-Real-IP '';
+    proxy_set_header X-Forwarded-For '';
+    proxy_set_header X-Forwarded-Host '';
+    proxy_set_header X-Forwarded-Proto '';
+    proxy_set_header X-Forwarded-Port '';
+    proxy_set_header X-Forwarded-Prefix '';
+    proxy_set_header X-Forwarded-Server '';
+    proxy_set_header Forwarded '';
     proxy_pass_request_body off;
     proxy_set_header Content-Length '';
     # Файл до 50 МиБ идёт клиенту потоком, а не через tmpfs.

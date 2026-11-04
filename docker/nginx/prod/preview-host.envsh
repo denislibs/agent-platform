@@ -2,12 +2,14 @@
 # Переменные шаблонов для превью сайтов (план 10), из PREVIEW_HOST и схемы APP_ORIGIN: PREVIEW_FRAME_SRC — источник
 # frame-src в CSP приложения, PREVIEW_SERVER_NAME — имя для регулярного server_name, с экранированными точками и без порта.
 # Образ подключает файл (.envsh) до 20-envsubst-on-templates.sh; неверное значение — выход с ошибкой, nginx не стартует.
-# Символы ограничены: значения попадают в конфиг nginx как есть. Без PREVIEW_HOST фреймов нет, а имя ничему не совпадает.
+# Символы ограничены: значения попадают в конфиг nginx как есть. Без PREVIEW_HOST фреймов нет, а server_name не совпадает
+# ни с одним Host: «(?!)» — утверждение, которое никогда не выполняется. Совпадающее имя (хоть «.invalid») пустило бы
+# запрос на любой такой Host через блок превью в API, где при выключенных превью шлюза изоляции нет.
 
 preview_host=$(printf %s "${PREVIEW_HOST:-}" | tr 'A-Z' 'a-z')
 if [ -z "$preview_host" ]; then
   PREVIEW_FRAME_SRC="'none'"
-  PREVIEW_SERVER_NAME='previews-are-off\.invalid'
+  PREVIEW_SERVER_NAME='(?!)'
 else
   case "$preview_host" in
     *[!a-z0-9.:-]*)

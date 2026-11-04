@@ -157,6 +157,11 @@ try {
   check("the CSP has no 'unsafe-inline' and no 'unsafe-eval'", !csp.includes('unsafe-'), csp);
   const s3Origin = new URL(env.S3_PUBLIC_ENDPOINT!).origin;
   check('the CSP lets the browser upload to S3 (its origin)', csp.includes(`connect-src 'self' ${s3Origin};`), csp);
+  check(
+    'the CSP lets the page frame the preview hosts and nothing else',
+    csp.includes(`frame-src http://*.${env.PREVIEW_HOST};`),
+    csp,
+  );
 
   const asset = html.match(/src="(\/assets\/[^"]+\.js)"/)?.[1];
   const js = asset ? await fetch(`${ORIGIN}${asset}`) : undefined;
@@ -174,6 +179,9 @@ try {
   );
 
   check('a foreign Host gets no response (444)', (await rawGet('attacker.example')) === '');
+  // Имя хоста превью — ровно одна метка под PREVIEW_HOST: вложенная метка и сам PREVIEW_HOST закрываются как чужой Host.
+  check('a nested preview label gets no response (444)', (await rawGet(`a.b.preview.localhost:${APP_PORT}`)) === '');
+  check('the bare preview host gets no response (444)', (await rawGet(`preview.localhost:${APP_PORT}`)) === '');
 
   // Хост превью идёт в API, и там ему доступно только превью: ни маршрутов приложения, ни CSP приложения поверх.
   const previewHost = `nope.preview.localhost:${APP_PORT}`;
