@@ -257,6 +257,29 @@ const authSecret = 'a'.repeat(32);
 const previewApp = (url: string, host: string) => () =>
   loadConfig({ ...base, PREVIEW_SECRET: secret, BETTER_AUTH_URL: url, PREVIEW_HOST: host });
 
+/** Имя хоста заданной длины из меток по 63 символа. */
+const hostOfLength = (length: number) => {
+  const labels: string[] = [];
+  let left = length;
+  while (left > 0) {
+    const n = Math.min(left, 63);
+    labels.push('a'.repeat(n));
+    left -= n + 1;
+  }
+  return labels.join('.');
+};
+
+const throwsFor = (host: string) => {
+  try {
+    loadConfig({ ...base, PREVIEW_HOST: host, PREVIEW_SECRET: secret });
+    return false;
+  } catch (error) {
+    // Значение хоста — не секрет, но сообщение не должно нести и ключ.
+    expect(String(error)).not.toContain(secret);
+    return true;
+  }
+};
+
 describe('preview settings', () => {
   test('previews are off without PREVIEW_HOST; a blank value is unset', () => {
     expect(loadConfig(base).preview).toBeNull();
@@ -271,6 +294,31 @@ describe('preview settings', () => {
   test('PREVIEW_HOST is a bare host[:port]: no scheme, path or wildcard', () => {
     for (const host of ['http://preview.localhost', 'preview.localhost/x', '*.preview.localhost', 'a b', 'host:port'])
       expect(() => loadConfig({ ...base, PREVIEW_HOST: host, PREVIEW_SECRET: secret })).toThrow(/PREVIEW_HOST/);
+  });
+
+  test('PREVIEW_HOST is a valid DNS name: a label of 1-63 characters, a port up to 65535, not an IP address', () => {
+    const label64 = 'a'.repeat(64);
+    const label63 = 'a'.repeat(63);
+    for (const host of [
+      `${label64}.example.net`,
+      `preview.${label64}.net`,
+      'preview.localhost:99999',
+      'preview.localhost:65536',
+      'preview.localhost:0',
+      '127.0.0.1',
+      '127.0.0.1:8080',
+      '10.0.0.1',
+      'example.123',
+    ])
+      expect({ host, throws: throwsFor(host) }).toEqual({ host, throws: true });
+    for (const host of [`${label63}.example.net`, 'preview.localhost:65535', 'a1.example.net', 'xn--p1ai.example'])
+      expect({ host, throws: throwsFor(host) }).toEqual({ host, throws: false });
+  });
+
+  test('the host leaves room for a 62-character label within 253 characters', () => {
+    expect(hostOfLength(190)).toHaveLength(190);
+    expect(throwsFor(hostOfLength(190))).toBe(false);
+    expect(throwsFor(hostOfLength(191))).toBe(true);
   });
 
   test('previews need a key: PREVIEW_SECRET or BETTER_AUTH_SECRET', () => {
@@ -288,5 +336,35 @@ describe('preview settings', () => {
     expect(previewApp('https://app.example.com', 'preview.app.example.com')).toThrow(/same host/);
     expect(previewApp('http://localhost:8080', 'preview.localhost:8080')).not.toThrow();
     expect(previewApp('https://app.example.com', 'example-usercontent.net')).not.toThrow();
+  });
+
+  test('a trailing dot in BETTER_AUTH_URL does not hide that the app is above the preview host', () => {
+    expect(previewApp('https://app.example.com.', 'example.com')).toThrow(/same host/);
+    expect(previewApp('https://app.example.com.', 'preview.app.example.com')).toThrow(/same host/);
+    expect(previewApp('https://app.example.com.', 'app.example.com')).toThrow(/same host/);
+    expect(previewApp('https://app.example.com.', 'example-usercontent.net')).not.toThrow();
+  });
+
+  test('PREVIEW_SECRET must differ from BETTER_AUTH_SECRET, and the error does not print either', () => {
+    const same = () =>
+      loadConfig({
+        ...base,
+        PREVIEW_HOST: 'preview.localhost',
+        PREVIEW_SECRET: authSecret,
+        BETTER_AUTH_SECRET: authSecret,
+      });
+    expect(same).toThrow(/PREVIEW_SECRET must differ from BETTER_AUTH_SECRET/);
+    try {
+      same();
+    } catch (error) {
+      expect(String(error)).not.toContain(authSecret);
+    }
+    const c = loadConfig({
+      ...base,
+      PREVIEW_HOST: 'preview.localhost',
+      PREVIEW_SECRET: secret,
+      BETTER_AUTH_SECRET: authSecret,
+    });
+    expect(c.preview?.secret).toBe(secret);
   });
 });

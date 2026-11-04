@@ -18,6 +18,25 @@ function oauthApp(name: string, clientId: string | undefined, clientSecret: stri
 /** host[:port] без схемы и пути; регистр не важен (имена хостов его не различают). */
 export const PREVIEW_HOST_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:\d{1,5})?$/i;
 
+/** Метка задачи на хосте превью — до 62 символов (packages/api/src/preview/token.ts); имя целиком — до 253. */
+const PREVIEW_LABEL_MAX = 62;
+const DNS_NAME_MAX = 253;
+
+/**
+ * Годный PREVIEW_HOST: форма host[:port] (PREVIEW_HOST_PATTERN) и то, чего форма не ловит. Метка DNS — до 63 символов;
+ * порт — до 65535; имя из цифр и точек (127.0.0.1, example.123) браузер читает как IP-адрес, а не как имя, и поддомены
+ * под ним невозможны; после хоста остаётся место для метки задачи в пределах 253 символов.
+ */
+export function isPreviewHost(host: string): boolean {
+  if (!PREVIEW_HOST_PATTERN.test(host)) return false;
+  const [name = '', port] = host.split(':');
+  if (port !== undefined && (Number(port) < 1 || Number(port) > 65_535)) return false;
+  const labels = name.split('.');
+  if (labels.some(label => label.length > 63)) return false;
+  if (/^\d+$/.test(labels.at(-1)!)) return false;
+  return name.length + 1 + PREVIEW_LABEL_MAX <= DNS_NAME_MAX;
+}
+
 const isUnder = (name: string, parent: string) => name === parent || name.endsWith(`.${parent}`);
 
 /**
@@ -32,11 +51,15 @@ function previewConfig(
   appUrl: string,
 ) {
   if (!host) return null;
+  // Сообщения не называют значения: ключи в журнал не попадают.
+  if (secret && secret === authSecret)
+    throw new Error('Invalid environment: PREVIEW_SECRET must differ from BETTER_AUTH_SECRET');
   if (!secret && !authSecret)
     throw new Error('Invalid environment: PREVIEW_HOST needs PREVIEW_SECRET or BETTER_AUTH_SECRET');
   const lower = host.toLowerCase();
   const hostname = lower.split(':', 1)[0]!;
-  const app = new URL(appUrl).hostname;
+  // Имя с точкой на конце (app.example.com.) — то же имя: без среза проверка «выше хоста превью» его бы пропустила.
+  const app = new URL(appUrl).hostname.replace(/\.+$/, '');
   if (isUnder(app, hostname) || (app !== 'localhost' && isUnder(hostname, app)))
     throw new Error('Invalid environment: PREVIEW_HOST and BETTER_AUTH_URL must not share the same host');
   return { host: lower, hostname, secret: secret ?? null };
@@ -124,7 +147,16 @@ const EnvSchema = z.object({
   GITHUB_CLIENT_ID: optionalText,
   GITHUB_CLIENT_SECRET: optionalText,
   /** Хост превью сайтов: host[:port], задача открывается на <метка>.<хост>, схема — как у BETTER_AUTH_URL. Пусто — выключено. */
-  PREVIEW_HOST: z.preprocess(blankAsUnset, z.string().regex(PREVIEW_HOST_PATTERN, 'expected host[:port]').optional()),
+  PREVIEW_HOST: z.preprocess(
+    blankAsUnset,
+    z
+      .string()
+      .refine(
+        isPreviewHost,
+        'expected host[:port]: a DNS name (labels up to 63 characters, not an IP address), port up to 65535',
+      )
+      .optional(),
+  ),
   /** Ключ подписи адресов превью; не задан — выводится из BETTER_AUTH_SECRET (packages/api/src/preview/token.ts). */
   PREVIEW_SECRET: z.preprocess(
     blankAsUnset,

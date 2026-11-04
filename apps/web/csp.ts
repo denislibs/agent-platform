@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Plugin } from 'vite';
-import { PREVIEW_HOST_PATTERN } from '@agent/shared';
+import { isPreviewHost } from '@agent/shared';
 import { themeBootScript } from '@agent/ui/theme';
 
 /** Источник CSP для inline-скрипта: `'sha256-<base64>'` от его текста ровно в том виде, в каком он стоит в HTML. */
@@ -28,10 +28,10 @@ export interface CspOptions {
 /**
  * Источник frame-src для превью сайтов: все хосты задач под PREVIEW_HOST со схемой приложения. Сам PREVIEW_HOST не нужен:
  * задача всегда открывается на своём хосте. Без PREVIEW_HOST — 'none': встраивать нечего. Значение попадает в заголовок
- * CSP как есть, поэтому проверяется тем же шаблоном, что и конфиг API: «;» или пробел не добавят директиву.
+ * CSP как есть, поэтому проверяется той же функцией, что и конфиг API: «;» или пробел не добавят директиву.
  */
 export function previewFrameSource(previewHost: string | undefined, appOrigin: string): string {
-  if (previewHost && !PREVIEW_HOST_PATTERN.test(previewHost))
+  if (previewHost && !isPreviewHost(previewHost))
     throw new Error(`PREVIEW_HOST must be host[:port], got '${previewHost}'`);
   return previewHost ? `${new URL(appOrigin).protocol}//*.${previewHost.toLowerCase()}` : "'none'";
 }
