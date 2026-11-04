@@ -66,6 +66,18 @@ async function finalizingWithReport(c: C, reportFiles: string[]) {
 }
 
 describe('ResultComposer', () => {
+  test('a built site under outputs/ is delivered whole, without its dependency folders', async () => {
+    const c = setupAgent();
+    const task = await finalizing(c, { outputs: false });
+    const sandbox = await c.sandboxes.create(task.id);
+    await sandbox.writeFile('outputs/dist/index.html', '<script src="/assets/app.js"></script>');
+    await sandbox.writeFile('outputs/dist/assets/app.js', 'console.log(1)');
+    await sandbox.writeFile('outputs/dist/node_modules/x/index.js', 'x');
+    c.llm.push(calls(['finish', { answer: 'Your site is ready.', files: ['outputs/dist/index.html'] }]));
+    const { files } = await c.composer.compose(task.id);
+    expect(files.toSorted()).toEqual(['outputs/dist/assets/app.js', 'outputs/dist/index.html']);
+  });
+
   test('uses an earlier finish without calling the model, and adds outputs/', async () => {
     const c = setupAgent();
     const task = await finalizing(c);

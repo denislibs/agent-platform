@@ -28,7 +28,12 @@ export default defineConfig({
     {
       command: 'bunx --bun vite --configLoader native',
       url: webOrigin,
-      env: { WEB_PORT: String(WEB_PORT), API_PROXY_TARGET: `http://127.0.0.1:${API_PORT}` },
+      // PREVIEW_HOST — для frame-src в CSP страницы; бэкенд ставит то же значение сам (web-stack.ts).
+      env: {
+        WEB_PORT: String(WEB_PORT),
+        API_PROXY_TARGET: `http://127.0.0.1:${API_PORT}`,
+        PREVIEW_HOST: `preview.localhost:${API_PORT}`,
+      },
       timeout: 60_000,
       reuseExistingServer: false,
     },

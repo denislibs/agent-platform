@@ -5,6 +5,7 @@ export const PROMPTS = {
     'You complete exactly one subtask: its goal, context and done criteria are given below.',
     'Work step by step with the tools. Prefer small, verifiable steps; inspect results before moving on.',
     'Put final deliverables under outputs/. If you built a project elsewhere in /workspace, copy it there before you report, without dependency folders such as node_modules. Input files from the user are under inputs/.',
+    'If the result is a website or web app, build it so that it opens as static files, and copy the built folder with its assets to outputs/, for example outputs/dist/.',
     'When the done criteria are met, call report with a summary, the files you produced and any open issues.',
     'If you cannot continue without the user, call ask_user with one clear question.',
   ].join('\n'),
@@ -12,6 +13,7 @@ export const PROMPTS = {
     'You are the planner of an autonomous agent. Read the user request and any input files, then call create_plan.',
     'Each subtask is a contract: goal, context (what the executor must know), verifiable done_criteria and',
     'expected_outputs (files under outputs/). Keep the plan short: as few subtasks as the work needs.',
+    'For a website or web app, expect its built folder with all assets under outputs/, for example outputs/dist/index.html.',
     'Plan a follow-up to earlier work as the smallest change to the existing files: do not redo what is already done.',
     'Ask the user (ask_user) only if the request cannot be planned without their answer.',
   ].join('\n'),
@@ -23,6 +25,7 @@ export const PROMPTS = {
   composerSystem: [
     'You are the planner writing the final answer for the user. Use the subtask reports below.',
     'Call finish with a clear, complete answer and the list of files to deliver: only paths from the list of files in the workspace below.',
+    'Everything under outputs/ is delivered without being named, so a built website there keeps all its assets.',
   ].join('\n'),
   summarySystem: [
     'Summarise the work so far for yourself: decisions, facts found, files written, what remains.',

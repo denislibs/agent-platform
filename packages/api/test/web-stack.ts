@@ -27,6 +27,26 @@ function testDatabaseUrl(): string {
   return url;
 }
 
+/**
+ * Сайт второго цикла: заголовок показывает, что скрипт выполнился, localStorage работает и живёт между загрузками,
+ * а окно приложения недоступно. window.top.document бросает исключение, потому что origin сайта чужой.
+ */
+const SITE = `<!doctype html>
+<title>loading</title>
+<p>Site ready</p>
+<script>
+  const visits = Number(localStorage.getItem('visits') ?? 0) + 1;
+  localStorage.setItem('visits', String(visits));
+  let app = 'top-open';
+  try {
+    void window.top.document.title;
+  } catch {
+    app = 'top-blocked';
+  }
+  document.title = 'visits-' + visits + ':' + app;
+</script>
+`;
+
 const calls = (...list: Array<[string, unknown]>): ScriptedTurn => ({
   toolCalls: list.map(([name, args]) => toolCall(name, args)),
   usage: { inputTokens: 100, outputTokens: 10 },
@@ -40,12 +60,15 @@ const config = loadConfig({
   ...process.env,
   DATABASE_URL: testDatabaseUrl(),
   BETTER_AUTH_URL: webOrigin,
+  // Превью без nginx: браузер идёт на <метка>.preview.localhost:<порт этого процесса>, Chromium резолвит *.localhost сам.
+  PREVIEW_HOST: `preview.localhost:${port}`,
+  PREVIEW_SECRET: 'web-e2e-preview-secret-of-32-characters',
   QUEUE_PREFIX: `web-e2e-${crypto.randomUUID()}`,
   SWEEP_EVERY_MS: '3600000',
   SANDBOX_NAMESPACE: 'test',
 });
 // Сценарий агента: план, вопрос пользователю, файл, отчёт, приёмка, ответ с файлом; затем продолжение беседы:
-// новый план, тот же файл в новой версии, второй ответ.
+// новый план, тот же файл в новой версии, сайт для превью, второй ответ.
 const llm = new ScriptedLlm([
   calls(['create_plan', { subtasks: [{ goal: 'Write the greeting', done_criteria: 'hello.md exists' }] }]),
   calls(['ask_user', { question: 'Which greeting?' }]),
@@ -55,9 +78,10 @@ const llm = new ScriptedLlm([
   calls(['finish', { answer: 'Here is **your file**.', files: ['outputs/hello.md'] }]),
   calls(['create_plan', { subtasks: [{ goal: 'Shorten the greeting', done_criteria: 'hello.md is short' }] }]),
   calls(['file_write', { path: 'outputs/hello.md', content: '# Hi' }]),
-  calls(['report', { summary: 'shortened', files: ['outputs/hello.md'] }]),
+  calls(['file_write', { path: 'outputs/index.html', content: SITE }]),
+  calls(['report', { summary: 'shortened', files: ['outputs/hello.md', 'outputs/index.html'] }]),
   calls(['accept', {}]),
-  calls(['finish', { answer: 'Now it is **shorter**.', files: ['outputs/hello.md'] }]),
+  calls(['finish', { answer: 'Now it is **shorter**.', files: ['outputs/hello.md', 'outputs/index.html'] }]),
 ]);
 const mailer = new CapturingMailer();
 const container = registerAuth(
