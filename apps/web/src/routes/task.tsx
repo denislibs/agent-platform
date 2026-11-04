@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { CircleCheck, OctagonX, SearchX, TriangleAlert } from 'lucide-preact';
 import {
+  absoluteWebUrl,
   AgentMessage,
   AgentText,
   Alert,
@@ -471,8 +472,6 @@ export function TaskScreen({ id }: { id: string }) {
                     Task completed
                   </Badge>
                 )}
-                {/* Панель скрыта на средней ширине экрана: сайт остаётся доступен отсюда. */}
-                {preview && <OpenInNewTab href={preview.url}>Open preview</OpenInNewTab>}
               </div>
             </>
           )}
@@ -484,6 +483,12 @@ export function TaskScreen({ id }: { id: string }) {
           {task.status === 'cancelled' && (
             <div class="ui-agent__actions">
               <Badge icon={OctagonX}>Stopped</Badge>
+            </div>
+          )}
+          {/* Панель скрыта на средней ширине экрана: сайт законченного цикла (любого исхода) остаётся доступен отсюда. */}
+          {finished && preview && absoluteWebUrl(preview.url) && (
+            <div class="ui-agent__actions">
+              <OpenInNewTab href={preview.url}>Open preview</OpenInNewTab>
             </div>
           )}
         </AgentMessage>

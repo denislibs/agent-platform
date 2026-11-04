@@ -2,10 +2,10 @@ import type { ComponentChildren } from 'preact';
 import { ExternalLink, Maximize2, Monitor, Play, SkipBack, SkipForward, Sparkles, X } from 'lucide-preact';
 import { Button, IconButton } from '../components/button.tsx';
 import { Progress } from '../components/display.tsx';
-import { safeHref } from '../lib/url.ts';
+import { absoluteWebUrl } from '../lib/url.ts';
 
 export interface ComputerFrame {
-  /** Адрес сайта; небезопасные схемы пакет отбрасывает (`safeHref`), и панель остаётся обычной. */
+  /** Абсолютный адрес `http(s)`; иначе (`absoluteWebUrl`) фрейма нет, и панель остаётся обычной. */
   src: string;
   /** Доступное имя фрейма. */
   title: string;
@@ -36,9 +36,9 @@ export interface ComputerPanelProps {
   frame?: ComputerFrame;
 }
 
-/** Ссылка на сайт агента: новая вкладка без opener и Referer, небезопасный адрес не показывается. */
+/** Ссылка на сайт агента: новая вкладка без opener и Referer; адрес не `http(s)` абсолютный — ссылки нет. */
 export function OpenInNewTab({ href, children = 'Open in new tab' }: { href: string; children?: ComponentChildren }) {
-  const safe = safeHref(href);
+  const safe = absoluteWebUrl(href);
   if (!safe) return null;
   return (
     <a class="ui-btn ui-btn--ghost ui-btn--xs" href={safe} target="_blank" rel="noopener noreferrer">
@@ -66,7 +66,7 @@ export function ComputerPanel({
 }: ComputerPanelProps) {
   // NaN — это «нет данных»: показываем конец ленты, а не ломаем aria-valuenow.
   const value = Number.isNaN(position) ? 100 : Math.min(Math.max(position, 0), 100);
-  const frameSrc = safeHref(frame?.src);
+  const frameSrc = absoluteWebUrl(frame?.src);
   return (
     <section class="ui-computer" aria-label={title}>
       <div class="ui-computer__tabs">

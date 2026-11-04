@@ -24,7 +24,7 @@ export { tabbables, useFocusTrap, useScrollLock } from './lib/focus.ts';
 export { useHotkey, type HotkeyOptions } from './lib/hotkey.ts';
 export * from './components/dialog.tsx';
 export * from './components/command.tsx';
-export { safeHref } from './lib/url.ts';
+export { absoluteWebUrl, safeHref } from './lib/url.ts';
 export * from './agent/format.ts';
 export * from './agent/composer.tsx';
 export * from './agent/message.tsx';

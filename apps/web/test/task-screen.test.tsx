@@ -904,3 +904,26 @@ test('a preview that goes away takes the switch with it', async () => {
   expect(screen.queryByTitle('Site preview')).toBeNull();
   expect(within(panel()).queryByRole('button', { name: 'Preview' })).toBeNull();
 });
+
+test('a preview with an address that is not absolute http(s) is treated as no preview', async () => {
+  await openCard(taskResponse({ task: doneTask, files: [siteFile()], preview: { url: '/' } }));
+  expect(within(panel()).queryByRole('button', { name: 'Preview' })).toBeNull();
+  expect(screen.queryByTitle('Site preview')).toBeNull();
+  expect(screen.queryByRole('link', { name: 'Open preview' })).toBeNull();
+  expect(within(panel()).queryByRole('link', { name: 'Open in new tab' })).toBeNull();
+});
+
+test.each(['failed', 'cancelled'] as const)(
+  'a %s task with a preview opens it in the panel and keeps the link in the answer',
+  async taskStatus => {
+    await openCard(donePreview({ status: taskStatus }));
+    await screen.findByTitle('Site preview');
+    expect(pressed('Preview')).toBe('true');
+    expect(screen.getByRole('link', { name: 'Open preview' }).getAttribute('rel')).toBe('noopener noreferrer');
+  },
+);
+
+test('a running task with a preview has no link in the answer', async () => {
+  await openCard(taskResponse({ task: taskDetail({ status: 'running' }), files: [siteFile()], preview: PREVIEW }));
+  expect(screen.queryByRole('link', { name: 'Open preview' })).toBeNull();
+});

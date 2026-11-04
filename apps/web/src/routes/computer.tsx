@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import { ComputerPanel, OpenInNewTab, SegmentedControl } from '@agent/ui';
+import { absoluteWebUrl, ComputerPanel, OpenInNewTab, SegmentedControl } from '@agent/ui';
 import type { FileDto } from '@agent/shared';
 import { Markdown } from '../view/markdown.tsx';
 import type { ToolEntry } from '../view/timeline.ts';
@@ -38,7 +38,8 @@ export function TaskComputer({
   preview?: TaskPreview | null;
   finished?: boolean;
 }) {
-  const hasPreview = preview !== null;
+  // Адрес, который панель не откроет, — это нет сайта: переключатель, не делающий ничего, не показывается.
+  const hasPreview = preview !== null && absoluteWebUrl(preview.url) !== undefined;
   const [view, setView] = useState<PanelView>(hasPreview && finished ? 'preview' : 'activity');
   useEffect(() => setView(hasPreview && finished ? 'preview' : 'activity'), [hasPreview, finished]);
   const [selected, setSelected] = useState<number | null>(null);
@@ -55,7 +56,7 @@ export function TaskComputer({
       {...(index > 0 ? { onPrevious: () => setSelected(index - 1) } : {})}
       {...(index >= 0 && index < last ? { onNext: () => setSelected(index + 1 === last ? null : index + 1) } : {})}
       onJumpToLive={() => setSelected(null)}
-      {...(preview
+      {...(preview && hasPreview
         ? {
             actions: (
               <>
@@ -65,7 +66,7 @@ export function TaskComputer({
             ),
           }
         : {})}
-      {...(preview && view === 'preview'
+      {...(preview && hasPreview && view === 'preview'
         ? { frame: { src: preview.url, title: 'Site preview', reloadKey: preview.reloadKey } }
         : {})}
     >

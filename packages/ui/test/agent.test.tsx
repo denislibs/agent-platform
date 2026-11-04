@@ -497,6 +497,16 @@ test('an unsafe frame address is dropped: the panel stays as it was', () => {
   expect(screen.getByText('Using Browser')).toBeTruthy();
 });
 
+test.each(['mailto:a@b.c', '/', '//evil.example', 'relative/path', 'javascript:alert(1)'])(
+  'the frame and the link take only an absolute web address: %s is refused',
+  src => {
+    render(<ComputerPanel activity="Using Browser" frame={{ ...FRAME, src }} actions={<OpenInNewTab href={src} />} />);
+    expect(screen.queryByTitle('Site preview')).toBeNull();
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(screen.getByText('Using Browser')).toBeTruthy();
+  },
+);
+
 test('without a frame nothing changes, and actions sit in the head of the panel', () => {
   render(<ComputerPanel activity="Using Browser" actions={<a href="/x">Open</a>} />);
   expect(screen.getByRole('link', { name: 'Open' }).closest('.ui-computer__tabs')).toBeTruthy();
